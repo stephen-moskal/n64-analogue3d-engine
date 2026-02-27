@@ -1,0 +1,21 @@
+# Build artifacts
+build/
+*.z64
+*.elf
+*.dfs
+*.o
+*.d
+
+# libdragon submodule (initialized separately)
+libdragon/
+
+# Editor
+.vscode/c_cpp_properties.json
+*.code-workspace
+
+# System
+.DS_Store
+Thumbs.db
+
+# Debug
+*.log

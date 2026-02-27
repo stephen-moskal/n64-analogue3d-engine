@@ -1,0 +1,24 @@
+{
+    "files.associations": {
+        "*.h": "c",
+        "*.c": "c"
+    },
+    "C_Cpp.default.includePath": [
+        "${workspaceFolder}/**",
+        "${workspaceFolder}/libdragon/include/**",
+        "${workspaceFolder}/libdragon/src/**"
+    ],
+    "C_Cpp.default.cStandard": "c11",
+    "C_Cpp.default.intelliSenseMode": "gcc-x64",
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+    "[c]": {
+        "editor.formatOnSave": false
+    },
+    "search.exclude": {
+        "**/libdragon": true,
+        "**/build": true
+    }
+}

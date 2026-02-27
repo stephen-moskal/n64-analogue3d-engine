@@ -1,0 +1,34 @@
+{
+    "name": "N64 Development",
+    "image": "ghcr.io/dragonminded/libdragon:preview",
+    "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/${localWorkspaceFolderBasename},type=bind",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.cpptools",
+                "ms-vscode.cmake-tools",
+                "jeff-hykin.better-c-syntax",
+                "twxs.cmake"
+            ],
+            "settings": {
+                "C_Cpp.default.includePath": [
+                    "${workspaceFolder}/**",
+                    "/n64_toolchain/mips64-elf/include/**",
+                    "/n64_toolchain/include/**"
+                ],
+                "C_Cpp.default.compilerPath": "/n64_toolchain/bin/mips64-elf-gcc",
+                "C_Cpp.default.intelliSenseMode": "gcc-x64",
+                "C_Cpp.default.cStandard": "c11",
+                "terminal.integrated.defaultProfile.linux": "bash"
+            }
+        }
+    },
+    "remoteUser": "root",
+    "mounts": [],
+    "postCreateCommand": "echo 'N64 dev environment ready!'",
+    "forwardPorts": [],
+    "runArgs": [
+        "--privileged"
+    ]
+}
