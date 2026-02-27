@@ -49,10 +49,10 @@ int main(void) {
         // Begin frame - get framebuffer
         surface_t *fb = display_get();
 
-        // Attach RDP to framebuffer
-        rdpq_attach_clear(fb, NULL);
+        // Attach RDP to framebuffer (no auto-clear, we clear manually)
+        rdpq_attach(fb, NULL);
 
-        // Clear to dark blue background
+        // Clear to dark blue background (fill mode works with rectangles)
         rdpq_set_mode_fill(RGBA32(0x10, 0x10, 0x30, 0xFF));
         rdpq_fill_rectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
 

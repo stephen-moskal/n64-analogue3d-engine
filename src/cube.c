@@ -123,6 +123,11 @@ void cube_draw(const LightConfig *light) {
         }
     }
 
+    // Set up 1-cycle mode with flat shading for triangles
+    // (fill mode only works with rectangles on real N64 hardware)
+    rdpq_set_mode_standard();
+    rdpq_mode_combiner(RDPQ_COMBINER_FLAT);
+
     // Draw faces back to front
     for (int i = 0; i < 6; i++) {
         int f = face_order[i];
@@ -143,6 +148,9 @@ void cube_draw(const LightConfig *light) {
         uint8_t b = (uint8_t)((face_base_colors[f][2] * lit_color.b) / 255);
         color_t final_color = RGBA32(r, g, b, 255);
 
+        // Set face color
+        rdpq_set_prim_color(final_color);
+
         // Transform and project vertices
         float sx[4], sy[4];
         for (int v = 0; v < 4; v++) {
@@ -152,8 +160,6 @@ void cube_draw(const LightConfig *light) {
         }
 
         // Draw as two triangles using rdpq
-        rdpq_set_mode_fill(final_color);
-
         // Triangle 1: vertices 0, 1, 2
         rdpq_triangle(&TRIFMT_FILL,
             (float[]){sx[0], sy[0]},
