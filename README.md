@@ -2,14 +2,15 @@
 
 A Nintendo 64 homebrew game engine built with libdragon. This project serves as the foundation for building a Final Fantasy Tactics-style strategy game.
 
-## Current State: Hello Cube Demo
+## Current State: Hello Cube Demo (Verified on Hardware)
 
-The first milestone is a rotating cube with:
+Proof of concept complete — tested on Ares emulator and verified on real hardware (Analogue 3D via SummerCart64).
+
 - Controller input (analog stick + D-pad)
 - Software-rendered 3D with perspective projection
 - Per-face lighting with specular highlights (Blinn-Phong)
 - Backface culling and depth sorting
-- 320x240 @ 16-bit color
+- 320x240 @ 16-bit color, triple-buffered
 
 ## Quick Start
 
@@ -91,6 +92,7 @@ n64-dev-engine/
 - **Lighting**: Per-face Blinn-Phong with ambient, diffuse, and specular components
 - **Culling**: Backface culling based on transformed normals
 - **Sorting**: Painter's algorithm (back-to-front) for correct occlusion
+- **RDP Modes**: 1-cycle mode for triangles, fill mode for rectangles (fill mode only supports rectangles on real hardware)
 
 ## Documentation
 
