@@ -1,8 +1,9 @@
 #include "input.h"
 
-#define ANALOG_DEADZONE 8
-#define ANALOG_SCALE 0.001f
-#define DPAD_ROTATION 0.03f
+#define ANALOG_DEADZONE    8
+#define ANALOG_SCALE       0.002f
+#define ZOOM_SPEED         5.0f
+#define TARGET_SHIFT_SPEED 2.0f
 
 void input_init(void) {
     joypad_init();
@@ -11,42 +12,45 @@ void input_init(void) {
 void input_update(InputState *state) {
     joypad_poll();
 
-    state->rotation_x = 0.0f;
-    state->rotation_y = 0.0f;
-    state->has_input = false;
+    state->orbit_azimuth   = 0.0f;
+    state->orbit_elevation = 0.0f;
+    state->zoom_delta      = 0.0f;
+    state->target_y_delta  = 0.0f;
+    state->has_input       = false;
 
     joypad_inputs_t inputs = joypad_get_inputs(JOYPAD_PORT_1);
-    joypad_buttons_t held = joypad_get_buttons_held(JOYPAD_PORT_1);
+    joypad_buttons_t held  = joypad_get_buttons_held(JOYPAD_PORT_1);
 
-    // Analog stick input (smooth rotation)
+    // Analog stick -> camera orbit
     int stick_x = inputs.stick_x;
     int stick_y = inputs.stick_y;
 
     if (stick_x > ANALOG_DEADZONE || stick_x < -ANALOG_DEADZONE) {
-        state->rotation_y = stick_x * ANALOG_SCALE;
+        state->orbit_azimuth = -stick_x * ANALOG_SCALE;
         state->has_input = true;
     }
-
     if (stick_y > ANALOG_DEADZONE || stick_y < -ANALOG_DEADZONE) {
-        state->rotation_x = -stick_y * ANALOG_SCALE;
+        state->orbit_elevation = stick_y * ANALOG_SCALE;
         state->has_input = true;
     }
 
-    // D-pad input (discrete rotation)
-    if (held.d_left) {
-        state->rotation_y = -DPAD_ROTATION;
+    // C-up/C-down -> zoom
+    if (held.c_up) {
+        state->zoom_delta = -ZOOM_SPEED;
         state->has_input = true;
     }
-    if (held.d_right) {
-        state->rotation_y = DPAD_ROTATION;
+    if (held.c_down) {
+        state->zoom_delta = ZOOM_SPEED;
         state->has_input = true;
     }
-    if (held.d_up) {
-        state->rotation_x = -DPAD_ROTATION;
+
+    // C-left/C-right -> shift target Y
+    if (held.c_left) {
+        state->target_y_delta = -TARGET_SHIFT_SPEED;
         state->has_input = true;
     }
-    if (held.d_down) {
-        state->rotation_x = DPAD_ROTATION;
+    if (held.c_right) {
+        state->target_y_delta = TARGET_SHIFT_SPEED;
         state->has_input = true;
     }
 }

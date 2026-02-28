@@ -1,5 +1,6 @@
 #include <libdragon.h>
 
+#include "render/camera.h"
 #include "render/cube.h"
 #include "render/lighting.h"
 #include "render/texture.h"
@@ -10,8 +11,7 @@
 #define SCREEN_HEIGHT 240
 #define FB_COUNT 3
 
-#define AUTO_ROTATE_SPEED 0.01f
-
+static Camera camera;
 static LightConfig light_config;
 
 static const TextBoxConfig title_text = {
@@ -59,8 +59,14 @@ int main(void) {
     cube_init();
     text_init();
 
-    debugf("Hello Cube - N64 Engine Demo (Textured)\n");
-    debugf("Use analog stick or D-pad to rotate\n");
+    // Initialize camera with default config
+    camera_init(&camera, &CAMERA_DEFAULT);
+
+    // Allocate Z-buffer (16-bit depth, same resolution as framebuffer)
+    surface_t zbuf = surface_alloc(FMT_RGBA16, SCREEN_WIDTH, SCREEN_HEIGHT);
+
+    debugf("SMozN64 Dev Engine (Camera + Z-Buffer)\n");
+    debugf("Analog stick: orbit | C-up/down: zoom | C-left/right: shift Y\n");
 
     InputState input_state;
     float fps = 0.0f;
@@ -82,29 +88,33 @@ int main(void) {
         // Update input
         input_update(&input_state);
 
-        // Update cube rotation
+        // Apply input to camera
         if (input_state.has_input) {
-            cube_update(input_state.rotation_x, input_state.rotation_y);
-        } else {
-            // Auto-rotate when no input
-            cube_update(AUTO_ROTATE_SPEED * 0.5f, AUTO_ROTATE_SPEED);
+            camera_orbit(&camera, input_state.orbit_azimuth,
+                                  input_state.orbit_elevation);
+            camera_zoom(&camera, input_state.zoom_delta);
+            camera_shift_target_y(&camera, input_state.target_y_delta);
         }
+        camera_update(&camera);
+
+        // Auto-rotate cube
+        cube_update();
 
         // Begin frame - get framebuffer
         surface_t *fb = display_get();
 
-        // Attach RDP to framebuffer (no auto-clear, we clear manually)
-        rdpq_attach(fb, NULL);
+        // Attach RDP to both color and depth buffers
+        rdpq_attach(fb, &zbuf);
 
-        // Clear to dark blue background (fill mode works with rectangles)
-        rdpq_set_mode_fill(RGBA32(0x10, 0x10, 0x30, 0xFF));
-        rdpq_fill_rectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+        // Clear to dark blue background + reset Z-buffer
+        rdpq_clear(RGBA32(0x10, 0x10, 0x30, 0xFF));
+        rdpq_clear_z(ZBUF_MAX);
 
         // Draw the cube
-        cube_draw(&light_config);
+        cube_draw(&camera, &light_config);
 
         // Draw text overlays (after 3D geometry, before detach)
-        text_draw(&title_text, "N64 Dev Engine");
+        text_draw(&title_text, "SMozN64 Dev Engine");
 
         const TextureStats *ts = texture_stats_get();
         text_draw_fmt(&stats_text, "T:%d U:%d TMEM:%dB",
@@ -116,6 +126,7 @@ int main(void) {
     }
 
     // Cleanup (unreachable in normal operation)
+    surface_free(&zbuf);
     text_cleanup();
     texture_cleanup();
     cube_cleanup();

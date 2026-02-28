@@ -5,8 +5,10 @@
 #include <stdbool.h>
 
 typedef struct {
-    float rotation_x;
-    float rotation_y;
+    float orbit_azimuth;
+    float orbit_elevation;
+    float zoom_delta;
+    float target_y_delta;
     bool has_input;
 } InputState;
 

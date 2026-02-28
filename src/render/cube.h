@@ -3,10 +3,11 @@
 
 #include <libdragon.h>
 #include "lighting.h"
+#include "camera.h"
 
 void cube_init(void);
-void cube_update(float rot_x, float rot_y);
-void cube_draw(const LightConfig *light);
+void cube_update(void);
+void cube_draw(const Camera *cam, const LightConfig *light);
 void cube_cleanup(void);
 
 #endif
