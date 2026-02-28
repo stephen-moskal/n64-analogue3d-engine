@@ -106,62 +106,76 @@ DMA buffers (used by RSP) must be uncached and 8-byte aligned.
 
 ```
 main.c
-├── input/input       [controller polling]
-├── render/camera     [orbital camera, 3D math]
-├── render/cube       [geometry, transforms, rendering]
-│   ├── render/camera
-│   ├── render/lighting
-│   └── render/texture
-├── render/lighting   [Blinn-Phong calculation]
-├── render/texture    [sprite loading, TMEM upload]
-├── ui/text           [font rendering]
-└── ui/menu           [settings menus]
-    └── ui/text
+├── input/input         [controller polling]
+├── ui/text             [font rendering]
+├── ui/menu             [settings menu overlay]
+│   └── ui/text
+├── scene/scene         [scene manager, lifecycle, transitions]
+│   ├── render/camera   [multi-mode camera, 3D math, frustum, collision]
+│   ├── render/lighting [Blinn-Phong calculation]
+│   ├── collision/collision [collision detection, raycasting]
+│   └── render/texture  [dynamic texture slot management]
+└── scenes/demo_scene   [demo scene implementation]
+    ├── render/cube     [geometry, transforms, rendering]
+    │   ├── render/camera
+    │   ├── render/lighting
+    │   └── render/texture
+    └── scene/scene
 ```
 
 ### Initialization Order
 
 ```c
+// System init (main.c)
 debug_init_isviewer();      // Debug output (ISViewer)
 debug_init_usblog();        // Debug output (USB)
 display_init(...);          // Framebuffers
 rdpq_init();                // RDP command queue
 dfs_init(...);              // ROM filesystem
 input_init();               // Joypad
-lighting_init(&config);     // Light parameters
-texture_init();             // Load sprites from ROM
-cube_init();                // Model matrix
 text_init();                // Load fonts
 menu_init(&menu, title);    // Menu state
-camera_init(&cam, &preset); // Camera matrices
-surface_alloc(...);         // Z-buffer
+surface_alloc(...);         // Z-buffer (shared across scenes)
+
+// Scene manager init
+scene_manager_init(&mgr);
+scene_manager_switch(&mgr, demo_scene_get(), TRANSITION_CUT, 0);
+
+// Inside scene_init() (called by manager):
+collision_world_init();     // Reset collision world
+lighting_init(&config);     // Light parameters
+texture_load_slot();        // Per-scene textures
+scene->on_init();           // Scene-specific setup
+  camera_init(&cam, &preset); // Camera matrices
+  cube_init();                // Model geometry (demo scene)
+  collision_add_*();          // Add colliders
 ```
 
 ### Frame Loop
 
 ```c
 while (1) {
-    // Timing
-    fps = 1.0 / delta_seconds;
+    float dt = 1.0f / 30.0f;
 
-    // Input
-    input_update(&input_state);
-    // Menu toggle (Start button)
-    // Menu input OR camera input (mutually exclusive)
-
-    // Update
-    camera_update(&camera);
-    cube_update();  // Auto-rotation
+    // Scene manager update
+    scene_manager_update(&mgr, dt);
+    //   -> scene_update(current, dt)
+    //      -> per-object on_update()
+    //      -> scene->on_update() [input, game logic]
+    //      -> camera_update()
+    //      -> collision_test_all()
 
     // Render
     surface_t *fb = display_get();
     rdpq_attach(fb, &zbuf);
-    rdpq_clear(bg_color);      // From menu selection
-    rdpq_clear_z(ZBUF_MAX);
 
-    cube_draw(&camera, &light);  // 3D geometry
-    text_draw(...);              // HUD (if debug on)
-    menu_draw(&menu);            // Menu overlay (if open)
+    scene_manager_draw(&mgr);
+    //   -> scene_draw(current)
+    //      -> rdpq_clear(bg_color)
+    //      -> rdpq_clear_z(ZBUF_MAX)
+    //      -> scene->on_draw() [3D geometry, HUD, menu]
+    //      -> per-object on_draw()
+    //   -> transition overlay (if transitioning)
 
     rdpq_detach_show();
 }
@@ -174,8 +188,8 @@ See [RENDERING.md](RENDERING.md) for the full pipeline documentation.
 ### Summary
 
 ```
-CPU: Model Matrix → MVP = VP * Model → Per-face: Cull + Light + Transform
-RDP: Rasterize → Texture Sample → Z-Test → Framebuffer
+CPU: Model Matrix -> MVP = VP * Model -> Per-face: Cull + Light + Transform
+RDP: Rasterize -> Texture Sample -> Z-Test -> Framebuffer
 ```
 
 - Software transforms on CPU, hardware rasterization on RDP
@@ -207,6 +221,42 @@ The lit color modulates the per-face base color and texture:
 ```c
 final_pixel = texture_sample * (face_base_color * lighting) / 255
 ```
+
+## Collision Detection
+
+See [COLLISION.md](COLLISION.md) for full documentation.
+
+### Summary
+
+- Layer-based collision with bitmask filtering
+- Sphere and AABB collider types
+- Broadphase AABB culling + narrowphase shape tests
+- Raycasting (sphere, AABB, triangle)
+- Overlap queries
+- Up to 64 colliders, 32 results per frame
+
+## Scene System
+
+See [SCENE_SYSTEM.md](SCENE_SYSTEM.md) for full documentation.
+
+### Summary
+
+- Code-defined scenes with callback lifecycle (init/update/draw/cleanup)
+- Each scene owns Camera, LightConfig, CollisionWorld
+- Scene manager with transitions (cut, fade-black, fade-white)
+- Up to 32 objects and 16 textures per scene
+- Support for both independent and shared-coordinate scenes
+
+## Camera System
+
+See [CAMERA.md](CAMERA.md) for full documentation.
+
+### Summary
+
+- Three modes: orbital, fixed, follow
+- Camera collision via raycasting against environment layer
+- Perspective projection with frustum culling
+- Dirty flag optimization
 
 ## Text Rendering
 
@@ -246,11 +296,11 @@ text_draw_fmt(&config, "formatted %d", value);
 | Z-buffer | ~150KB | 320x240 x 2 bytes |
 | Textures (sprites) | ~12KB | 6 x 32x32 RGBA16 |
 | TMEM per frame | 4KB max | RDP on-chip texture cache |
-| Code + data | ~255KB | Current ROM size |
+| Code + data | ~270KB | Current ROM size |
 | Audio buffers | ~64KB | Reserved for future |
 | **Available** | **~3MB** | For game assets and logic |
 
-With Expansion Pak (8MB), an additional 4MB is available.
+With Expansion Pak (8MB), an additional 4MB is available. Shared resources (framebuffers, Z-buffer) persist across scene transitions. Per-scene textures load/unload with the scene.
 
 ## Optimization Notes
 
@@ -258,26 +308,49 @@ With Expansion Pak (8MB), an additional 4MB is available.
 - Dirty flag on camera (skip matrix recompute when unchanged)
 - Frustum culling rejects entire objects before per-face work
 - Backface culling skips ~50% of faces on convex objects
+- Static-static collision pairs skipped
+- Broadphase AABB culling before narrowphase shape tests
 
 ### RDP
 - Batch triangles by render state to minimize mode changes
 - One texture upload per face (6 per cube) — batch by texture for multiple objects
 - Z-buffer eliminates need for CPU-side depth sorting
+- Transition overlays use 1-cycle mode triangles (hardware-safe)
 
 ### Memory
 - Use `surface_alloc()` for Z-buffer (allocated once, reused every frame)
-- Sprite slots are loaded once at init, uploaded to TMEM per-frame as needed
+- Sprite slots are loaded once at scene init, uploaded to TMEM per-frame as needed
+- Per-scene texture load/free prevents accumulation
 - Menu/text configs are stack-allocated or static
 
 ## Source Files
 
 | File | Purpose |
 |------|---------|
-| `src/main.c` | Entry point, game loop, subsystem init |
-| `src/render/camera.c/h` | Camera, 3D math, frustum culling |
+| `src/main.c` | Entry point, display/input/menu init, scene manager loop |
+| `src/render/camera.c/h` | Multi-mode camera, 3D math, frustum culling, collision |
 | `src/render/cube.c/h` | Cube geometry and rendering |
 | `src/render/lighting.c/h` | Blinn-Phong lighting |
-| `src/render/texture.c/h` | Texture loading and TMEM management |
+| `src/render/texture.c/h` | Texture loading, TMEM management, dynamic slots |
+| `src/math/vec3.h` | Vector math library (header-only) |
+| `src/collision/collision.c/h` | Collision detection, raycasting, overlap queries |
+| `src/scene/scene.c/h` | Scene lifecycle, manager, transitions |
+| `src/scenes/demo_scene.c/h` | Demo scene (textured cube with all features) |
 | `src/input/input.c/h` | Controller input |
 | `src/ui/text.c/h` | Text rendering |
 | `src/ui/menu.c/h` | Menu system |
+
+## Documentation Index
+
+| Document | Contents |
+|----------|----------|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | This file — system overview |
+| [RENDERING.md](RENDERING.md) | Rendering pipeline details |
+| [TEXTURES.md](TEXTURES.md) | Texture pipeline and TMEM |
+| [CAMERA.md](CAMERA.md) | Camera modes, math, frustum, collision |
+| [COLLISION.md](COLLISION.md) | Collision detection and raycasting |
+| [SCENE_SYSTEM.md](SCENE_SYSTEM.md) | Scene/world management |
+| [MENU_SYSTEM.md](MENU_SYSTEM.md) | Menu overlay system |
+| [INPUT.md](INPUT.md) | Controller input handling |
+| [SETUP.md](SETUP.md) | Environment setup guide |
+| [WORKFLOW.md](WORKFLOW.md) | Development workflow |
