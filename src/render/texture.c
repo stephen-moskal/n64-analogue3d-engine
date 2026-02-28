@@ -30,7 +30,12 @@ int texture_upload(int slot, rdpq_tile_t tile) {
     assert(slot >= 0 && slot < slot_count);
     assert(slots[slot] != NULL);
 
-    int bytes = rdpq_sprite_upload(tile, slots[slot], NULL);
+    rdpq_sprite_upload(tile, slots[slot], NULL);
+
+    // Compute TMEM bytes from sprite metadata (return value of
+    // rdpq_sprite_upload can be 0 due to internal caching)
+    surface_t surf = sprite_get_pixels(slots[slot]);
+    int bytes = surf.stride * slots[slot]->height;
     stats.upload_count++;
     stats.tmem_bytes_used += bytes;
     return bytes;
