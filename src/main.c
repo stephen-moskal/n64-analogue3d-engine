@@ -6,6 +6,7 @@
 #include "render/texture.h"
 #include "input/input.h"
 #include "ui/text.h"
+#include "ui/menu.h"
 
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
@@ -13,6 +14,24 @@
 
 static Camera camera;
 static LightConfig light_config;
+static Menu start_menu;
+
+// Menu item indices
+#define MENU_ITEM_BG_COLOR   0
+#define MENU_ITEM_DEBUG_TEXT 1
+
+// Background color options
+static const char *bg_options[] = {
+    "Dark Blue", "Black", "Dark Red", "Dark Green", "Dark Purple"
+};
+static const color_t bg_colors[] = {
+    {0x10, 0x10, 0x30, 0xFF},  // Dark Blue (default)
+    {0x00, 0x00, 0x00, 0xFF},  // Black
+    {0x30, 0x10, 0x10, 0xFF},  // Dark Red
+    {0x10, 0x30, 0x10, 0xFF},  // Dark Green
+    {0x20, 0x10, 0x30, 0xFF},  // Dark Purple
+};
+static const char *toggle_options[] = {"On", "Off"};
 
 static const TextBoxConfig title_text = {
     .x       = 20.0f,
@@ -59,14 +78,19 @@ int main(void) {
     cube_init();
     text_init();
 
+    // Initialize menu
+    menu_init(&start_menu, "Start Menu");
+    menu_add_item(&start_menu, "BG Color", bg_options, 5, 0);
+    menu_add_item(&start_menu, "Debug Text", toggle_options, 2, 0);
+
     // Initialize camera with default config
     camera_init(&camera, &CAMERA_DEFAULT);
 
     // Allocate Z-buffer (16-bit depth, same resolution as framebuffer)
     surface_t zbuf = surface_alloc(FMT_RGBA16, SCREEN_WIDTH, SCREEN_HEIGHT);
 
-    debugf("SMozN64 Dev Engine (Camera + Z-Buffer)\n");
-    debugf("Analog stick: orbit | C-up/down: zoom | C-left/right: shift Y\n");
+    debugf("SMozN64 Dev Engine (Camera + Z-Buffer + Menu)\n");
+    debugf("Analog: orbit | C-btns: zoom/shift | Start: menu\n");
 
     InputState input_state;
     float fps = 0.0f;
@@ -85,19 +109,31 @@ int main(void) {
         // Reset per-frame texture stats
         texture_stats_reset();
 
-        // Update input
+        // Update input (also calls joypad_poll)
         input_update(&input_state);
 
-        // Apply input to camera
-        if (input_state.has_input) {
-            camera_orbit(&camera, input_state.orbit_azimuth,
-                                  input_state.orbit_elevation);
-            camera_zoom(&camera, input_state.zoom_delta);
-            camera_shift_target_y(&camera, input_state.target_y_delta);
+        // Menu toggle on Start press
+        joypad_buttons_t pressed = joypad_get_buttons_pressed(JOYPAD_PORT_1);
+        if (pressed.start) {
+            if (start_menu.is_open) menu_close(&start_menu, true);
+            else menu_open(&start_menu);
+        }
+
+        if (start_menu.is_open) {
+            // Menu handles its own input
+            menu_update(&start_menu);
+        } else {
+            // Apply input to camera
+            if (input_state.has_input) {
+                camera_orbit(&camera, input_state.orbit_azimuth,
+                                      input_state.orbit_elevation);
+                camera_zoom(&camera, input_state.zoom_delta);
+                camera_shift_target_y(&camera, input_state.target_y_delta);
+            }
         }
         camera_update(&camera);
 
-        // Auto-rotate cube
+        // Auto-rotate cube (continues even when menu is open)
         cube_update();
 
         // Begin frame - get framebuffer
@@ -106,20 +142,29 @@ int main(void) {
         // Attach RDP to both color and depth buffers
         rdpq_attach(fb, &zbuf);
 
-        // Clear to dark blue background + reset Z-buffer
-        rdpq_clear(RGBA32(0x10, 0x10, 0x30, 0xFF));
+        // Clear background (color from menu) + reset Z-buffer
+        color_t bg = bg_colors[menu_get_value(&start_menu, MENU_ITEM_BG_COLOR)];
+        rdpq_clear(bg);
         rdpq_clear_z(ZBUF_MAX);
 
         // Draw the cube
         cube_draw(&camera, &light_config);
 
-        // Draw text overlays (after 3D geometry, before detach)
-        text_draw(&title_text, "SMozN64 Dev Engine");
+        // Draw text overlays (if debug text is On)
+        bool show_debug = (menu_get_value(&start_menu, MENU_ITEM_DEBUG_TEXT) == 0);
+        if (show_debug) {
+            text_draw(&title_text, "SMozN64 Dev Engine");
 
-        const TextureStats *ts = texture_stats_get();
-        text_draw_fmt(&stats_text, "T:%d U:%d TMEM:%dB",
-            ts->triangle_count, ts->upload_count, ts->tmem_bytes_used);
-        text_draw_fmt(&fps_text, "FPS: %.0f", fps);
+            const TextureStats *ts = texture_stats_get();
+            text_draw_fmt(&stats_text, "T:%d U:%d TMEM:%dB",
+                ts->triangle_count, ts->upload_count, ts->tmem_bytes_used);
+            text_draw_fmt(&fps_text, "FPS: %.0f", fps);
+        }
+
+        // Draw menu overlay (if open)
+        if (start_menu.is_open) {
+            menu_draw(&start_menu);
+        }
 
         // End frame
         rdpq_detach_show();
