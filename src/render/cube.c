@@ -1,7 +1,9 @@
 #include "cube.h"
+#include "texture.h"
 #include <math.h>
 
 #define CUBE_SIZE 80.0f
+#define TEX_SIZE 32.0f
 
 // Rotation angles
 static float angle_x = 0.3f;
@@ -20,7 +22,7 @@ static const float face_normals[6][3] = {
     {-1.0f,  0.0f,  0.0f},  // Left   -X
 };
 
-// Base face colors (will be modulated by lighting)
+// Base face colors (modulated by lighting, used as texture tint)
 static const uint8_t face_base_colors[6][3] = {
     {255, 100, 100},  // Front  - Red
     {100, 255, 100},  // Back   - Green
@@ -31,6 +33,7 @@ static const uint8_t face_base_colors[6][3] = {
 };
 
 // Vertex positions for each face (4 corners per face)
+// Order: BL, BR, TR, TL
 static const float face_verts[6][4][3] = {
     // Front (+Z)
     {{-1, -1,  1}, { 1, -1,  1}, { 1,  1,  1}, {-1,  1,  1}},
@@ -44,6 +47,20 @@ static const float face_verts[6][4][3] = {
     {{ 1, -1,  1}, { 1, -1, -1}, { 1,  1, -1}, { 1,  1,  1}},
     // Left (-X)
     {{-1, -1, -1}, {-1, -1,  1}, {-1,  1,  1}, {-1,  1, -1}},
+};
+
+// UV coordinates for quad corners (BL, BR, TR, TL) mapped to 32x32 texture
+static const float face_uvs[4][2] = {
+    {0.0f,       TEX_SIZE},   // BL: S=0,   T=32
+    {TEX_SIZE,   TEX_SIZE},   // BR: S=32,  T=32
+    {TEX_SIZE,   0.0f},       // TR: S=32,  T=0
+    {0.0f,       0.0f},       // TL: S=0,   T=0
+};
+
+// Face-to-texture-slot mapping
+static const int face_tex_slot[6] = {
+    TEX_CUBE_FRONT, TEX_CUBE_BACK, TEX_CUBE_TOP,
+    TEX_CUBE_BOTTOM, TEX_CUBE_RIGHT, TEX_CUBE_LEFT
 };
 
 // Rotation matrix
@@ -75,14 +92,14 @@ static void transform_point(const float in[3], float out[3]) {
     out[2] = rot_matrix[2][0] * in[0] + rot_matrix[2][1] * in[1] + rot_matrix[2][2] * in[2];
 }
 
-static void project_point(const float p[3], float *sx, float *sy) {
-    // Simple perspective projection
+static void project_point(const float p[3], float *sx, float *sy, float *inv_w) {
     float z = p[2] + 300.0f;  // Camera distance
     if (z < 1.0f) z = 1.0f;
 
     float scale = 200.0f / z;
     *sx = 160.0f + p[0] * scale * CUBE_SIZE;
     *sy = 120.0f - p[1] * scale * CUBE_SIZE;
+    *inv_w = 1.0f / z;
 }
 
 void cube_init(void) {
@@ -123,10 +140,11 @@ void cube_draw(const LightConfig *light) {
         }
     }
 
-    // Set up 1-cycle mode with flat shading for triangles
-    // (fill mode only works with rectangles on real N64 hardware)
+    // Set up textured rendering mode (1-cycle, texture × prim_color)
     rdpq_set_mode_standard();
-    rdpq_mode_combiner(RDPQ_COMBINER_FLAT);
+    rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
+    rdpq_mode_persp(true);
+    rdpq_mode_filter(FILTER_BILINEAR);
 
     // Draw faces back to front
     for (int i = 0; i < 6; i++) {
@@ -139,40 +157,32 @@ void cube_draw(const LightConfig *light) {
         // Backface culling (skip faces pointing away from camera)
         if (normal[2] < 0) continue;
 
-        // Calculate lighting
+        // Calculate lighting and modulate with base face color
         color_t lit_color = lighting_calculate(light, normal, view_dir);
-
-        // Modulate with base face color
         uint8_t r = (uint8_t)((face_base_colors[f][0] * lit_color.r) / 255);
         uint8_t g = (uint8_t)((face_base_colors[f][1] * lit_color.g) / 255);
         uint8_t b = (uint8_t)((face_base_colors[f][2] * lit_color.b) / 255);
-        color_t final_color = RGBA32(r, g, b, 255);
+        rdpq_set_prim_color(RGBA32(r, g, b, 255));
 
-        // Set face color
-        rdpq_set_prim_color(final_color);
+        // Upload face texture to TMEM
+        texture_upload(face_tex_slot[f], TILE0);
 
-        // Transform and project vertices
-        float sx[4], sy[4];
+        // Transform, project vertices, and build vertex arrays with UV + INV_W
+        // TRIFMT_TEX format: {X, Y, S, T, INV_W}
+        float verts[4][5];
         for (int v = 0; v < 4; v++) {
             float transformed[3];
             transform_point(face_verts[f][v], transformed);
-            project_point(transformed, &sx[v], &sy[v]);
+            project_point(transformed, &verts[v][0], &verts[v][1], &verts[v][4]);
+            verts[v][2] = face_uvs[v][0];  // S
+            verts[v][3] = face_uvs[v][1];  // T
         }
 
-        // Draw as two triangles using rdpq
-        // Triangle 1: vertices 0, 1, 2
-        rdpq_triangle(&TRIFMT_FILL,
-            (float[]){sx[0], sy[0]},
-            (float[]){sx[1], sy[1]},
-            (float[]){sx[2], sy[2]}
-        );
+        // Draw as two triangles
+        rdpq_triangle(&TRIFMT_TEX, verts[0], verts[1], verts[2]);
+        rdpq_triangle(&TRIFMT_TEX, verts[0], verts[2], verts[3]);
 
-        // Triangle 2: vertices 0, 2, 3
-        rdpq_triangle(&TRIFMT_FILL,
-            (float[]){sx[0], sy[0]},
-            (float[]){sx[2], sy[2]},
-            (float[]){sx[3], sy[3]}
-        );
+        texture_stats_add_triangles(2);
     }
 }
 
