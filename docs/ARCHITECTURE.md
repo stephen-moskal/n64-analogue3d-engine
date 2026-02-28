@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Understanding N64 hardware and the libdragon software stack.
+N64 hardware fundamentals, the libdragon software stack, and engine design.
 
 ## N64 Hardware
 
@@ -11,11 +11,9 @@ Understanding N64 hardware and the libdragon software stack.
 - **Cache:** 16KB instruction, 8KB data
 - **Memory:** 4MB RDRAM (8MB with Expansion Pak)
 
-The CPU handles game logic, physics, AI, and orchestrates the RCP.
+The CPU handles game logic, 3D math (transforms, projection, lighting, culling), and orchestrates the RCP.
 
 ### RCP (Reality Co-Processor)
-
-The RCP contains two processors:
 
 #### RSP (Reality Signal Processor)
 - **Purpose:** Geometry transformation, lighting, audio
@@ -23,16 +21,12 @@ The RCP contains two processors:
 - **Memory:** 4KB instruction, 4KB data (DMEM)
 - **Architecture:** Vector processor (8x 16-bit SIMD)
 
-The RSP runs microcode that transforms vertices, calculates lighting, and generates RDP commands.
+The RSP runs microcode for vertex transformation and audio mixing. The engine currently does vertex transforms on the CPU, but RSP-accelerated rendering (via tiny3d or custom microcode) is a future option.
 
 #### RDP (Reality Display Processor)
 - **Purpose:** Rasterization, texturing, blending
-- **Features:**
-  - Triangle rasterization
-  - Texture mapping (4KB texture cache)
-  - Z-buffering
-  - Anti-aliasing
-  - Alpha blending
+- **TMEM:** 4KB texture cache
+- **Features:** Triangle rasterization, texture mapping, Z-buffering, anti-aliasing, alpha blending
 
 ### Memory Map
 
@@ -46,21 +40,14 @@ The RSP runs microcode that transforms vertices, calculates lighting, and genera
 
 ### Display
 
-- **Resolution:** 320x240 (LO) or 640x480 (HI)
-- **Color depth:** 16-bit or 32-bit
-- **Framebuffer:** In RDRAM
-- **Refresh:** 60Hz (NTSC) / 50Hz (PAL)
+| Parameter | Value |
+|-----------|-------|
+| Resolution | 320x240 (LO) or 640x480 (HI) |
+| Color depth | 16-bit (RGBA5551) or 32-bit (RGBA8888) |
+| Framebuffer | In RDRAM |
+| Refresh | 60Hz (NTSC) / 50Hz (PAL) |
 
-## libdragon Architecture
-
-### Overview
-
-libdragon is a modern, open-source N64 SDK providing:
-- Hardware abstraction
-- Display/audio subsystems
-- Input handling
-- RSP microcode (including custom)
-- ROM filesystem
+## libdragon Stack
 
 ### Key Subsystems
 
@@ -70,9 +57,7 @@ libdragon is a modern, open-source N64 SDK providing:
 display_init(RESOLUTION_320x240, DEPTH_16_BPP, 3, GAMMA_NONE, FILTERS_RESAMPLE);
 ```
 
-- Manages framebuffers
-- Handles V-blank synchronization
-- Triple buffering for smooth animation
+Manages framebuffers, V-blank synchronization, triple buffering.
 
 #### RDPQ (RDP Queue)
 
@@ -83,10 +68,7 @@ rdpq_attach(framebuffer, depth_buffer);
 rdpq_detach_show();
 ```
 
-- High-level RDP command interface
-- Automatic state management
-- Batches commands for efficiency
-- Triangle rasterization via `rdpq_triangle()`
+High-level RDP command interface with automatic state management and command batching.
 
 #### Joypad
 
@@ -94,155 +76,208 @@ rdpq_detach_show();
 joypad_init();
 joypad_poll();
 joypad_inputs_t inputs = joypad_get_inputs(JOYPAD_PORT_1);
+joypad_buttons_t pressed = joypad_get_buttons_pressed(JOYPAD_PORT_1);
 ```
 
-- Supports N64 and GameCube controllers
-- Analog stick with deadzone handling
-- Button state (pressed, held, released)
+Supports N64 and GameCube controllers. Provides analog stick values, held/pressed/released button states.
+
+#### ROM Filesystem (DFS)
+
+```c
+dfs_init(DFS_DEFAULT_LOCATION);
+sprite_t *spr = sprite_load("rom:/texture.sprite");
+```
+
+Assets in `filesystem/` are packed into a DFS archive and appended to the ROM. Accessed at runtime via `rom:/` prefix.
 
 ### Memory Management
 
-#### Standard Allocation
 ```c
-void *ptr = malloc(size);  // Cached memory
+void *ptr = malloc(size);              // Cached memory (general use)
+void *ptr = malloc_uncached(size);     // Uncached (for DMA buffers)
+surface_t zbuf = surface_alloc(FMT_RGBA16, 320, 240);  // Surface allocation
 ```
 
-#### Uncached Allocation
-```c
-void *ptr = malloc_uncached(size);  // For DMA buffers
-```
+DMA buffers (used by RSP) must be uncached and 8-byte aligned.
 
-The RSP uses DMA to access memory. DMA buffers must be:
-- Uncached (to avoid coherency issues)
-- 8-byte aligned
+## Engine Architecture
 
-## Current Rendering Approach
-
-Our Hello Cube demo uses a hybrid software/hardware approach:
-
-### CPU (Software)
-- 3D transformation (rotation matrices)
-- Perspective projection
-- Lighting calculation (Blinn-Phong)
-- Backface culling
-- Depth sorting (painter's algorithm)
-
-### RDP (Hardware)
-- Triangle rasterization via `rdpq_triangle()`
-- Fill mode rendering
-- Framebuffer writes
-
-This approach is simpler than full RSP-accelerated 3D but sufficient for learning and small scenes.
-
-## Lighting Model
-
-We implement Blinn-Phong lighting in software:
-
-```c
-// Ambient component
-color += ambient_light;
-
-// Diffuse component (Lambert)
-float ndotl = dot(normal, light_direction);
-color += diffuse_light * max(0, ndotl);
-
-// Specular component (Blinn-Phong)
-vec3 half = normalize(light_direction + view_direction);
-float ndoth = dot(normal, half);
-color += specular_intensity * pow(max(0, ndoth), shininess);
-```
-
-Per-face lighting is computed on the CPU before drawing.
-
-## Frame Rendering Pipeline
-
-```
-1. CPU: Poll input
-         ↓
-2. CPU: Update rotation matrix
-         ↓
-3. CPU: For each face:
-        - Transform vertices
-        - Calculate lighting
-        - Project to screen
-        - Depth sort
-         ↓
-4. CPU: Submit triangles to RDPQ
-         ↓
-5. RDP: Rasterize triangles
-        Fill with solid color
-        Write to framebuffer
-         ↓
-6. VI:  Display framebuffer
-```
-
-### Frame Timing
-
-At 60 FPS, each frame has ~16.67ms:
-- CPU budget: ~10-12ms (for software 3D)
-- RDP budget: ~8-12ms (can overlap with CPU)
-
-## Memory Budget (4MB Configuration)
-
-| Resource | Approximate Size |
-|----------|-----------------|
-| Framebuffer x3 | 450KB |
-| Z-buffer | 150KB |
-| Audio buffers | 64KB |
-| ROM filesystem | Variable |
-| Game code/data | Remaining |
-
-With Expansion Pak (8MB), significantly more room for assets.
-
-## Optimization Guidelines
-
-### CPU
-- Avoid floating point when possible (use fixed point)
-- Cache-friendly data layout
-- Minimize cache misses
-- Consider SIMD for batch operations
-
-### RDP
-- Reduce overdraw
-- Batch triangles by render state
-- Minimize mode changes between triangles
-
-### Memory
-- Use uncached memory for DMA buffers
-- Align buffers to 8 bytes
-- Pool allocations where possible
-
-## Project Architecture
+### Module Dependency Graph
 
 ```
 main.c
-  ├── display_init()       → Display subsystem (320x240, triple buffer)
-  ├── rdpq_init()          → RDP command queue
-  ├── input_init()         → Joypad subsystem
-  ├── lighting_init()      → Light configuration
-  └── cube_init()          → Initial rotation matrix
-
-Game Loop:
-  1. input_update()        → Poll controller, get rotation delta
-  2. cube_update()         → Update rotation matrix
-  3. rdpq_attach_clear()   → Begin frame, clear screen
-  4. cube_draw()           → Transform, light, project, rasterize
-  5. rdpq_detach_show()    → Present frame
+├── input/input       [controller polling]
+├── render/camera     [orbital camera, 3D math]
+├── render/cube       [geometry, transforms, rendering]
+│   ├── render/camera
+│   ├── render/lighting
+│   └── render/texture
+├── render/lighting   [Blinn-Phong calculation]
+├── render/texture    [sprite loading, TMEM upload]
+├── ui/text           [font rendering]
+└── ui/menu           [settings menus]
+    └── ui/text
 ```
 
-This architecture separates concerns and prepares for scaling to a full game engine.
+### Initialization Order
 
-## Future Enhancements
+```c
+debug_init_isviewer();      // Debug output (ISViewer)
+debug_init_usblog();        // Debug output (USB)
+display_init(...);          // Framebuffers
+rdpq_init();                // RDP command queue
+dfs_init(...);              // ROM filesystem
+input_init();               // Joypad
+lighting_init(&config);     // Light parameters
+texture_init();             // Load sprites from ROM
+cube_init();                // Model matrix
+text_init();                // Load fonts
+menu_init(&menu, title);    // Menu state
+camera_init(&cam, &preset); // Camera matrices
+surface_alloc(...);         // Z-buffer
+```
 
-### Hardware-Accelerated 3D (tiny3d)
-When tiny3d becomes available for Apple Silicon Docker images, we can upgrade to:
-- RSP-accelerated vertex transformation
-- Per-vertex lighting
-- Hardware Z-buffering
-- Texture mapping
+### Frame Loop
 
-### Additional Features
-- Model loading (T3DM format)
-- Skeletal animation
-- Particle systems
-- Multi-viewport rendering (split-screen)
+```c
+while (1) {
+    // Timing
+    fps = 1.0 / delta_seconds;
+
+    // Input
+    input_update(&input_state);
+    // Menu toggle (Start button)
+    // Menu input OR camera input (mutually exclusive)
+
+    // Update
+    camera_update(&camera);
+    cube_update();  // Auto-rotation
+
+    // Render
+    surface_t *fb = display_get();
+    rdpq_attach(fb, &zbuf);
+    rdpq_clear(bg_color);      // From menu selection
+    rdpq_clear_z(ZBUF_MAX);
+
+    cube_draw(&camera, &light);  // 3D geometry
+    text_draw(...);              // HUD (if debug on)
+    menu_draw(&menu);            // Menu overlay (if open)
+
+    rdpq_detach_show();
+}
+```
+
+## Rendering Pipeline
+
+See [RENDERING.md](RENDERING.md) for the full pipeline documentation.
+
+### Summary
+
+```
+CPU: Model Matrix → MVP = VP * Model → Per-face: Cull + Light + Transform
+RDP: Rasterize → Texture Sample → Z-Test → Framebuffer
+```
+
+- Software transforms on CPU, hardware rasterization on RDP
+- Hardware 16-bit Z-buffer (replaced painter's algorithm)
+- `TRIFMT_ZBUF_TEX` vertex format: `{X, Y, Z, S, T, INV_W}`
+
+## Lighting Model
+
+Per-face Blinn-Phong lighting computed on the CPU:
+
+```
+color = ambient
+      + diffuse * max(0, dot(normal, light_dir))
+      + specular * pow(max(0, dot(normal, half_vec)), 32)
+```
+
+Where `half_vec = normalize(light_dir + view_dir)`.
+
+### Default Light Configuration
+
+| Component | Value | Notes |
+|-----------|-------|-------|
+| Ambient | (0.15, 0.15, 0.20) | Slightly blue tint |
+| Diffuse | (0.85, 0.80, 0.70) | Warm white |
+| Direction | normalized(1, 1, 1) | Upper-right-front |
+| Specular | 0.5 intensity, shininess ~32 | Blinn-Phong |
+
+The lit color modulates the per-face base color and texture:
+```c
+final_pixel = texture_sample * (face_base_color * lighting) / 255
+```
+
+## Text Rendering
+
+Built on libdragon's `rdpq_text` system:
+
+```c
+typedef struct {
+    float x, y;
+    int16_t width, height;
+    uint8_t font_id;
+    color_t color;
+    rdpq_align_t align;
+    rdpq_valign_t valign;
+    rdpq_textwrap_t wrap;
+} TextBoxConfig;
+```
+
+### Available Fonts
+
+| ID | Constant | Type |
+|----|----------|------|
+| 1 | `FONT_DEBUG_MONO` | Monospace (debug, stats) |
+| 2 | `FONT_DEBUG_VAR` | Variable-width (titles) |
+
+### API
+
+```c
+text_draw(&config, "static string");
+text_draw_fmt(&config, "formatted %d", value);
+```
+
+## Memory Budget (4MB)
+
+| Resource | Size | Notes |
+|----------|------|-------|
+| Framebuffer x3 | ~450KB | 320x240 x 2 bytes x 3 |
+| Z-buffer | ~150KB | 320x240 x 2 bytes |
+| Textures (sprites) | ~12KB | 6 x 32x32 RGBA16 |
+| TMEM per frame | 4KB max | RDP on-chip texture cache |
+| Code + data | ~255KB | Current ROM size |
+| Audio buffers | ~64KB | Reserved for future |
+| **Available** | **~3MB** | For game assets and logic |
+
+With Expansion Pak (8MB), an additional 4MB is available.
+
+## Optimization Notes
+
+### CPU
+- Dirty flag on camera (skip matrix recompute when unchanged)
+- Frustum culling rejects entire objects before per-face work
+- Backface culling skips ~50% of faces on convex objects
+
+### RDP
+- Batch triangles by render state to minimize mode changes
+- One texture upload per face (6 per cube) — batch by texture for multiple objects
+- Z-buffer eliminates need for CPU-side depth sorting
+
+### Memory
+- Use `surface_alloc()` for Z-buffer (allocated once, reused every frame)
+- Sprite slots are loaded once at init, uploaded to TMEM per-frame as needed
+- Menu/text configs are stack-allocated or static
+
+## Source Files
+
+| File | Purpose |
+|------|---------|
+| `src/main.c` | Entry point, game loop, subsystem init |
+| `src/render/camera.c/h` | Camera, 3D math, frustum culling |
+| `src/render/cube.c/h` | Cube geometry and rendering |
+| `src/render/lighting.c/h` | Blinn-Phong lighting |
+| `src/render/texture.c/h` | Texture loading and TMEM management |
+| `src/input/input.c/h` | Controller input |
+| `src/ui/text.c/h` | Text rendering |
+| `src/ui/menu.c/h` | Menu system |
