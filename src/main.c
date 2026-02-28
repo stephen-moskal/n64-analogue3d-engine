@@ -22,7 +22,8 @@ static Menu start_menu;
 
 // Background color options
 static const char *bg_options[] = {
-    "Dark Blue", "Black", "Dark Red", "Dark Green", "Dark Purple"
+    "Dark Blue", "Black", "Dark Red", "Dark Green", "Dark Purple",
+    "Light Blue", "White",
 };
 static const color_t bg_colors[] = {
     {0x10, 0x10, 0x30, 0xFF},  // Dark Blue (default)
@@ -30,6 +31,8 @@ static const color_t bg_colors[] = {
     {0x30, 0x10, 0x10, 0xFF},  // Dark Red
     {0x10, 0x30, 0x10, 0xFF},  // Dark Green
     {0x20, 0x10, 0x30, 0xFF},  // Dark Purple
+    {0x60, 0x80, 0xD0, 0xFF},  // Light Blue
+    {0xFF, 0xFF, 0xFF, 0xFF},  // White
 };
 static const char *toggle_options[] = {"On", "Off"};
 
@@ -80,7 +83,7 @@ int main(void) {
 
     // Initialize menu
     menu_init(&start_menu, "Start Menu");
-    menu_add_item(&start_menu, "BG Color", bg_options, 5, 0);
+    menu_add_item(&start_menu, "BG Color", bg_options, 7, 0);
     menu_add_item(&start_menu, "Debug Text", toggle_options, 2, 0);
 
     // Initialize camera with default config
