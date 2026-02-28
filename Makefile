@@ -19,6 +19,7 @@ OBJS = $(BUILD_DIR)/main.o \
        $(BUILD_DIR)/render/lighting.o \
        $(BUILD_DIR)/render/texture.o \
        $(BUILD_DIR)/render/camera.o \
+       $(BUILD_DIR)/render/floor.o \
        $(BUILD_DIR)/input/input.o \
        $(BUILD_DIR)/ui/text.o \
        $(BUILD_DIR)/ui/menu.o \

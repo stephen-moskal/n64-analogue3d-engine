@@ -1,5 +1,6 @@
 #include "demo_scene.h"
 #include "../render/cube.h"
+#include "../render/floor.h"
 #include "../render/texture.h"
 #include "../input/input.h"
 #include "../ui/text.h"
@@ -232,6 +233,9 @@ static void demo_update(Scene *scene, float dt) {
 }
 
 static void demo_draw(Scene *scene) {
+    // Draw the checkered floor
+    floor_draw(&scene->camera, &scene->lighting);
+
     // Draw the cube
     cube_draw(&scene->camera, &scene->lighting);
 
