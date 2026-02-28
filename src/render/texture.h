@@ -26,4 +26,9 @@ void texture_stats_add_triangles(int count);
 const TextureStats *texture_stats_get(void);
 void texture_cleanup(void);
 
+// Dynamic per-slot loading (for scene-based texture management)
+bool texture_load_slot(int slot, const char *path);
+void texture_free_slot(int slot);
+bool texture_slot_loaded(int slot);
+
 #endif

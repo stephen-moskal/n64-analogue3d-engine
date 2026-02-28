@@ -1,12 +1,15 @@
 #include "camera.h"
+#include "../collision/collision.h"
 #include <math.h>
 #include <string.h>
 
 #define MAX_ELEVATION  1.4835f   // ~85 degrees
 #define MIN_DISTANCE   50.0f
 #define MAX_DISTANCE   1000.0f
+#define COLLISION_OFFSET 5.0f    // Pull camera forward from hit point
 
 const CameraConfig CAMERA_DEFAULT = {
+    .mode       = CAMERA_MODE_ORBITAL,
     .azimuth    = 0.0f,
     .elevation  = 0.3f,
     .distance   = 300.0f,
@@ -14,32 +17,13 @@ const CameraConfig CAMERA_DEFAULT = {
     .fov_y      = 1.0472f,     // 60 degrees
     .near_plane = 10.0f,
     .far_plane  = 1000.0f,
+    .follow_offset    = {0.0f, 200.0f, -300.0f},
+    .follow_smoothing = 0.1f,
+    .fixed_position   = {0.0f, 200.0f, 300.0f},
+    .fixed_target     = {0.0f, 0.0f, 0.0f},
 };
 
-// --- Vector utilities ---
-
-static inline float vec3_dot(const vec3_t *a, const vec3_t *b) {
-    return a->x * b->x + a->y * b->y + a->z * b->z;
-}
-
-static inline vec3_t vec3_sub(const vec3_t *a, const vec3_t *b) {
-    return (vec3_t){a->x - b->x, a->y - b->y, a->z - b->z};
-}
-
-static inline vec3_t vec3_cross(const vec3_t *a, const vec3_t *b) {
-    return (vec3_t){
-        a->y * b->z - a->z * b->y,
-        a->z * b->x - a->x * b->z,
-        a->x * b->y - a->y * b->x
-    };
-}
-
-static inline vec3_t vec3_normalize(const vec3_t *v) {
-    float len = sqrtf(v->x * v->x + v->y * v->y + v->z * v->z);
-    if (len < 0.0001f) return (vec3_t){0.0f, 0.0f, 0.0f};
-    float inv = 1.0f / len;
-    return (vec3_t){v->x * inv, v->y * inv, v->z * inv};
-}
+// vec3 functions now in math/vec3.h (included via camera.h)
 
 // --- Matrix utilities ---
 
@@ -171,6 +155,7 @@ static void extract_frustum(const mat4_t *vp, float frustum[6][4]) {
 // --- Camera API ---
 
 void camera_init(Camera *cam, const CameraConfig *config) {
+    cam->mode       = config->mode;
     cam->azimuth    = config->azimuth;
     cam->elevation  = config->elevation;
     cam->distance   = config->distance;
@@ -180,7 +165,22 @@ void camera_init(Camera *cam, const CameraConfig *config) {
     cam->near_plane = config->near_plane;
     cam->far_plane  = config->far_plane;
     cam->up         = (vec3_t){0.0f, 1.0f, 0.0f};
-    cam->dirty      = true;
+
+    // Follow mode
+    cam->follow_offset    = config->follow_offset;
+    cam->follow_target    = NULL;
+    cam->follow_smoothing = config->follow_smoothing;
+
+    // Fixed mode
+    cam->fixed_position = config->fixed_position;
+    cam->fixed_target   = config->fixed_target;
+
+    // Collision
+    cam->collision_enabled = false;
+    cam->collision_world   = NULL;
+    cam->collision_mask    = 0xFFFF;
+
+    cam->dirty = true;
     camera_update(cam);
 }
 
@@ -200,28 +200,118 @@ void camera_shift_target_y(Camera *cam, float d_y) {
     cam->dirty = true;
 }
 
+// --- Camera collision helper ---
+
+static void apply_camera_collision(Camera *cam, const vec3_t *look_at) {
+    if (!cam->collision_enabled || !cam->collision_world) return;
+
+    // Raycast from look-at point toward camera position
+    vec3_t to_cam = vec3_sub(&cam->position, look_at);
+    float cam_dist = vec3_length(&to_cam);
+    if (cam_dist < 1.0f) return;
+
+    vec3_t ray_dir = vec3_scale(&to_cam, 1.0f / cam_dist);
+    Ray ray;
+    ray.origin = *look_at;
+    ray.direction = ray_dir;
+    ray.max_distance = cam_dist;
+
+    CollisionResult result;
+    if (collision_raycast(cam->collision_world, &ray,
+                          cam->collision_mask, &result)) {
+        // Snap camera to hit point, pulled forward slightly
+        float safe_dist = result.distance - COLLISION_OFFSET;
+        if (safe_dist < cam->near_plane) safe_dist = cam->near_plane;
+        vec3_t offset = vec3_scale(&ray_dir, safe_dist);
+        cam->position = vec3_add(look_at, &offset);
+    }
+}
+
+// --- Mode switching ---
+
+void camera_set_mode(Camera *cam, CameraMode mode) {
+    cam->mode = mode;
+    cam->dirty = true;
+}
+
+void camera_set_follow_target(Camera *cam, const vec3_t *target, vec3_t offset) {
+    cam->follow_target = target;
+    cam->follow_offset = offset;
+    cam->mode = CAMERA_MODE_FOLLOW;
+    cam->dirty = true;
+}
+
+void camera_set_fixed(Camera *cam, vec3_t position, vec3_t target) {
+    cam->fixed_position = position;
+    cam->fixed_target = target;
+    cam->mode = CAMERA_MODE_FIXED;
+    cam->dirty = true;
+}
+
+void camera_set_collision(Camera *cam, const struct CollisionWorld *world, uint16_t mask) {
+    cam->collision_world = world;
+    cam->collision_mask = mask;
+    cam->collision_enabled = (world != NULL);
+}
+
+// --- Update ---
+
 void camera_update(Camera *cam) {
     if (!cam->dirty) return;
 
-    // Clamp orbital parameters
-    if (cam->elevation > MAX_ELEVATION) cam->elevation = MAX_ELEVATION;
-    if (cam->elevation < -MAX_ELEVATION) cam->elevation = -MAX_ELEVATION;
-    if (cam->distance < MIN_DISTANCE) cam->distance = MIN_DISTANCE;
-    if (cam->distance > MAX_DISTANCE) cam->distance = MAX_DISTANCE;
+    vec3_t look_at;
 
-    // Compute camera position from spherical coordinates
-    float cos_elev = cosf(cam->elevation);
-    cam->position.x = cam->target.x + cam->distance * cos_elev * sinf(cam->azimuth);
-    cam->position.y = cam->target.y + cam->distance * sinf(cam->elevation);
-    cam->position.z = cam->target.z + cam->distance * cos_elev * cosf(cam->azimuth);
+    switch (cam->mode) {
+    case CAMERA_MODE_ORBITAL:
+        // Clamp orbital parameters
+        if (cam->elevation > MAX_ELEVATION) cam->elevation = MAX_ELEVATION;
+        if (cam->elevation < -MAX_ELEVATION) cam->elevation = -MAX_ELEVATION;
+        if (cam->distance < MIN_DISTANCE) cam->distance = MIN_DISTANCE;
+        if (cam->distance > MAX_DISTANCE) cam->distance = MAX_DISTANCE;
+
+        // Compute camera position from spherical coordinates
+        {
+            float cos_elev = cosf(cam->elevation);
+            cam->position.x = cam->target.x + cam->distance * cos_elev * sinf(cam->azimuth);
+            cam->position.y = cam->target.y + cam->distance * sinf(cam->elevation);
+            cam->position.z = cam->target.z + cam->distance * cos_elev * cosf(cam->azimuth);
+        }
+        look_at = cam->target;
+        break;
+
+    case CAMERA_MODE_FIXED:
+        cam->position = cam->fixed_position;
+        look_at = cam->fixed_target;
+        break;
+
+    case CAMERA_MODE_FOLLOW:
+        if (cam->follow_target) {
+            vec3_t desired = vec3_add(cam->follow_target, &cam->follow_offset);
+            // Smooth interpolation toward desired position
+            float t = 1.0f - cam->follow_smoothing;
+            cam->position = vec3_lerp(&cam->position, &desired, t);
+            look_at = *cam->follow_target;
+        } else {
+            // No target set, fall back to current position
+            look_at = cam->target;
+        }
+        break;
+
+    default:
+        look_at = cam->target;
+        break;
+    }
+
+    // Apply camera collision (all modes)
+    apply_camera_collision(cam, &look_at);
 
     // View direction (camera toward target, normalized)
-    vec3_t diff = vec3_sub(&cam->target, &cam->position);
+    vec3_t diff = vec3_sub(&look_at, &cam->position);
     cam->view_dir = vec3_normalize(&diff);
 
     // Build view matrix
     cam->up = (vec3_t){0.0f, 1.0f, 0.0f};
-    mat4_lookat(&cam->view, &cam->position, &cam->target, &cam->up);
+    mat4_lookat(&cam->view, &cam->position, &look_at, &cam->up);
 
     // Build projection matrix
     mat4_perspective(&cam->proj, cam->fov_y, cam->aspect,

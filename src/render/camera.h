@@ -3,9 +3,9 @@
 
 #include <libdragon.h>
 #include <stdbool.h>
+#include "../math/vec3.h"
 
-// Simple 3D math types (fgeom.h not available in toolchain)
-typedef struct { float x, y, z; } vec3_t;
+// Additional math types (vec3_t comes from math/vec3.h)
 typedef struct { float x, y, z, w; } vec4_t;
 typedef struct { float m[4][4]; } mat4_t;  // Column-major: m[col][row]
 
@@ -16,12 +16,32 @@ typedef struct { float m[4][4]; } mat4_t;  // Column-major: m[col][row]
 #define FRUSTUM_NEAR    4
 #define FRUSTUM_FAR     5
 
+// Forward-declare CollisionWorld (avoid circular include)
+struct CollisionWorld;
+
+typedef enum {
+    CAMERA_MODE_ORBITAL,    // Orbit around target point (default)
+    CAMERA_MODE_FIXED,      // Fixed position + fixed look-at
+    CAMERA_MODE_FOLLOW,     // Follow a target position with offset
+} CameraMode;
+
 typedef struct {
-    // Orbital parameters
+    CameraMode mode;
+
+    // Orbital parameters (used in ORBITAL mode)
     float azimuth;
     float elevation;
     float distance;
     vec3_t target;
+
+    // Follow mode state
+    vec3_t follow_offset;           // Offset from target (world space)
+    const vec3_t *follow_target;    // Pointer to tracked position
+    float follow_smoothing;         // Lerp factor per frame (0=instant, 0.9=smooth)
+
+    // Fixed mode state
+    vec3_t fixed_position;
+    vec3_t fixed_target;
 
     // Derived camera state
     vec3_t position;
@@ -42,11 +62,17 @@ typedef struct {
     // Frustum planes: {A, B, C, D} where Ax+By+Cz+D >= 0 is inside
     float frustum[6][4];
 
+    // Camera collision
+    bool collision_enabled;
+    const struct CollisionWorld *collision_world;
+    uint16_t collision_mask;    // Which layers to test against
+
     bool dirty;
 } Camera;
 
 // Scene/level camera preset
 typedef struct {
+    CameraMode mode;
     float azimuth;
     float elevation;
     float distance;
@@ -54,6 +80,12 @@ typedef struct {
     float fov_y;
     float near_plane;
     float far_plane;
+    // Follow mode defaults
+    vec3_t follow_offset;
+    float follow_smoothing;
+    // Fixed mode defaults
+    vec3_t fixed_position;
+    vec3_t fixed_target;
 } CameraConfig;
 
 extern const CameraConfig CAMERA_DEFAULT;
@@ -63,6 +95,12 @@ void camera_orbit(Camera *cam, float d_azimuth, float d_elevation);
 void camera_zoom(Camera *cam, float d_distance);
 void camera_shift_target_y(Camera *cam, float d_y);
 void camera_update(Camera *cam);
+
+// Mode switching
+void camera_set_mode(Camera *cam, CameraMode mode);
+void camera_set_follow_target(Camera *cam, const vec3_t *target, vec3_t offset);
+void camera_set_fixed(Camera *cam, vec3_t position, vec3_t target);
+void camera_set_collision(Camera *cam, const struct CollisionWorld *world, uint16_t mask);
 
 // Matrix math utilities
 void mat4_perspective(mat4_t *out, float fov_y, float aspect, float near, float far);

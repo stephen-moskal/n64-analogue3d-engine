@@ -56,11 +56,44 @@ const TextureStats *texture_stats_get(void) {
 }
 
 void texture_cleanup(void) {
-    for (int i = 0; i < slot_count; i++) {
+    for (int i = 0; i < TEX_MAX_SLOTS; i++) {
         if (slots[i]) {
             sprite_free(slots[i]);
             slots[i] = NULL;
         }
     }
     slot_count = 0;
+}
+
+bool texture_load_slot(int slot, const char *path) {
+    assert(slot >= 0 && slot < TEX_MAX_SLOTS);
+    // Free existing sprite in slot if any
+    if (slots[slot]) {
+        sprite_free(slots[slot]);
+        slots[slot] = NULL;
+    }
+    slots[slot] = sprite_load(path);
+    if (!slots[slot]) {
+        debugf("Failed to load texture: %s\n", path);
+        return false;
+    }
+    assertf(sprite_fits_tmem(slots[slot]), "Sprite %s too large for TMEM", path);
+    debugf("Loaded texture slot %d: %s (%dx%d)\n", slot, path,
+           slots[slot]->width, slots[slot]->height);
+    // Track highest slot in use
+    if (slot >= slot_count) slot_count = slot + 1;
+    return true;
+}
+
+void texture_free_slot(int slot) {
+    assert(slot >= 0 && slot < TEX_MAX_SLOTS);
+    if (slots[slot]) {
+        sprite_free(slots[slot]);
+        slots[slot] = NULL;
+    }
+}
+
+bool texture_slot_loaded(int slot) {
+    if (slot < 0 || slot >= TEX_MAX_SLOTS) return false;
+    return slots[slot] != NULL;
 }

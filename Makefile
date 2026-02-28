@@ -21,7 +21,10 @@ OBJS = $(BUILD_DIR)/main.o \
        $(BUILD_DIR)/render/camera.o \
        $(BUILD_DIR)/input/input.o \
        $(BUILD_DIR)/ui/text.o \
-       $(BUILD_DIR)/ui/menu.o
+       $(BUILD_DIR)/ui/menu.o \
+       $(BUILD_DIR)/collision/collision.o \
+       $(BUILD_DIR)/scene/scene.o \
+       $(BUILD_DIR)/scenes/demo_scene.o
 
 # Sprite conversion rule: assets/*.png -> filesystem/*.sprite
 filesystem/%.sprite: assets/%.png
