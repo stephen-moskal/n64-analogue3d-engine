@@ -54,6 +54,13 @@ static const TextBoxConfig mode_text = {
     .color   = RGBA32(0x80, 0xC0, 0xFF, 0xFF),
 };
 
+static const TextBoxConfig pos_text = {
+    .x       = 4.0f,
+    .y       = 196.0f,
+    .font_id = FONT_DEBUG_MONO,
+    .color   = RGBA32(0x80, 0xC0, 0xFF, 0xFF),
+};
+
 // --- Menu item indices (must match main.c order) ---
 #define MENU_ITEM_BG_COLOR      0
 #define MENU_ITEM_DEBUG_TEXT    1
@@ -73,6 +80,10 @@ static const color_t bg_colors[] = {
 
 // Camera mode names (for HUD)
 static const char *camera_mode_names[] = {"ORBITAL", "FIXED", "FOLLOW"};
+
+// Movement speed for fixed camera (larger scale than orbital since it's direct translation)
+#define FIXED_MOVE_SPEED  150.0f
+#define FIXED_Y_SPEED     5.0f
 
 // FPS tracking
 static float fps = 0.0f;
@@ -156,13 +167,34 @@ static void demo_update(Scene *scene, float dt) {
 
     if (start_menu.is_open) {
         menu_update(&start_menu);
-    } else {
-        // Camera control (only orbital mode responds to stick input)
-        if (scene->camera.mode == CAMERA_MODE_ORBITAL && input_state.has_input) {
+    } else if (input_state.has_input) {
+        switch (scene->camera.mode) {
+        case CAMERA_MODE_ORBITAL:
             camera_orbit(&scene->camera, input_state.orbit_azimuth,
                                          input_state.orbit_elevation);
             camera_zoom(&scene->camera, input_state.zoom_delta);
             camera_shift_target_y(&scene->camera, input_state.target_y_delta);
+            break;
+
+        case CAMERA_MODE_FIXED:
+            // Analog stick: translate camera on XZ plane
+            scene->camera.fixed_position.x += input_state.orbit_azimuth * FIXED_MOVE_SPEED;
+            scene->camera.fixed_position.z += input_state.orbit_elevation * FIXED_MOVE_SPEED;
+            // C-up/C-down: move camera Y
+            scene->camera.fixed_position.y -= input_state.zoom_delta * FIXED_Y_SPEED;
+            // C-left/C-right: shift look-at target Y
+            scene->camera.fixed_target.y += input_state.target_y_delta;
+            scene->camera.dirty = true;
+            break;
+
+        case CAMERA_MODE_FOLLOW:
+            // Analog stick: adjust follow offset XZ
+            scene->camera.follow_offset.x += input_state.orbit_azimuth * FIXED_MOVE_SPEED;
+            scene->camera.follow_offset.z += input_state.orbit_elevation * FIXED_MOVE_SPEED;
+            // C-up/C-down: adjust follow offset Y
+            scene->camera.follow_offset.y -= input_state.zoom_delta * FIXED_Y_SPEED;
+            scene->camera.dirty = true;
+            break;
         }
     }
 
@@ -223,11 +255,15 @@ static void demo_draw(Scene *scene) {
             ray_hit ? ray_result.distance : -1.0f);
         text_draw_fmt(&fps_text, "FPS: %.0f", fps);
 
-        // Show camera mode
+        // Show camera mode + position
         int cam_mode = menu_get_value(&start_menu, MENU_ITEM_CAMERA_MODE);
         text_draw_fmt(&mode_text, "CAM:%s%s",
             camera_mode_names[cam_mode],
             scene->camera.collision_enabled ? " COL" : "");
+        text_draw_fmt(&pos_text, "XYZ:%.0f,%.0f,%.0f",
+            scene->camera.position.x,
+            scene->camera.position.y,
+            scene->camera.position.z);
     }
 
     // Menu overlay
