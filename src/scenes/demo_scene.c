@@ -120,6 +120,8 @@ static void demo_init(Scene *scene) {
 
     // Camera: orbital mode, default config
     camera_init(&scene->camera, &CAMERA_DEFAULT);
+    scene->camera.collision_radius = 10.0f;         // Overlap pushout vs sphere colliders
+    scene->camera.min_y = FLOOR_Y + 10.0f;          // Hard Y clamp above floor
 
     // Add colliders with proper layers:
     // Cube: DEFAULT layer only (not ENV, so camera collision ignores it)
@@ -127,9 +129,10 @@ static void demo_init(Scene *scene) {
         (vec3_t){0, 0, 0}, 138.56f,
         COLLISION_LAYER_DEFAULT, COLLISION_LAYER_DEFAULT, NULL);
 
-    // Ground: DEFAULT + ENV layers (camera collision tests against ENV)
+    // Ground: DEFAULT + ENV layers (camera raycast tests against ENV)
+    // Extends ±1500 in X/Z to cover camera at MAX_DISTANCE=1000
     ground_collider = collision_add_aabb(&scene->collision,
-        (vec3_t){-500, -180, -500}, (vec3_t){500, -100, 500},
+        (vec3_t){-1500, -180, -1500}, (vec3_t){1500, -100, 1500},
         COLLISION_LAYER_DEFAULT | COLLISION_LAYER_ENV,
         COLLISION_LAYER_DEFAULT | COLLISION_LAYER_ENV, NULL);
     collision_set_static(&scene->collision, ground_collider, true);

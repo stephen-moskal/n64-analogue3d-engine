@@ -114,34 +114,60 @@ The camera computes `desired_position = *follow_target + follow_offset`, then le
 
 ## Camera Collision
 
-Prevents the camera from clipping through geometry using raycasting.
+A three-layer collision system prevents the camera from clipping through scene geometry. Enabled at runtime via the menu ("Cam Collide" → On).
 
 ```c
 camera_set_collision(&cam, &collision_world, COLLISION_LAYER_ENV);
+cam.collision_radius = 10.0f;       // Sphere pushout radius
+cam.min_y = FLOOR_Y + 10.0f;        // Hard Y floor clamp
 ```
 
-### How It Works
+### Three-Layer System
 
-1. After computing camera position (any mode), raycast from the look-at point toward the camera
-2. If a collider is hit closer than the camera distance:
-   - Snap camera to `hit_point - 5.0 * ray_direction` (offset avoids z-fighting)
-   - Clamp to at least `near_plane` distance
-3. Uses `collision_mask` to filter layers — typically `COLLISION_LAYER_ENV` to only collide with environment geometry (not the object being orbited/followed)
+Camera collision runs after computing the camera position (any mode), in this order:
+
+#### Layer 1: Raycast (Line-of-Sight)
+
+Casts a ray from the look-at target toward the camera position. If the ray hits a collider in the `collision_mask` (ENV layer), the camera is snapped in front of the hit point. This prevents the camera from being "behind" floors or walls relative to the target.
+
+- Tests against: `collision_mask` (typically `COLLISION_LAYER_ENV`)
+- Snap offset: 5.0 units forward from hit point (avoids z-fighting)
+- Minimum distance: `near_plane`
+
+#### Layer 2: Sphere Overlap Pushout
+
+Treats the camera as a small sphere (radius = `collision_radius`) and tests for overlap against ALL sphere colliders in the world, regardless of layer. If the camera sphere overlaps a collider sphere, it is pushed out along the collision normal by the penetration depth.
+
+- Tests against: all active sphere colliders (skips AABBs)
+- Camera radius: `collision_radius` (default 0 = disabled)
+- Use case: prevents camera from entering the cube's bounding sphere
+
+**Why skip AABBs?** AABB overlap resolution pushes toward the nearest face. For a wide ground AABB, the camera deep inside would be pushed toward the bottom face (wrong direction). Sphere pushout always has a correct radial direction.
+
+#### Layer 3: Y Floor Clamp
+
+Hard clamp: `position.y = max(position.y, min_y)`. Simpler and more robust than AABB overlap for a flat ground plane. Works at any camera distance.
+
+- `min_y`: set to `FLOOR_Y + collision_radius` (e.g., -90.0f)
+- Active only when collision is enabled
 
 ### Layer Strategy
 
 ```c
-// Object being viewed: DEFAULT layer only
+// Cube: DEFAULT layer (sphere pushout handles camera-vs-cube)
 collision_add_sphere(&world, center, radius,
     COLLISION_LAYER_DEFAULT, COLLISION_LAYER_DEFAULT, NULL);
 
-// Environment: DEFAULT + ENV layers
-collision_add_aabb(&world, min, max,
+// Ground: DEFAULT + ENV layers (raycast tests against ENV)
+// Extend ±1500 in X/Z to cover camera at MAX_DISTANCE=1000
+collision_add_aabb(&world, (vec3_t){-1500,-180,-1500}, (vec3_t){1500,-100,1500},
     COLLISION_LAYER_DEFAULT | COLLISION_LAYER_ENV,
     COLLISION_LAYER_DEFAULT | COLLISION_LAYER_ENV, NULL);
 
-// Camera collision tests only ENV — won't hit the viewed object
+// Camera: raycast uses ENV mask; sphere pushout tests all spheres
 camera_set_collision(&cam, &world, COLLISION_LAYER_ENV);
+cam.collision_radius = 10.0f;   // Overlap pushout vs sphere colliders
+cam.min_y = FLOOR_Y + 10.0f;    // Hard Y clamp above floor
 ```
 
 See [COLLISION.md](COLLISION.md) for full collision system documentation.

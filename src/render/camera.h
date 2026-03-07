@@ -65,7 +65,9 @@ typedef struct {
     // Camera collision
     bool collision_enabled;
     const struct CollisionWorld *collision_world;
-    uint16_t collision_mask;    // Which layers to test against
+    uint16_t collision_mask;    // Which layers to test against (raycast)
+    float collision_radius;     // Camera sphere radius for overlap pushout (0 = disabled)
+    float min_y;                // Hard Y floor clamp (applied when collision enabled)
 
     bool dirty;
 } Camera;

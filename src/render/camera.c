@@ -179,6 +179,8 @@ void camera_init(Camera *cam, const CameraConfig *config) {
     cam->collision_enabled = false;
     cam->collision_world   = NULL;
     cam->collision_mask    = 0xFFFF;
+    cam->collision_radius  = 0.0f;
+    cam->min_y             = -1e18f;
 
     cam->dirty = true;
     camera_update(cam);
@@ -205,25 +207,53 @@ void camera_shift_target_y(Camera *cam, float d_y) {
 static void apply_camera_collision(Camera *cam, const vec3_t *look_at) {
     if (!cam->collision_enabled || !cam->collision_world) return;
 
-    // Raycast from look-at point toward camera position
+    // --- Layer 1: Raycast from look-at toward camera (line-of-sight) ---
+    // Prevents camera from being behind walls/floors relative to target.
+    // Tests against collision_mask (typically ENV layer).
     vec3_t to_cam = vec3_sub(&cam->position, look_at);
     float cam_dist = vec3_length(&to_cam);
-    if (cam_dist < 1.0f) return;
+    if (cam_dist > 1.0f) {
+        vec3_t ray_dir = vec3_scale(&to_cam, 1.0f / cam_dist);
+        Ray ray;
+        ray.origin = *look_at;
+        ray.direction = ray_dir;
+        ray.max_distance = cam_dist;
 
-    vec3_t ray_dir = vec3_scale(&to_cam, 1.0f / cam_dist);
-    Ray ray;
-    ray.origin = *look_at;
-    ray.direction = ray_dir;
-    ray.max_distance = cam_dist;
+        CollisionResult result;
+        if (collision_raycast(cam->collision_world, &ray,
+                              cam->collision_mask, &result)) {
+            float safe_dist = result.distance - COLLISION_OFFSET;
+            if (safe_dist < cam->near_plane) safe_dist = cam->near_plane;
+            vec3_t offset = vec3_scale(&ray_dir, safe_dist);
+            cam->position = vec3_add(look_at, &offset);
+        }
+    }
 
-    CollisionResult result;
-    if (collision_raycast(cam->collision_world, &ray,
-                          cam->collision_mask, &result)) {
-        // Snap camera to hit point, pulled forward slightly
-        float safe_dist = result.distance - COLLISION_OFFSET;
-        if (safe_dist < cam->near_plane) safe_dist = cam->near_plane;
-        vec3_t offset = vec3_scale(&ray_dir, safe_dist);
-        cam->position = vec3_add(look_at, &offset);
+    // --- Layer 2: Sphere overlap pushout (sphere colliders only) ---
+    // Prevents camera from being inside bounding spheres (e.g., cube).
+    // Tests against ALL sphere colliders regardless of layer mask.
+    // Skips AABBs — their pushout direction is ambiguous for wide boxes.
+    if (cam->collision_radius > 0.0f) {
+        ColliderSphere cam_sphere = {cam->position, cam->collision_radius};
+
+        for (int i = 0; i < COLLISION_MAX_COLLIDERS; i++) {
+            const Collider *c = &cam->collision_world->colliders[i];
+            if (!c->active) continue;
+            if (c->type != COLLIDER_SPHERE) continue;
+
+            CollisionResult result;
+            if (collision_sphere_sphere(&cam_sphere, &c->shape.sphere, &result)) {
+                vec3_t push = vec3_scale(&result.normal, result.depth);
+                cam->position = vec3_add(&cam->position, &push);
+                cam_sphere.center = cam->position;
+            }
+        }
+    }
+
+    // --- Layer 3: Hard Y floor clamp ---
+    // Simpler and more robust than AABB overlap for a flat ground plane.
+    if (cam->position.y < cam->min_y) {
+        cam->position.y = cam->min_y;
     }
 }
 
