@@ -3,9 +3,16 @@
 #include <math.h>
 
 #define FLOOR_HALF_SIZE  500.0f
-#define TILE_COUNT       10
+#define TILE_COUNT       20
 #define TILE_SIZE        (FLOOR_HALF_SIZE * 2.0f / TILE_COUNT)
 #define VERT_COUNT       (TILE_COUNT + 1)
+
+// Z bias: push floor depth slightly farther to prevent Z-fighting with
+// the cube.  At far orbital distances the cube and floor map to nearly
+// identical Z-buffer values (N64's 16-bit Z has very coarse quantization
+// past ~0.96).  A small additive bias gives several extra Z-buffer steps
+// of clearance without visible artifacts.
+#define Z_BIAS  0.003f
 
 // RDP coordinate guard band — vertices outside this range
 // overflow fixed-point math and cause rendering artifacts
@@ -75,7 +82,9 @@ void floor_draw(const Camera *cam, const LightConfig *light) {
             grid_valid[row][col] = true;
             grid[row][col][0] = sx;
             grid[row][col][1] = sy;
-            grid[row][col][2] = clip.z * inv_w * 0.5f + 0.5f;
+            float depth = clip.z * inv_w * 0.5f + 0.5f + Z_BIAS;
+            if (depth > 1.0f) depth = 1.0f;
+            grid[row][col][2] = depth;
             grid[row][col][3] = 0.0f;   // S (unused)
             grid[row][col][4] = 0.0f;   // T (unused)
             grid[row][col][5] = inv_w;
