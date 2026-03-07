@@ -7,6 +7,8 @@
 #include "../input/input.h"
 #include "../ui/text.h"
 #include "../ui/menu.h"
+#include "../audio/audio.h"
+#include "../audio/sound_bank.h"
 
 // ============================================================
 // Object Data — stored in SceneObject.data for mesh objects
@@ -149,6 +151,7 @@ static const TextBoxConfig pos_text = {
 #define MENU_ITEM_CAMERA_MODE  2
 #define MENU_ITEM_CAMERA_COL   3
 #define MENU_ITEM_FRAME_RATE   4
+#define MENU_ITEM_SOUND        5
 
 // Background color options
 static const color_t bg_colors[] = {
@@ -167,6 +170,7 @@ static const char *camera_mode_names[] = {"ORBITAL", "FIXED", "FOLLOW"};
 #define FIXED_Y_SPEED     5.0f
 
 static int last_fps_option = 1;
+static int last_sound_option = 0;
 static float hud_fps = 0.0f;
 static uint32_t hud_fps_ticks = 0;
 
@@ -359,11 +363,15 @@ static void demo_init(Scene *scene) {
     last_camera_mode = 0;
     last_camera_col = 0;
     last_fps_option = 1;
+    last_sound_option = 0;
     hud_fps = 0.0f;
     hud_fps_ticks = 0;
     interaction_mode = MODE_NORMAL;
     transform_mode = TRANSFORM_MOVE;
     selected_object = -1;
+
+    // Start background music
+    snd_play_bgm(BGM_DEMO);
 }
 
 // ============================================================
@@ -433,8 +441,13 @@ static void demo_update(Scene *scene, float dt) {
 
     // Menu input (START always toggles menu)
     if (pressed.start) {
-        if (start_menu.is_open) menu_close(&start_menu, true);
-        else menu_open(&start_menu);
+        if (start_menu.is_open) {
+            menu_close(&start_menu, true);
+            snd_play_sfx(SFX_MENU_CLOSE);
+        } else {
+            menu_open(&start_menu);
+            snd_play_sfx(SFX_MENU_OPEN);
+        }
     }
 
     // --- Interaction mode handling ---
@@ -446,9 +459,11 @@ static void demo_update(Scene *scene, float dt) {
                 interaction_mode = MODE_OBJECT_SELECT;
                 if (selected_object < 0 && scene->object_count > 0)
                     selected_object = 0;
+                snd_play_sfx(SFX_OBJ_SELECT);
             } else {
                 interaction_mode = MODE_NORMAL;
                 selected_object = -1;
+                snd_play_sfx(SFX_OBJ_DESELECT);
             }
         }
 
@@ -457,14 +472,17 @@ static void demo_update(Scene *scene, float dt) {
             if (pressed.d_left && scene->object_count > 0) {
                 selected_object--;
                 if (selected_object < 0) selected_object = scene->object_count - 1;
+                snd_play_sfx(SFX_MENU_NAV);
             }
             if (pressed.d_right && scene->object_count > 0) {
                 selected_object = (selected_object + 1) % scene->object_count;
+                snd_play_sfx(SFX_MENU_NAV);
             }
             // A: enter transform mode
             if (pressed.a) {
                 interaction_mode = MODE_OBJECT_TRANSFORM;
                 transform_mode = TRANSFORM_MOVE;
+                snd_play_sfx(SFX_MODE_CHANGE);
             }
             // B: exit to normal
             if (pressed.b) {
@@ -475,10 +493,12 @@ static void demo_update(Scene *scene, float dt) {
             // A: cycle transform mode
             if (pressed.a) {
                 transform_mode = (transform_mode + 1) % 3;
+                snd_play_sfx(SFX_MODE_CHANGE);
             }
             // B: back to select
             if (pressed.b) {
                 interaction_mode = MODE_OBJECT_SELECT;
+                snd_play_sfx(SFX_OBJ_DESELECT);
             }
             // Manipulate object with analog/C-buttons
             handle_object_manipulation(scene, &input_state, pressed);
@@ -488,7 +508,15 @@ static void demo_update(Scene *scene, float dt) {
     // --- Camera controls (only when not transforming objects) ---
 
     if (start_menu.is_open) {
+        int old_cursor = start_menu.cursor;
+        bool was_open = start_menu.is_open;
         menu_update(&start_menu);
+        if (start_menu.is_open && start_menu.cursor != old_cursor) {
+            snd_play_sfx(SFX_MENU_NAV);
+        }
+        if (was_open && !start_menu.is_open) {
+            snd_play_sfx(SFX_MENU_SELECT);
+        }
     } else if (interaction_mode != MODE_OBJECT_TRANSFORM) {
         // L/R shoulder buttons: cycle camera mode
         if (pressed.l) {
@@ -560,6 +588,21 @@ static void demo_update(Scene *scene, float dt) {
         case 1: engine_target_fps = 0;  break;  // 60fps: no limiter needed (VSync caps it)
         }
         last_fps_option = fps_opt;
+    }
+
+    // Check for sound toggle from menu
+    int snd_opt = menu_get_value(&start_menu, MENU_ITEM_SOUND);
+    if (snd_opt != last_sound_option) {
+        if (snd_opt == 0) {
+            // Sound On
+            snd_set_sfx_volume(100);
+            snd_set_bgm_volume(80);
+        } else {
+            // Sound Off
+            snd_set_sfx_volume(0);
+            snd_set_bgm_volume(0);
+        }
+        last_sound_option = snd_opt;
     }
 
     scene->camera.dirty = true;
@@ -660,6 +703,7 @@ static void demo_post_draw(Scene *scene) {
 
 static void demo_cleanup(Scene *scene) {
     (void)scene;
+    snd_stop_bgm();
     cube_cleanup();
     mesh_defs_cleanup();
     ground_collider = -1;

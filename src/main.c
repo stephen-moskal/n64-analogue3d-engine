@@ -5,6 +5,7 @@
 #include "ui/menu.h"
 #include "scene/scene.h"
 #include "scenes/demo_scene.h"
+#include "audio/audio.h"
 
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
@@ -27,6 +28,7 @@ static const char *toggle_options[] = {"On", "Off"};
 static const char *camera_mode_options[] = {"Orbital", "Fixed", "Follow"};
 static const char *camera_col_options[] = {"Off", "On"};
 static const char *fps_options[] = {"30", "60"};
+static const char *sound_options[] = {"On", "Off"};
 
 int main(void) {
     // Initialize debug output
@@ -54,6 +56,10 @@ int main(void) {
     menu_add_item(&start_menu, "Camera", camera_mode_options, 3, 0);
     menu_add_item(&start_menu, "Cam Collide", camera_col_options, 2, 0);
     menu_add_item(&start_menu, "Frame Rate", fps_options, 2, 1);  // Default: 60
+    menu_add_item(&start_menu, "Sound", sound_options, 2, 0);    // Default: On
+
+    // Initialize audio system
+    snd_init();
 
     // Allocate Z-buffer (shared across all scenes)
     surface_t zbuf = surface_alloc(FMT_RGBA16, SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -85,6 +91,9 @@ int main(void) {
         rdpq_attach(fb, &zbuf);
         scene_manager_draw(&scene_mgr);
         rdpq_detach_show();
+
+        // Feed audio mixer
+        snd_update();
 
         // Frame rate limiting (busy-wait until target frame time)
         if (engine_target_fps > 0) {
