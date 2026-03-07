@@ -215,10 +215,10 @@ static void build_pyramid(void) {
         float e1[3] = {apex[0] - base_v[i0][0], apex[1] - base_v[i0][1], apex[2] - base_v[i0][2]};
         float e2[3] = {base_v[i1][0] - base_v[i0][0], base_v[i1][1] - base_v[i0][1], base_v[i1][2] - base_v[i0][2]};
 
-        // Normal = cross(e1, e2), then normalize
-        float nx = e1[1] * e2[2] - e1[2] * e2[1];
-        float ny = e1[2] * e2[0] - e1[0] * e2[2];
-        float nz = e1[0] * e2[1] - e1[1] * e2[0];
+        // Normal = cross(e2, e1), then normalize (outward-facing)
+        float nx = e2[1] * e1[2] - e2[2] * e1[1];
+        float ny = e2[2] * e1[0] - e2[0] * e1[2];
+        float nz = e2[0] * e1[1] - e2[1] * e1[0];
         float len = sqrtf(nx * nx + ny * ny + nz * nz);
         if (len > 0.001f) { nx /= len; ny /= len; nz /= len; }
 
