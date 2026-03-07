@@ -64,7 +64,55 @@ rdpq_mode_zbuf(true, true);
 - Format: `FMT_RGBA16` (16-bit depth, same format token as color)
 - `ZBUF_MAX` clears to maximum depth (farthest)
 - Z values mapped to `[0, 1]` range after perspective divide: `z = ndc_z * 0.5 + 0.5`
-- 16-bit precision is sufficient for near/far ratio of 1:100 (near=10, far=1000)
+- Current projection: near=20, far=2000 (ratio 1:100)
+
+### Z-Buffer Precision & Common Issues
+
+The N64's 16-bit Z-buffer stores depth as a hyperbolic `1/z` distribution. This gives excellent precision near the camera but very coarse resolution at far distances. With 65,536 discrete Z values:
+
+| Distance range | Approximate Z-buffer values | Notes |
+|---------------|---------------------------|-------|
+| near–2×near (20–40) | ~32,768 values | Half of all precision |
+| 2×near–4×near (40–80) | ~16,384 values | Quarter |
+| 100–500 | ~3,000–5,000 values | Typical gameplay range |
+| 500–2000 | ~500–1,000 values | Far objects, Z-fighting likely |
+
+**Near/far ratio is critical.** Doubling the near plane doubles Z precision across the entire depth range. The engine uses near=20, far=2000 (100:1 ratio). Avoid near < 10 — it wastes most Z-buffer precision on the first few units.
+
+### Per-Vertex Clipping in `mesh_draw()`
+
+Three safety checks prevent corrupt Z values from reaching the RDP:
+
+1. **Near-plane rejection** (`clip.w < 1.0`): Vertices behind or very close to the camera produce garbage Z from the perspective divide. If any vertex fails, the entire triangle is rejected.
+
+2. **Guard-band clipping** (±1024 screen bounds): Vertices projecting far off-screen overflow the RDP's 12.2 fixed-point coordinate math, causing rendering artifacts or hangs.
+
+3. **Depth clamping** (`depth ∈ [0, 1]`): Out-of-range Z values are clamped before submission. Without this, objects past the far plane all map to depth=1.0 and Z-fight with each other.
+
+```c
+// Near-plane rejection
+if (clip.w < 1.0f) { reject = true; break; }
+
+// Guard-band check
+if (screen_x < -1024 || screen_x > 1344 ||
+    screen_y < -1024 || screen_y > 1264) { reject = true; break; }
+
+// Depth clamp
+float depth = ndc_z * 0.5f + 0.5f;
+if (depth < 0.0f) depth = 0.0f;
+if (depth > 1.0f) depth = 1.0f;
+```
+
+### Floor Z-Bias
+
+The floor uses an additive Z-bias (`+0.005`) to push its depth slightly farther, preventing Z-fighting with objects resting on it. At far orbital distances, the floor and objects can map to nearly identical Z-buffer values due to the coarse 16-bit quantization.
+
+### Known Limitations
+
+- **Interpenetrating geometry** will always Z-fight at far distances — 16-bit Z cannot resolve sub-unit depth differences past ~500 units from camera
+- **No proper triangle clipping**: Triangles that straddle the near plane are rejected entirely rather than clipped. This can cause popping at close range.
+- **Floor-through-object artifacts**: At extreme orbital distances (>1000 units), the floor and object depths can collide. The Z_BIAS helps but doesn't eliminate this entirely.
+- **Future mitigation**: For the FFT-style isometric camera, the fixed viewing angle and distance will keep most geometry in the high-precision Z range
 
 ## RDP Render Modes
 
