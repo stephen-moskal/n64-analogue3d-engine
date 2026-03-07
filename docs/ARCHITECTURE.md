@@ -116,10 +116,11 @@ main.c
 │   ├── collision/collision [collision detection, raycasting]
 │   └── render/texture  [dynamic texture slot management]
 └── scenes/demo_scene   [demo scene implementation]
-    ├── render/cube     [geometry, transforms, rendering]
-    │   ├── render/camera
-    │   ├── render/lighting
-    │   └── render/texture
+    ├── render/cube     [cube geometry definition]
+    │   └── render/mesh [generic mesh rendering]
+    │       ├── render/camera
+    │       ├── render/lighting
+    │       └── render/texture
     └── scene/scene
 ```
 
@@ -343,7 +344,8 @@ With Expansion Pak (8MB), an additional 4MB is available. Shared resources (fram
 |------|---------|
 | `src/main.c` | Entry point, display/input/menu init, scene manager loop |
 | `src/render/camera.c/h` | Multi-mode camera, 3D math, frustum culling, collision |
-| `src/render/cube.c/h` | Cube geometry and rendering |
+| `src/render/mesh.c/h` | Generic mesh type, builder API, universal draw function |
+| `src/render/cube.c/h` | Cube geometry (built on Mesh) |
 | `src/render/lighting.c/h` | Blinn-Phong lighting |
 | `src/render/texture.c/h` | Texture loading, TMEM management, dynamic slots |
 | `src/math/vec3.h` | Vector math library (header-only) |
@@ -366,6 +368,7 @@ With Expansion Pak (8MB), an additional 4MB is available. Shared resources (fram
 | [SCENE_SYSTEM.md](SCENE_SYSTEM.md) | Scene/world management |
 | [MENU_SYSTEM.md](MENU_SYSTEM.md) | Menu overlay system |
 | [INPUT.md](INPUT.md) | Controller input handling |
+| [MESH_SYSTEM.md](MESH_SYSTEM.md) | Mesh/model abstraction |
 | [ROADMAP.md](ROADMAP.md) | Development roadmap and milestones |
 | [SETUP.md](SETUP.md) | Environment setup guide |
 | [WORKFLOW.md](WORKFLOW.md) | Development workflow |
