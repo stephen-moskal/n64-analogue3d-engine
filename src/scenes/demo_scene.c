@@ -166,7 +166,7 @@ static const char *camera_mode_names[] = {"ORBITAL", "FIXED", "FOLLOW"};
 #define FIXED_MOVE_SPEED  150.0f
 #define FIXED_Y_SPEED     5.0f
 
-static int last_fps_option = 2;
+static int last_fps_option = 1;
 static float hud_fps = 0.0f;
 static uint32_t hud_fps_ticks = 0;
 
@@ -358,7 +358,7 @@ static void demo_init(Scene *scene) {
     // Camera collision OFF by default
     last_camera_mode = 0;
     last_camera_col = 0;
-    last_fps_option = 2;
+    last_fps_option = 1;
     hud_fps = 0.0f;
     hud_fps_ticks = 0;
     interaction_mode = MODE_NORMAL;
@@ -557,8 +557,7 @@ static void demo_update(Scene *scene, float dt) {
     if (fps_opt != last_fps_option) {
         switch (fps_opt) {
         case 0: engine_target_fps = 30; break;
-        case 1: engine_target_fps = 60; break;
-        case 2: engine_target_fps = 0;  break;
+        case 1: engine_target_fps = 0;  break;  // 60fps: no limiter needed (VSync caps it)
         }
         last_fps_option = fps_opt;
     }
