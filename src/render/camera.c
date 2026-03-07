@@ -4,8 +4,8 @@
 #include <string.h>
 
 #define MAX_ELEVATION  1.4835f   // ~85 degrees
-#define MIN_DISTANCE   50.0f
-#define MAX_DISTANCE   1000.0f
+#define MIN_DISTANCE   100.0f
+#define MAX_DISTANCE   1500.0f
 #define COLLISION_OFFSET 5.0f    // Pull camera forward from hit point
 
 const CameraConfig CAMERA_DEFAULT = {
@@ -15,8 +15,8 @@ const CameraConfig CAMERA_DEFAULT = {
     .distance   = 300.0f,
     .target     = {0.0f, 0.0f, 0.0f},
     .fov_y      = 1.0472f,     // 60 degrees
-    .near_plane = 10.0f,
-    .far_plane  = 1000.0f,
+    .near_plane = 20.0f,
+    .far_plane  = 2000.0f,
     .follow_offset    = {0.0f, 200.0f, -300.0f},
     .follow_smoothing = 0.1f,
     .fixed_position   = {0.0f, 200.0f, 300.0f},

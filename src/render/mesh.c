@@ -119,6 +119,13 @@ void mesh_compute_bounds(Mesh *mesh) {
 
 // --- Rendering ---
 
+// Guard band: vertices outside these screen-space bounds overflow
+// RDP 12.2 fixed-point math and cause rendering artifacts.
+#define GUARD_X_MIN  -1024.0f
+#define GUARD_X_MAX   1344.0f
+#define GUARD_Y_MIN  -1024.0f
+#define GUARD_Y_MAX   1264.0f
+
 void mesh_draw(const Mesh *mesh, const mat4_t *model,
                const Camera *cam, const LightConfig *light) {
     if (mesh->vertex_count == 0 || mesh->index_count == 0) return;
@@ -248,6 +255,7 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
             // Transform and project 3 vertices
             const MeshVertex *tri_verts[3] = {v0, v1, v2};
             float screen[3][6];  // {X, Y, Z, S, T, INV_W}
+            bool reject = false;
 
             for (int v = 0; v < 3; v++) {
                 vec3_t pos = {tri_verts[v]->position[0],
@@ -256,6 +264,10 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
                 vec4_t clip;
                 mat4_mul_vec3(&clip, &mvp, &pos);
 
+                // Near-plane rejection: vertices behind or very close to
+                // camera produce garbage Z from the perspective divide.
+                if (clip.w < 1.0f) { reject = true; break; }
+
                 float inv_w = 1.0f / clip.w;
                 float ndc_x = clip.x * inv_w;
                 float ndc_y = clip.y * inv_w;
@@ -263,11 +275,25 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
 
                 screen[v][0] = (ndc_x * 0.5f + 0.5f) * 320.0f;
                 screen[v][1] = (1.0f - (ndc_y * 0.5f + 0.5f)) * 240.0f;
-                screen[v][2] = ndc_z * 0.5f + 0.5f;
+
+                // Guard band: reject vertices that overflow RDP fixed-point
+                if (screen[v][0] < GUARD_X_MIN || screen[v][0] > GUARD_X_MAX ||
+                    screen[v][1] < GUARD_Y_MIN || screen[v][1] > GUARD_Y_MAX) {
+                    reject = true; break;
+                }
+
+                // Depth with clamp to valid [0, 1] range
+                float depth = ndc_z * 0.5f + 0.5f;
+                if (depth < 0.0f) depth = 0.0f;
+                if (depth > 1.0f) depth = 1.0f;
+                screen[v][2] = depth;
+
                 screen[v][3] = tri_verts[v]->uv[0];
                 screen[v][4] = tri_verts[v]->uv[1];
                 screen[v][5] = inv_w;
             }
+
+            if (reject) continue;
 
             rdpq_triangle(&TRIFMT_ZBUF_TEX, screen[0], screen[1], screen[2]);
             total_tris++;
