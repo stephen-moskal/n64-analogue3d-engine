@@ -5,8 +5,8 @@
 #define CUBE_SIZE 80.0f
 #define TEX_SIZE  32.0f
 
-#define AUTO_ROTATE_Y 0.01f
-#define AUTO_ROTATE_X 0.005f
+#define ROTATE_SPEED_Y 0.3f    // radians per second
+#define ROTATE_SPEED_X 0.15f   // radians per second
 
 // World-space position
 static vec3_t cube_position = {0.0f, 0.0f, 0.0f};
@@ -74,9 +74,9 @@ void cube_init(void) {
     update_model_matrix();
 }
 
-void cube_update(void) {
-    model_angle_y += AUTO_ROTATE_Y;
-    model_angle_x += AUTO_ROTATE_X;
+void cube_update(float dt) {
+    model_angle_y += ROTATE_SPEED_Y * dt;
+    model_angle_x += ROTATE_SPEED_X * dt;
     update_model_matrix();
 }
 

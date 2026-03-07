@@ -21,8 +21,9 @@ static CollisionResult ray_result;
 static int last_camera_mode = 0;
 static int last_camera_col = 0;
 
-// External references (menu owned by main.c)
+// External references (owned by main.c)
 extern Menu start_menu;
+extern int engine_target_fps;
 
 // Text configs for debug HUD
 static const TextBoxConfig title_text = {
@@ -67,6 +68,7 @@ static const TextBoxConfig pos_text = {
 #define MENU_ITEM_DEBUG_TEXT    1
 #define MENU_ITEM_CAMERA_MODE  2
 #define MENU_ITEM_CAMERA_COL   3
+#define MENU_ITEM_FRAME_RATE   4
 
 // Background color options
 static const color_t bg_colors[] = {
@@ -86,9 +88,12 @@ static const char *camera_mode_names[] = {"ORBITAL", "FIXED", "FOLLOW"};
 #define FIXED_MOVE_SPEED  150.0f
 #define FIXED_Y_SPEED     5.0f
 
-// FPS tracking
-static float fps = 0.0f;
-static unsigned long last_ticks = 0;
+// Track frame rate menu option
+static int last_fps_option = 2;  // Default: Unlimited
+
+// Smoothed FPS display (update every ~0.5s to avoid flickering)
+static float hud_fps = 0.0f;
+static uint32_t hud_fps_ticks = 0;
 
 // --- Camera mode application ---
 
@@ -140,24 +145,12 @@ static void demo_init(Scene *scene) {
     // Camera collision OFF by default (menu can toggle it)
     last_camera_mode = 0;
     last_camera_col = 0;
-    last_ticks = 0;
-    fps = 0.0f;
+    last_fps_option = 2;
+    hud_fps = 0.0f;
+    hud_fps_ticks = 0;
 }
 
 static void demo_update(Scene *scene, float dt) {
-    (void)dt;
-
-    // FPS calculation
-    unsigned long now = TICKS_READ();
-    if (last_ticks != 0) {
-        float delta_s = (float)TICKS_DISTANCE(last_ticks, now) / (float)TICKS_PER_SECOND;
-        if (delta_s > 0.001f) fps = 1.0f / delta_s;
-    }
-    last_ticks = now;
-
-    // Reset per-frame texture stats
-    texture_stats_reset();
-
     // Input
     InputState input_state;
     input_update(&input_state);
@@ -241,10 +234,21 @@ static void demo_update(Scene *scene, float dt) {
         last_camera_col = cam_col;
     }
 
+    // Check for frame rate change from menu
+    int fps_opt = menu_get_value(&start_menu, MENU_ITEM_FRAME_RATE);
+    if (fps_opt != last_fps_option) {
+        switch (fps_opt) {
+        case 0: engine_target_fps = 30; break;
+        case 1: engine_target_fps = 60; break;
+        case 2: engine_target_fps = 0;  break;  // Unlimited
+        }
+        last_fps_option = fps_opt;
+    }
+
     scene->camera.dirty = true;
 
     // Auto-rotate cube
-    cube_update();
+    cube_update(dt);
 
     // Update collider positions (collision_test_all is called by scene system)
     collision_update_sphere(&scene->collision, cube_collider, cube_position);
@@ -254,6 +258,9 @@ static void demo_update(Scene *scene, float dt) {
 }
 
 static void demo_draw(Scene *scene) {
+    // Reset texture stats each render frame (not in update, which runs at 30Hz)
+    texture_stats_reset();
+
     // Draw the checkered floor
     floor_draw(&scene->camera, &scene->lighting);
 
@@ -278,7 +285,13 @@ static void demo_draw(Scene *scene) {
             ts->triangle_count, ts->upload_count,
             scene->collision.result_count,
             ray_hit ? ray_result.distance : -1.0f);
-        text_draw_fmt(&fps_text, "FPS: %.0f", fps);
+        // Update displayed FPS every ~0.5s to avoid flickering
+        uint32_t now = TICKS_READ();
+        if (hud_fps_ticks == 0 || TICKS_DISTANCE(hud_fps_ticks, now) > (int32_t)(TICKS_PER_SECOND / 2)) {
+            hud_fps = display_get_fps();
+            hud_fps_ticks = now;
+        }
+        text_draw_fmt(&fps_text, "FPS: %.0f", hud_fps);
 
         // Show camera mode + position
         int cam_mode = menu_get_value(&start_menu, MENU_ITEM_CAMERA_MODE);
