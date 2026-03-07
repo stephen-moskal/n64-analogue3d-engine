@@ -166,6 +166,24 @@ static void demo_update(Scene *scene, float dt) {
         else menu_open(&start_menu);
     }
 
+    // L/R shoulder buttons: cycle camera mode
+    if (!start_menu.is_open) {
+        if (pressed.l) {
+            int mode = menu_get_value(&start_menu, MENU_ITEM_CAMERA_MODE);
+            mode = (mode + 2) % 3;  // Previous (wrap around)
+            start_menu.items[MENU_ITEM_CAMERA_MODE].selected = mode;
+            apply_camera_mode(scene, mode);
+            last_camera_mode = mode;
+        }
+        if (pressed.r) {
+            int mode = menu_get_value(&start_menu, MENU_ITEM_CAMERA_MODE);
+            mode = (mode + 1) % 3;  // Next
+            start_menu.items[MENU_ITEM_CAMERA_MODE].selected = mode;
+            apply_camera_mode(scene, mode);
+            last_camera_mode = mode;
+        }
+    }
+
     if (start_menu.is_open) {
         menu_update(&start_menu);
     } else if (input_state.has_input) {
