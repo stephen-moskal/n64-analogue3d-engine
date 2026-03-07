@@ -151,33 +151,47 @@ scene->on_init();           // Scene-specific setup
   collision_add_*();          // Add colliders
 ```
 
-### Frame Loop
+### Frame Loop (Fixed Timestep)
+
+Game logic runs at a fixed 30Hz via an accumulator pattern, decoupled from the render rate (30/60/unlimited, selectable via menu). Game speed is constant regardless of frame rate.
 
 ```c
+#define LOGIC_HZ  30
+#define LOGIC_DT  (1.0f / LOGIC_HZ)
+
+float accumulator = 0.0f;
+uint32_t last_ticks = TICKS_READ();
+
 while (1) {
-    float dt = 1.0f / 30.0f;
+    // Measure real elapsed time
+    uint32_t now = TICKS_READ();
+    float real_dt = TICKS_DISTANCE(last_ticks, now) / (float)TICKS_PER_SECOND;
+    last_ticks = now;
+    accumulator += real_dt;
 
-    // Scene manager update
-    scene_manager_update(&mgr, dt);
-    //   -> scene_update(current, dt)
-    //      -> per-object on_update()
-    //      -> scene->on_update() [input, game logic]
-    //      -> camera_update()
-    //      -> collision_test_all()
+    // Fixed-step game logic (30Hz)
+    while (accumulator >= LOGIC_DT) {
+        scene_manager_update(&mgr, LOGIC_DT);
+        //   -> scene_update(current, LOGIC_DT)
+        //      -> per-object on_update(dt)
+        //      -> scene->on_update(dt) [input, game logic]
+        //      -> camera_update()
+        //      -> collision_test_all()
+        accumulator -= LOGIC_DT;
+    }
 
-    // Render
+    // Render at display rate
     surface_t *fb = display_get();
     rdpq_attach(fb, &zbuf);
-
     scene_manager_draw(&mgr);
     //   -> scene_draw(current)
-    //      -> rdpq_clear(bg_color)
-    //      -> rdpq_clear_z(ZBUF_MAX)
+    //      -> rdpq_clear(bg_color), rdpq_clear_z(ZBUF_MAX)
     //      -> scene->on_draw() [3D geometry, HUD, menu]
     //      -> per-object on_draw()
     //   -> transition overlay (if transitioning)
-
     rdpq_detach_show();
+
+    // Optional: busy-wait frame limiter (for 30 FPS target)
 }
 ```
 
@@ -352,5 +366,6 @@ With Expansion Pak (8MB), an additional 4MB is available. Shared resources (fram
 | [SCENE_SYSTEM.md](SCENE_SYSTEM.md) | Scene/world management |
 | [MENU_SYSTEM.md](MENU_SYSTEM.md) | Menu overlay system |
 | [INPUT.md](INPUT.md) | Controller input handling |
+| [ROADMAP.md](ROADMAP.md) | Development roadmap and milestones |
 | [SETUP.md](SETUP.md) | Environment setup guide |
 | [WORKFLOW.md](WORKFLOW.md) | Development workflow |
