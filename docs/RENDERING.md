@@ -98,9 +98,15 @@ The `rdpq_triangle()` function accepts different vertex formats:
 |--------|--------------|--------|----------|
 | `TRIFMT_FILL` | 2 | `{X, Y}` | Flat-colored 2D triangles |
 | `TRIFMT_TEX` | 5 | `{X, Y, S, T, INV_W}` | Textured, no depth |
+| `TRIFMT_ZBUF` | 3 | `{X, Y, Z}` | Z-buffered, no texture |
 | `TRIFMT_ZBUF_TEX` | 6 | `{X, Y, Z, S, T, INV_W}` | Textured + Z-buffer |
 
-The engine uses `TRIFMT_ZBUF_TEX` for 3D geometry and `TRIFMT_FILL` for UI overlays (menu background).
+The engine uses:
+- `TRIFMT_ZBUF_TEX` for textured 3D geometry (cube via mesh system)
+- `TRIFMT_ZBUF` for flat-colored Z-buffered geometry (floor — no texture coords needed, saves CPU per-triangle gradient computation)
+- `TRIFMT_FILL` for UI overlays (menu background)
+
+**Performance note:** Use the simplest format that fits your needs. `TRIFMT_ZBUF` skips texture gradient computation in `rdpq_triangle()`, which is meaningful at high triangle counts (floor: 200 triangles/frame).
 
 ## Vertex Transform Pipeline
 
@@ -198,9 +204,25 @@ while (1) {
 
 - At 60 FPS, each frame has ~16.67ms total budget
 - CPU and RDP can overlap: CPU prepares next frame while RDP rasterizes current
-- Minimize RDP mode changes between triangles (batch by render state)
-- The current cube (12 triangles, 6 texture uploads) runs well within budget
-- Future optimization: batch geometry by texture to reduce `rdpq_sprite_upload` calls
+- The current scene (12 cube triangles + ~200 floor triangles) runs at 60 FPS
+
+### RDP State Change Cost
+
+**`rdpq_set_mode_standard()` is expensive** — it resets the entire RDP pipeline and generates many RDP commands. Minimize calls by:
+- Batching geometry by material type (only reset mode when type changes)
+- Batching same-colored geometry (set `rdpq_set_prim_color()` once per color, not per primitive)
+
+### Floor Optimization Case Study
+
+The floor was originally 20×20 tiles (800 triangles) with per-tile color changes (400 `rdpq_set_prim_color` calls) using `TRIFMT_ZBUF_TEX` (6 floats, with unused texture coords). This caused FPS drops to ~30 when zoomed out.
+
+Optimizations applied:
+1. **Reduced grid 20×20 → 10×10**: 800 → 200 triangles, 441 → 121 vertex transforms
+2. **Batched by color**: Draw all light tiles, then all dark tiles. 2 color changes instead of 400.
+3. **Switched to `TRIFMT_ZBUF`**: 3 floats instead of 6. `rdpq_triangle()` skips texture gradient computation.
+4. **Increased Z_BIAS 0.003 → 0.005**: Compensates for coarser Z interpolation at 10×10 grid density.
+
+Result: ~4x fewer triangles, 200x fewer state changes, less CPU per-triangle. FPS recovered to 60.
 
 ## Source Files
 

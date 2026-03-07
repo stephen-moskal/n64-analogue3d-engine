@@ -128,18 +128,20 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
     mat4_mul_vec3(&world_center_h, model, &mesh->bound_center);
     vec3_t world_center = {world_center_h.x, world_center_h.y, world_center_h.z};
 
-    // Scale bounding radius by model matrix (use max axis scale)
-    float sx = sqrtf(model->m[0][0] * model->m[0][0] +
-                     model->m[0][1] * model->m[0][1] +
-                     model->m[0][2] * model->m[0][2]);
-    float sy = sqrtf(model->m[1][0] * model->m[1][0] +
-                     model->m[1][1] * model->m[1][1] +
-                     model->m[1][2] * model->m[1][2]);
-    float sz = sqrtf(model->m[2][0] * model->m[2][0] +
-                     model->m[2][1] * model->m[2][1] +
-                     model->m[2][2] * model->m[2][2]);
-    float max_scale = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
-    float world_radius = mesh->bound_radius * max_scale;
+    // Scale bounding radius by max column length of model matrix.
+    // Use squared lengths to find the max, only one sqrtf at the end.
+    float sx_sq = model->m[0][0] * model->m[0][0] +
+                  model->m[0][1] * model->m[0][1] +
+                  model->m[0][2] * model->m[0][2];
+    float sy_sq = model->m[1][0] * model->m[1][0] +
+                  model->m[1][1] * model->m[1][1] +
+                  model->m[1][2] * model->m[1][2];
+    float sz_sq = model->m[2][0] * model->m[2][0] +
+                  model->m[2][1] * model->m[2][1] +
+                  model->m[2][2] * model->m[2][2];
+    float max_sq = sx_sq > sy_sq ? (sx_sq > sz_sq ? sx_sq : sz_sq)
+                                 : (sy_sq > sz_sq ? sy_sq : sz_sq);
+    float world_radius = mesh->bound_radius * sqrtf(max_sq);
 
     if (!camera_sphere_visible(cam, &world_center, world_radius)) {
         return;
@@ -164,69 +166,84 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
 
     int total_tris = 0;
 
-    // 5. Draw each face group
+    // 5. Set RDP mode ONCE before all groups.
+    //    Only change texture/color per group — avoid repeated mode resets.
+    //    If a mesh mixes material types, mode is reset only at the boundary.
+    int last_mat_type = -1;
+
     for (int g = 0; g < mesh->group_count; g++) {
         const MeshFaceGroup *group = &mesh->groups[g];
+        if (group->index_count == 0) continue;
+
         const Material *mat = &mesh->materials[group->material_index];
 
-        // Set RDP mode based on material type
-        rdpq_set_mode_standard();
-        rdpq_mode_zbuf(true, true);
+        // Only reset RDP mode when material type changes
+        if ((int)mat->type != last_mat_type) {
+            rdpq_set_mode_standard();
+            rdpq_mode_zbuf(true, true);
 
-        switch (mat->type) {
-        case MATERIAL_TEXTURED:
-            rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
-            rdpq_mode_persp(true);
-            rdpq_mode_filter(FILTER_BILINEAR);
-            if (mat->texture_slot >= 0) {
-                texture_upload(mat->texture_slot, TILE0);
+            switch (mat->type) {
+            case MATERIAL_TEXTURED:
+                rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
+                rdpq_mode_persp(true);
+                rdpq_mode_filter(FILTER_BILINEAR);
+                break;
+
+            case MATERIAL_FLAT_COLOR:
+                rdpq_mode_combiner(RDPQ_COMBINER_FLAT);
+                break;
             }
-            break;
 
-        case MATERIAL_FLAT_COLOR:
-            rdpq_mode_combiner(RDPQ_COMBINER_FLAT);
-            break;
+            last_mat_type = (int)mat->type;
         }
 
-        // Draw triangles in this group
+        // Upload texture for this group (texture changes per group, mode doesn't)
+        if (mat->type == MATERIAL_TEXTURED && mat->texture_slot >= 0) {
+            texture_upload(mat->texture_slot, TILE0);
+        }
+
+        // Compute group normal + lighting ONCE per group.
+        // In flat shading, all triangles in a group share the same normal
+        // (all vertices were built with the same face normal).
+        const MeshVertex *gv0 = &mesh->vertices[mesh->indices[group->index_start]];
+        float nx = model->m[0][0] * gv0->normal[0] +
+                   model->m[1][0] * gv0->normal[1] +
+                   model->m[2][0] * gv0->normal[2];
+        float ny = model->m[0][1] * gv0->normal[0] +
+                   model->m[1][1] * gv0->normal[1] +
+                   model->m[2][1] * gv0->normal[2];
+        float nz = model->m[0][2] * gv0->normal[0] +
+                   model->m[1][2] * gv0->normal[1] +
+                   model->m[2][2] * gv0->normal[2];
+
+        // Re-normalize (model matrix may include scale)
+        float nlen = sqrtf(nx * nx + ny * ny + nz * nz);
+        if (nlen > 0.001f) {
+            float inv = 1.0f / nlen;
+            nx *= inv; ny *= inv; nz *= inv;
+        }
+
+        // Backface cull entire group
+        if (mesh->backface_cull) {
+            float facing = nx * tcx + ny * tcy + nz * tcz;
+            if (facing < 0.0f) continue;
+        }
+
+        // Lighting — once per group
+        float normal_f[3] = {nx, ny, nz};
+        color_t lit_color = lighting_calculate(light, normal_f, view_dir);
+        uint8_t r = (uint8_t)((mat->base_color[0] * lit_color.r) / 255);
+        uint8_t g_col = (uint8_t)((mat->base_color[1] * lit_color.g) / 255);
+        uint8_t b = (uint8_t)((mat->base_color[2] * lit_color.b) / 255);
+        rdpq_set_prim_color(RGBA32(r, g_col, b, 255));
+
+        // Draw all triangles in this group
         for (int i = group->index_start;
              i < group->index_start + group->index_count;
              i += 3) {
             const MeshVertex *v0 = &mesh->vertices[mesh->indices[i]];
             const MeshVertex *v1 = &mesh->vertices[mesh->indices[i + 1]];
             const MeshVertex *v2 = &mesh->vertices[mesh->indices[i + 2]];
-
-            // Transform face normal (use v0's normal — flat shading)
-            float nx = model->m[0][0] * v0->normal[0] +
-                       model->m[1][0] * v0->normal[1] +
-                       model->m[2][0] * v0->normal[2];
-            float ny = model->m[0][1] * v0->normal[0] +
-                       model->m[1][1] * v0->normal[1] +
-                       model->m[2][1] * v0->normal[2];
-            float nz = model->m[0][2] * v0->normal[0] +
-                       model->m[1][2] * v0->normal[1] +
-                       model->m[2][2] * v0->normal[2];
-
-            // Re-normalize (model matrix may include scale)
-            float nlen = sqrtf(nx * nx + ny * ny + nz * nz);
-            if (nlen > 0.001f) {
-                float inv = 1.0f / nlen;
-                nx *= inv; ny *= inv; nz *= inv;
-            }
-
-            // Backface culling
-            if (mesh->backface_cull) {
-                float facing = nx * tcx + ny * tcy + nz * tcz;
-                if (facing < 0.0f) continue;
-            }
-
-            // Lighting
-            float normal_f[3] = {nx, ny, nz};
-            color_t lit_color = lighting_calculate(light, normal_f, view_dir);
-            uint8_t r = (uint8_t)((mat->base_color[0] * lit_color.r) / 255);
-            uint8_t g_col = (uint8_t)((mat->base_color[1] * lit_color.g) / 255);
-            uint8_t b = (uint8_t)((mat->base_color[2] * lit_color.b) / 255);
-            rdpq_set_prim_color(RGBA32(r, g_col, b, 255));
 
             // Transform and project 3 vertices
             const MeshVertex *tri_verts[3] = {v0, v1, v2};

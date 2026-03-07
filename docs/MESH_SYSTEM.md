@@ -182,11 +182,12 @@ Draws the entire mesh with the given model matrix. Handles:
 
 1. **Frustum culling** — Transforms bounding sphere to world space (including scale), tests against camera frustum. Entire mesh skipped if off-screen.
 2. **MVP computation** — `MVP = VP * Model`
-3. **Per-group RDP setup** — Sets combiner mode and uploads texture once per group
-4. **Per-triangle processing:**
-   - Normal transform (model matrix upper 3x3 + re-normalize for scale)
-   - Backface culling (dot product with camera direction)
-   - Blinn-Phong lighting via `lighting_calculate()`
+3. **RDP mode setup** — Only resets RDP mode (`rdpq_set_mode_standard()`) when the material **type** changes between groups. Texture uploads happen per-group.
+4. **Per-group processing** (flat shading):
+   - Normal transform + lighting computed **once per group** (all triangles in a flat-shaded group share the same normal)
+   - Backface cull skips entire groups, not individual triangles
+   - `rdpq_set_prim_color()` set once per group
+5. **Per-triangle processing:**
    - Vertex transform (MVP → perspective divide → NDC → screen coordinates)
    - `rdpq_triangle(&TRIFMT_ZBUF_TEX, ...)` with Z-buffer
 
@@ -275,12 +276,25 @@ void platform_init(void) {
 | TMEM | 4 KB | Only one texture tile loaded at a time. Groups upload their texture once. |
 | Vertex memory | ~16 KB for 512 verts | MeshVertex is 32 bytes. Heap-allocated in RDRAM. |
 
-## Performance Notes
+## Performance Notes & Optimization Lessons
 
-- **Frustum culling**: Entire mesh rejected with one bounding sphere test (6 plane dot products). This is the same optimization as before.
-- **Backface culling**: Per-triangle dot product. Skips ~50% of triangles on convex objects.
-- **RDP state batching**: Mode set once per group, not per triangle. For a single-material mesh, the RDP mode is set exactly once.
-- **Bounding sphere scaling**: The draw function extracts column lengths from the model matrix to compute the world-space bounding radius. This handles non-uniform scale correctly.
+- **Frustum culling**: Entire mesh rejected with one bounding sphere test (6 plane dot products).
+- **Backface culling**: Per-group (not per-triangle). Skips ~50% of groups on convex objects.
+- **RDP mode batching**: `rdpq_set_mode_standard()` is expensive — it resets the entire RDP pipeline. Only called when the material **type** changes between groups, not per-group. For a mesh where all groups share the same type (e.g., all textured), mode is set exactly once.
+- **Per-group lighting**: Normal transform + `lighting_calculate()` computed once per group. An early version computed these per-triangle, which doubled the lighting work for no visual difference in flat shading.
+- **Bounding sphere scale**: Uses squared column lengths with a single `sqrtf` at the end, rather than 3 separate `sqrtf` calls. `sqrtf` is expensive on the N64's MIPS FPU.
+
+### Optimization History
+
+The initial mesh_draw implementation caused a significant frame rate regression (sub-30 FPS) on hardware despite rendering the same 12-triangle cube. Root causes:
+
+| Issue | Cost | Fix |
+|-------|------|-----|
+| `rdpq_set_mode_standard()` called 6x (per group) instead of 1x | Each call resets entire RDP pipeline | Only reset when material type changes |
+| Normal transform + lighting per-triangle (12x) instead of per-face (6x) | Doubled `lighting_calculate()` + `sqrtf` calls | Compute once per group |
+| 3x `sqrtf` for bounding sphere scale extraction | Expensive FPU ops | Compare squared lengths, one `sqrtf` at end |
+
+**Lesson**: On the N64, minimizing RDP state changes is as important as minimizing triangle count. A single `rdpq_set_mode_standard()` call can cost more than several `rdpq_triangle()` calls.
 
 ## Future: T3D Migration
 

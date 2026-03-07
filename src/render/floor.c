@@ -3,7 +3,7 @@
 #include <math.h>
 
 #define FLOOR_HALF_SIZE  500.0f
-#define TILE_COUNT       20
+#define TILE_COUNT       10
 #define TILE_SIZE        (FLOOR_HALF_SIZE * 2.0f / TILE_COUNT)
 #define VERT_COUNT       (TILE_COUNT + 1)
 
@@ -12,7 +12,7 @@
 // identical Z-buffer values (N64's 16-bit Z has very coarse quantization
 // past ~0.96).  A small additive bias gives several extra Z-buffer steps
 // of clearance without visible artifacts.
-#define Z_BIAS  0.003f
+#define Z_BIAS  0.005f
 
 // RDP coordinate guard band — vertices outside this range
 // overflow fixed-point math and cause rendering artifacts
@@ -30,8 +30,9 @@
 #define TILE_DARK_G   0x50
 #define TILE_DARK_B   0x50
 
-// Static to avoid 3KB+ stack usage on N64
-static float grid[VERT_COUNT][VERT_COUNT][6];
+// Static to avoid stack usage on N64.
+// TRIFMT_ZBUF format: {X, Y, Z} — 3 floats per vertex (no texture coords)
+static float grid[VERT_COUNT][VERT_COUNT][3];
 static bool  grid_valid[VERT_COUNT][VERT_COUNT];
 
 void floor_draw(const Camera *cam, const LightConfig *light) {
@@ -51,7 +52,8 @@ void floor_draw(const Camera *cam, const LightConfig *light) {
         (TILE_DARK_B * lit.b) / 255, 255);
 
     // Project all grid vertices once — shared edges eliminate sub-pixel gaps
-    // between adjacent tiles that cause horizontal line artifacts
+    // between adjacent tiles that cause horizontal line artifacts.
+    // Uses TRIFMT_ZBUF: only {X, Y, Z} needed (no texture on floor).
     for (int row = 0; row <= TILE_COUNT; row++) {
         for (int col = 0; col <= TILE_COUNT; col++) {
             float x = -FLOOR_HALF_SIZE + col * TILE_SIZE;
@@ -85,9 +87,6 @@ void floor_draw(const Camera *cam, const LightConfig *light) {
             float depth = clip.z * inv_w * 0.5f + 0.5f + Z_BIAS;
             if (depth > 1.0f) depth = 1.0f;
             grid[row][col][2] = depth;
-            grid[row][col][3] = 0.0f;   // S (unused)
-            grid[row][col][4] = 0.0f;   // T (unused)
-            grid[row][col][5] = inv_w;
         }
     }
 
@@ -96,23 +95,32 @@ void floor_draw(const Camera *cam, const LightConfig *light) {
     rdpq_mode_combiner(RDPQ_COMBINER_FLAT);
     rdpq_mode_zbuf(true, true);
 
-    // Draw tiles using shared projected vertices
+    // Draw tiles batched by color to minimize prim_color changes.
+    // Pass 0: light tiles, Pass 1: dark tiles.
     int tri_count = 0;
-    for (int row = 0; row < TILE_COUNT; row++) {
-        for (int col = 0; col < TILE_COUNT; col++) {
-            // All 4 corners must be valid
-            if (!grid_valid[row][col]     || !grid_valid[row][col+1] ||
-                !grid_valid[row+1][col+1] || !grid_valid[row+1][col])
-                continue;
+    for (int pass = 0; pass < 2; pass++) {
+        rdpq_set_prim_color(pass == 0 ? col_light : col_dark);
 
-            rdpq_set_prim_color(((row + col) & 1) ? col_light : col_dark);
+        for (int row = 0; row < TILE_COUNT; row++) {
+            for (int col = 0; col < TILE_COUNT; col++) {
+                // Select tiles for this pass:
+                // pass 0 (light): (row+col) is odd
+                // pass 1 (dark):  (row+col) is even
+                int is_light = (row + col) & 1;
+                if ((pass == 0) != is_light) continue;
 
-            // Two triangles per tile: (BL, BR, TR) and (BL, TR, TL)
-            rdpq_triangle(&TRIFMT_ZBUF_TEX,
-                grid[row][col], grid[row][col+1], grid[row+1][col+1]);
-            rdpq_triangle(&TRIFMT_ZBUF_TEX,
-                grid[row][col], grid[row+1][col+1], grid[row+1][col]);
-            tri_count += 2;
+                // All 4 corners must be valid
+                if (!grid_valid[row][col]     || !grid_valid[row][col+1] ||
+                    !grid_valid[row+1][col+1] || !grid_valid[row+1][col])
+                    continue;
+
+                // Two triangles per tile: (BL, BR, TR) and (BL, TR, TL)
+                rdpq_triangle(&TRIFMT_ZBUF,
+                    grid[row][col], grid[row][col+1], grid[row+1][col+1]);
+                rdpq_triangle(&TRIFMT_ZBUF,
+                    grid[row][col], grid[row+1][col+1], grid[row+1][col]);
+                tri_count += 2;
+            }
         }
     }
 
