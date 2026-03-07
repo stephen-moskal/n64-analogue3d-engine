@@ -115,12 +115,14 @@ main.c
 │   ├── render/lighting [Blinn-Phong calculation]
 │   ├── collision/collision [collision detection, raycasting]
 │   └── render/texture  [dynamic texture slot management]
-└── scenes/demo_scene   [demo scene implementation]
-    ├── render/cube     [cube geometry definition]
+└── scenes/demo_scene   [demo scene: multi-object, selection, manipulation]
+    ├── render/cube     [cube geometry definition (textured)]
     │   └── render/mesh [generic mesh rendering]
     │       ├── render/camera
     │       ├── render/lighting
     │       └── render/texture
+    ├── render/mesh_defs [shape library: pillar, platform, pyramid]
+    │   └── render/mesh
     └── scene/scene
 ```
 
@@ -152,49 +154,45 @@ scene->on_init();           // Scene-specific setup
   collision_add_*();          // Add colliders
 ```
 
-### Frame Loop (Fixed Timestep)
+### Frame Loop (Variable Timestep)
 
-Game logic runs at a fixed 30Hz via an accumulator pattern, decoupled from the render rate (30/60/unlimited, selectable via menu). Game speed is constant regardless of frame rate.
+Game logic runs once per rendered frame using the actual elapsed time (`dt`). Frame rate is selectable via menu (30 or 60 FPS). At 60 FPS, objects update 60 times per second for smooth motion; at 30 FPS, a busy-wait limiter skips every other VBlank.
 
 ```c
-#define LOGIC_HZ  30
-#define LOGIC_DT  (1.0f / LOGIC_HZ)
-
-float accumulator = 0.0f;
 uint32_t last_ticks = TICKS_READ();
 
 while (1) {
     // Measure real elapsed time
     uint32_t now = TICKS_READ();
-    float real_dt = TICKS_DISTANCE(last_ticks, now) / (float)TICKS_PER_SECOND;
+    float dt = TICKS_DISTANCE(last_ticks, now) / (float)TICKS_PER_SECOND;
     last_ticks = now;
-    accumulator += real_dt;
 
-    // Fixed-step game logic (30Hz)
-    while (accumulator >= LOGIC_DT) {
-        scene_manager_update(&mgr, LOGIC_DT);
-        //   -> scene_update(current, LOGIC_DT)
-        //      -> per-object on_update(dt)
-        //      -> scene->on_update(dt) [input, game logic]
-        //      -> camera_update()
-        //      -> collision_test_all()
-        accumulator -= LOGIC_DT;
-    }
+    // Update game logic once per frame
+    scene_manager_update(&mgr, dt);
+    //   -> scene_update(current, dt)
+    //      -> per-object on_update(dt)
+    //      -> scene->on_update(dt) [input, game logic]
+    //      -> camera_update()
+    //      -> collision_test_all()
 
-    // Render at display rate
-    surface_t *fb = display_get();
+    // Render
+    surface_t *fb = display_get();    // Blocks until VBlank (60Hz cap)
     rdpq_attach(fb, &zbuf);
     scene_manager_draw(&mgr);
     //   -> scene_draw(current)
     //      -> rdpq_clear(bg_color), rdpq_clear_z(ZBUF_MAX)
-    //      -> scene->on_draw() [3D geometry, HUD, menu]
+    //      -> scene->on_draw() [floor, 3D geometry]
     //      -> per-object on_draw()
+    //      -> scene->on_post_draw() [HUD, overlays]
     //   -> transition overlay (if transitioning)
     rdpq_detach_show();
 
-    // Optional: busy-wait frame limiter (for 30 FPS target)
+    // Busy-wait frame limiter (for 30 FPS target)
+    if (engine_target_fps > 0) { /* spin until target frame time */ }
 }
 ```
+
+**Why variable timestep:** A previous fixed-timestep accumulator (30Hz logic) caused every other frame at 60 FPS to be an identical duplicate — the accumulator hadn't reached the 33ms threshold, so no logic update ran. Motion was effectively 30Hz regardless of display rate, making 30 and 60 FPS feel identical. Variable timestep ensures every rendered frame has a unique logic update.
 
 ## Rendering Pipeline
 
@@ -256,10 +254,12 @@ See [SCENE_SYSTEM.md](SCENE_SYSTEM.md) for full documentation.
 
 ### Summary
 
-- Code-defined scenes with callback lifecycle (init/update/draw/cleanup)
+- Code-defined scenes with callback lifecycle (init/update/draw/post_draw/cleanup)
 - Each scene owns Camera, LightConfig, CollisionWorld
 - Scene manager with transitions (cut, fade-black, fade-white)
 - Up to 32 objects and 16 textures per scene
+- Per-object update/draw callbacks via SceneObject
+- Draw order: on_draw (floor/3D) → per-object on_draw → on_post_draw (HUD/overlays)
 - Support for both independent and shared-coordinate scenes
 
 ## Camera System
@@ -311,7 +311,7 @@ text_draw_fmt(&config, "formatted %d", value);
 | Z-buffer | ~150KB | 320x240 x 2 bytes |
 | Textures (sprites) | ~12KB | 6 x 32x32 RGBA16 |
 | TMEM per frame | 4KB max | RDP on-chip texture cache |
-| Code + data | ~270KB | Current ROM size |
+| Code + data | ~288KB | Current ROM size |
 | Audio buffers | ~64KB | Reserved for future |
 | **Available** | **~3MB** | For game assets and logic |
 
@@ -342,16 +342,18 @@ With Expansion Pak (8MB), an additional 4MB is available. Shared resources (fram
 
 | File | Purpose |
 |------|---------|
-| `src/main.c` | Entry point, display/input/menu init, scene manager loop |
+| `src/main.c` | Entry point, display/input/menu init, variable-timestep game loop |
 | `src/render/camera.c/h` | Multi-mode camera, 3D math, frustum culling, collision |
 | `src/render/mesh.c/h` | Generic mesh type, builder API, universal draw function |
-| `src/render/cube.c/h` | Cube geometry (built on Mesh) |
+| `src/render/mesh_defs.c/h` | Shape library: pillar, platform, pyramid factory functions |
+| `src/render/cube.c/h` | Cube geometry (textured, built on Mesh) |
+| `src/render/floor.c/h` | Checkered floor grid (dynamic, Z-biased) |
 | `src/render/lighting.c/h` | Blinn-Phong lighting |
 | `src/render/texture.c/h` | Texture loading, TMEM management, dynamic slots |
 | `src/math/vec3.h` | Vector math library (header-only) |
 | `src/collision/collision.c/h` | Collision detection, raycasting, overlap queries |
-| `src/scene/scene.c/h` | Scene lifecycle, manager, transitions |
-| `src/scenes/demo_scene.c/h` | Demo scene (textured cube with all features) |
+| `src/scene/scene.c/h` | Scene lifecycle, manager, transitions, per-object callbacks |
+| `src/scenes/demo_scene.c/h` | Demo scene: 5 objects, selection/manipulation, HUD |
 | `src/input/input.c/h` | Controller input |
 | `src/ui/text.c/h` | Text rendering |
 | `src/ui/menu.c/h` | Menu system |

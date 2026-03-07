@@ -8,24 +8,28 @@ Long-term vision: a Final Fantasy Tactics-style strategy game. But the engine sh
 
 ## Current State
 
-**12 stable source modules**, all verified on Ares emulator and Analogue 3D hardware (via SummerCart64).
+**15 stable source modules**, all verified on Ares emulator and Analogue 3D hardware (via SummerCart64).
 
 | System | Status | Notes |
 |--------|--------|-------|
 | 3D Rendering | Working | CPU software transforms + RDP rasterization, Z-buffered, textured |
+| Mesh System | Mature | Generic Mesh type, builder API, universal `mesh_draw()`, frustum culling |
+| Shape Library | Working | Factory functions for pillar, platform, pyramid (mesh_defs) |
+| Multi-Object Scene | Working | 5 objects with different meshes, positions, scales, colliders |
+| Object Manipulation | Working | Select, move, rotate, scale objects via controller (Z/A/B/analog) |
 | Camera | Mature | 3 modes (orbital, fixed, follow), frustum culling, 3-layer collision |
 | Collision | Mature | Sphere/AABB, raycasting, layer bitmasks, overlap queries |
-| Scene Management | Working | Lifecycle callbacks, transitions (cut, fade), per-scene ownership |
+| Scene Management | Mature | Lifecycle callbacks (init/update/draw/post_draw/cleanup), transitions, per-object callbacks |
 | Lighting | Working | Single directional Blinn-Phong (ambient + diffuse + specular) |
-| Input | Working | Analog stick, D-pad, C-buttons, shoulder buttons, Start |
+| Input | Working | Analog stick, D-pad, C-buttons, shoulder buttons, Start, Z-trigger |
 | Menu System | Working | 5-item overlay with navigation, apply/cancel |
-| Text Rendering | Working | 2 fonts, configurable alignment/color |
-| Fixed Timestep | Working | 30Hz logic decoupled from render rate (30/60/unlimited) |
+| Text Rendering | Working | 2 fonts, configurable alignment/color, left/right-aligned HUD |
+| Variable Timestep | Working | Logic runs once per frame at display rate (30 or 60 FPS) |
 | Texture Management | Working | 16 dynamic slots, per-frame TMEM upload |
 
 ### What's Missing
 
-No model loading (geometry is hand-coded C), no animation, no audio, no sprites/2D rendering, no dynamic physics, no data-driven asset pipeline. The cube and floor are the only renderable objects.
+No model loading (geometry is hand-coded C), no animation, no audio, no sprites/2D rendering, no dynamic physics, no data-driven asset pipeline.
 
 ---
 
@@ -33,41 +37,32 @@ No model loading (geometry is hand-coded C), no animation, no audio, no sprites/
 
 Ordered by dependency. Each feature unlocks the next.
 
-### Feature 1: Mesh/Model Abstraction
+### Feature 1: Mesh/Model Abstraction — COMPLETE
 
-**Problem:** Adding a new 3D object means writing another 180-line file like `cube.c` with hardcoded vertex positions, face normals, UV coordinates, and a custom draw function. This doesn't scale.
+Generic `Mesh` type with builder API, per-group materials, frustum culling, and universal `mesh_draw()` renderer. The cube uses Mesh internally. See [MESH_SYSTEM.md](MESH_SYSTEM.md).
 
-**Solution:** Extract a general `Mesh` type that holds vertex/index buffers, material references, and a bounding volume. The cube becomes one instance of Mesh. Any new object (pillar, crate, platform) uses the same type and rendering path.
-
-```
-src/render/mesh.h    — Mesh struct, vertex format, API
-src/render/mesh.c    — Mesh creation, rendering, bounding volume computation
-src/render/cube.c    — Refactored to use Mesh internally
-```
-
-**What it unlocks:** Every subsequent feature (multi-object, model loading, instancing) depends on having a common mesh representation. This is the single highest-leverage change in the entire roadmap.
-
-**N64 constraints to consider:**
-- Vertex data lives in RDRAM — keep vertex counts reasonable (N64 games typically use 50-500 triangles per object)
-- Materials map to RDP mode + combiner + texture — a material struct should capture these
-- Bounding volume (sphere or AABB) needed for frustum culling
+**Delivered:**
+- `src/render/mesh.c/h` — Mesh struct, vertex/index buffers, material system, bounding sphere
+- `src/render/cube.c` — Refactored to use Mesh (textured, 6 materials, 6 face groups)
+- Per-group RDP mode batching, per-group lighting, backface culling
+- Verified on hardware at 60 FPS
 
 ---
 
-### Feature 2: Multi-Object Rendering
+### Feature 2: Multi-Object Rendering — COMPLETE
 
-**Problem:** The `SceneObject` system exists in `scene.h` (up to 32 objects per scene with per-object callbacks) but is completely unused — the demo scene draws the cube and floor directly in its `on_draw` callback.
+SceneObject system fully activated with 5 objects (cube, 2 pillars, platform, pyramid), per-object update/draw callbacks, interactive selection and manipulation, and a reorganized HUD.
 
-**Solution:** Actually use the object system. Spawn 3-5 objects with different meshes, positions, and scales. Validate that frustum culling, collision, and rendering scale correctly.
-
-```
-Example scene: a cube at origin, two pillars flanking it, a platform behind.
-Each is a SceneObject with a Mesh, transform, and optional collider.
-```
-
-**What it unlocks:** Confidence that the scene architecture works with real content. Exposes performance budgets — how many CPU-transformed objects before we need RSP acceleration? (The answer will motivate Milestone 1.)
-
-**Verification:** Object count on HUD, frustum culling correctly hides off-screen objects, collision works between all objects.
+**Delivered:**
+- `src/render/mesh_defs.c/h` — Shape library: pillar (8-sided cylinder, 32 tris), platform (box, 12 tris), pyramid (4-sided + base, 6 tris)
+- Generic `ObjectData` struct + `object_update`/`object_draw` callbacks in demo_scene
+- Object selection (Z-trigger → D-pad cycle → A to transform) with visual highlight (boosted ambient)
+- Object manipulation: move (analog+C), rotate (analog+C), scale (analog+C)
+- Per-object sphere colliders updated during manipulation
+- `on_post_draw` scene callback for HUD/overlays after all 3D geometry
+- HUD: left (OBJ/VIS count, geometry stats, FPS), right (selection, camera mode, XYZ)
+- Variable timestep (replaced 30Hz fixed accumulator that caused duplicate frames at 60 FPS)
+- ~270 total triangles, stable 60 FPS on hardware
 
 ---
 

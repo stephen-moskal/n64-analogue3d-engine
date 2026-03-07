@@ -193,17 +193,15 @@ Draws the entire mesh with the given model matrix. Handles:
 
 ## Usage Example: Cube
 
-The existing cube uses 6 materials (one per face, each with a different texture and base color) and 6 face groups (one quad = 2 triangles each).
+The cube uses 6 materials (one per face, each with a different texture and base color) and 6 face groups. `cube_init()` builds the mesh; `cube_get_mesh()` returns a pointer for use by SceneObject callbacks. Rendering is handled by the generic `object_draw` callback in demo_scene.c, which calls `mesh_draw()` with the object's model matrix.
 
 ```c
 static Mesh cube_mesh;
-static mat4_t model_matrix;
 
 void cube_init(void) {
     mesh_init(&cube_mesh);
     cube_mesh.backface_cull = true;
 
-    // 6 materials — one per face
     for (int f = 0; f < 6; f++) {
         mesh_add_material(&cube_mesh, (Material){
             .type = MATERIAL_TEXTURED,
@@ -212,56 +210,62 @@ void cube_init(void) {
         });
     }
 
-    // 6 face groups — each a quad (4 verts, 2 triangles)
     for (int f = 0; f < 6; f++) {
         mesh_begin_group(&cube_mesh, f);
         int base = cube_mesh.vertex_count;
         for (int v = 0; v < 4; v++) {
-            mesh_add_vertex(&cube_mesh, (MeshVertex){
-                .position = {face_verts[f][v][0], face_verts[f][v][1], face_verts[f][v][2]},
-                .normal   = {face_normals[f][0], face_normals[f][1], face_normals[f][2]},
-                .uv       = {face_uvs[v][0], face_uvs[v][1]}
-            });
+            mesh_add_vertex(&cube_mesh, (MeshVertex){...});
         }
         mesh_add_triangle(&cube_mesh, base+0, base+1, base+2);
         mesh_add_triangle(&cube_mesh, base+0, base+2, base+3);
         mesh_end_group(&cube_mesh);
     }
-
     mesh_compute_bounds(&cube_mesh);
 }
 
-void cube_draw(const Camera *cam, const LightConfig *light) {
-    mesh_draw(&cube_mesh, &model_matrix, cam, light);
-}
-
-void cube_cleanup(void) {
-    mesh_cleanup(&cube_mesh);
-}
+const Mesh *cube_get_mesh(void) { return &cube_mesh; }
+void cube_cleanup(void) { mesh_cleanup(&cube_mesh); }
 ```
 
-## Usage Example: Simple Flat-Color Object
+## Shape Library (mesh_defs)
 
-A flat-colored object (no texture) with a single material:
+Factory functions for reusable mesh primitives. Each shape is a lazy-initialized static `Mesh` in local space, centered at origin, unit scale. The SceneObject's transform handles position/rotation/scale.
 
 ```c
-static Mesh platform_mesh;
+void mesh_defs_init(void);              // Build all shapes
+void mesh_defs_cleanup(void);           // Free all mesh geometry
+const Mesh *mesh_defs_get_pillar(void);
+const Mesh *mesh_defs_get_platform(void);
+const Mesh *mesh_defs_get_pyramid(void);
+```
 
-void platform_init(void) {
-    mesh_init(&platform_mesh);
-    platform_mesh.backface_cull = false;  // Visible from both sides
+| Shape | Geometry | Triangles | Material | Color |
+|-------|----------|-----------|----------|-------|
+| Pillar | 8-sided cylinder, height [-1,1], radius 1.0 | 32 | `MATERIAL_FLAT_COLOR` | Stone gray (180, 160, 140) |
+| Platform | Box 4.0 x 0.5 x 2.0 | 12 | `MATERIAL_FLAT_COLOR` | Dark wood (140, 100, 60) |
+| Pyramid | 4-sided pyramid, base [-1,1] XZ, apex Y=1 | 6 | `MATERIAL_FLAT_COLOR` | Sand gold (200, 180, 100) |
 
-    mesh_add_material(&platform_mesh, (Material){
-        .type = MATERIAL_FLAT_COLOR,
-        .texture_slot = -1,
-        .base_color = {180, 160, 140}
-    });
+Each shape uses multiple face groups for proper per-face lighting normals (e.g., pillar has 10 groups: 8 sides + top cap + bottom cap).
 
-    mesh_begin_group(&platform_mesh, 0);
-    // Add vertices and triangles...
-    mesh_end_group(&platform_mesh);
+## SceneObject Integration
 
-    mesh_compute_bounds(&platform_mesh);
+Objects are managed through the scene system via generic callbacks. An `ObjectData` struct stored in `SceneObject.data` holds the mesh reference and behavior flags:
+
+```c
+typedef struct {
+    const Mesh *mesh;           // Shared mesh reference (NOT owned)
+    const char *name;           // Display name for HUD
+    bool auto_rotate;
+    float rotate_speed_x, rotate_speed_y;
+} ObjectData;
+
+// Generic draw callback (used by all mesh objects):
+static void object_draw(SceneObject *obj, const Camera *cam, const LightConfig *light) {
+    ObjectData *data = (ObjectData *)obj->data;
+    mat4_t model;
+    mat4_from_srt(&model, &obj->scale, obj->rotation.x, obj->rotation.y,
+                  obj->rotation.z, &obj->position);
+    mesh_draw(data->mesh, &model, cam, light);
 }
 ```
 
@@ -311,4 +315,6 @@ This means the CPU renderer built here becomes the reference implementation whil
 |------|---------|
 | [src/render/mesh.h](../src/render/mesh.h) | Mesh, Material, MeshVertex, MeshFaceGroup structs and API |
 | [src/render/mesh.c](../src/render/mesh.c) | Builder functions, bounding volume, rendering |
-| [src/render/cube.c](../src/render/cube.c) | Cube geometry built using Mesh (reference usage) |
+| [src/render/mesh_defs.h](../src/render/mesh_defs.h) | Shape library API (pillar, platform, pyramid) |
+| [src/render/mesh_defs.c](../src/render/mesh_defs.c) | Geometry generators for each shape |
+| [src/render/cube.c](../src/render/cube.c) | Cube geometry (textured, built on Mesh) |
