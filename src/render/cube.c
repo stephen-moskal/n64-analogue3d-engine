@@ -1,23 +1,7 @@
 #include "cube.h"
-#include "mesh.h"
 #include "texture.h"
-#include <math.h>
 
-#define CUBE_SIZE 80.0f
 #define TEX_SIZE  32.0f
-
-#define ROTATE_SPEED_Y 0.3f    // radians per second
-#define ROTATE_SPEED_X 0.15f   // radians per second
-
-// World-space position
-static vec3_t cube_position = {0.0f, 0.0f, 0.0f};
-
-// Model rotation angles (auto-rotating)
-static float model_angle_x = 0.3f;
-static float model_angle_y = 0.5f;
-
-// Model matrix
-static mat4_t model_matrix;
 
 // The cube mesh
 static Mesh cube_mesh;
@@ -66,11 +50,6 @@ static const int face_tex_slot[6] = {
     TEX_CUBE_BOTTOM, TEX_CUBE_RIGHT, TEX_CUBE_LEFT
 };
 
-static void update_model_matrix(void) {
-    vec3_t scale = {CUBE_SIZE, CUBE_SIZE, CUBE_SIZE};
-    mat4_from_srt(&model_matrix, &scale, model_angle_x, model_angle_y, 0.0f, &cube_position);
-}
-
 void cube_init(void) {
     mesh_init(&cube_mesh);
     cube_mesh.backface_cull = true;
@@ -108,19 +87,12 @@ void cube_init(void) {
     }
 
     mesh_compute_bounds(&cube_mesh);
-    update_model_matrix();
-}
-
-void cube_update(float dt) {
-    model_angle_y += ROTATE_SPEED_Y * dt;
-    model_angle_x += ROTATE_SPEED_X * dt;
-    update_model_matrix();
-}
-
-void cube_draw(const Camera *cam, const LightConfig *light) {
-    mesh_draw(&cube_mesh, &model_matrix, cam, light);
 }
 
 void cube_cleanup(void) {
     mesh_cleanup(&cube_mesh);
+}
+
+const Mesh *cube_get_mesh(void) {
+    return &cube_mesh;
 }

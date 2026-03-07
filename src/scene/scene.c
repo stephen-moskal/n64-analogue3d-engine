@@ -69,6 +69,11 @@ void scene_draw(Scene *scene) {
             obj->on_draw(obj, &scene->camera, &scene->lighting);
         }
     }
+
+    // Post-draw: HUD, overlays, 2D elements (after all 3D geometry)
+    if (scene->on_post_draw) {
+        scene->on_post_draw(scene);
+    }
 }
 
 void scene_cleanup(Scene *scene) {

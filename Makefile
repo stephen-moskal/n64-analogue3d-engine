@@ -16,6 +16,7 @@ MKSPRITE_FLAGS ?= --format RGBA16
 
 OBJS = $(BUILD_DIR)/main.o \
        $(BUILD_DIR)/render/mesh.o \
+       $(BUILD_DIR)/render/mesh_defs.o \
        $(BUILD_DIR)/render/cube.o \
        $(BUILD_DIR)/render/lighting.o \
        $(BUILD_DIR)/render/texture.o \

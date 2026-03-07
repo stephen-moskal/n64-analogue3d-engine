@@ -63,6 +63,7 @@ typedef struct Scene {
     void (*on_init)(struct Scene *scene);
     void (*on_update)(struct Scene *scene, float dt);
     void (*on_draw)(struct Scene *scene);
+    void (*on_post_draw)(struct Scene *scene);  // After per-object draws (HUD, overlays)
     void (*on_cleanup)(struct Scene *scene);
 
     // State
