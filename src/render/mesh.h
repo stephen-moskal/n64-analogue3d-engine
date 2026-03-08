@@ -25,6 +25,7 @@ typedef struct {
     MaterialType type;
     int texture_slot;           // Index into texture system (-1 = no texture)
     uint8_t base_color[3];      // RGB base color (modulated by lighting)
+    bool alpha_cutout;          // Discard pixels with alpha=0 (for sprites)
 } Material;
 
 // --- Vertex ---

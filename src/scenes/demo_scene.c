@@ -7,6 +7,7 @@
 #include "../input/input.h"
 #include "../ui/text.h"
 #include "../ui/menu.h"
+#include "../render/billboard.h"
 #include "../audio/audio.h"
 #include "../audio/sound_bank.h"
 
@@ -31,6 +32,23 @@ static ObjectData *alloc_object_data(void) {
     if (object_data_count >= MAX_OBJECT_DATA) return NULL;
     return &object_data[object_data_count++];
 }
+
+// Static BillboardData storage (same pattern as ObjectData)
+#define MAX_BILLBOARD_DATA 8
+static BillboardData billboard_data[MAX_BILLBOARD_DATA];
+static int billboard_data_count = 0;
+
+static BillboardData *alloc_billboard_data(void) {
+    if (billboard_data_count >= MAX_BILLBOARD_DATA) return NULL;
+    return &billboard_data[billboard_data_count++];
+}
+
+// Billboard texture slots (cube uses 0-5)
+#define TEX_BILLBOARD_MARKER  6
+#define TEX_BILLBOARD_TREE    7
+
+// Number of mesh objects (first N objects are selectable; billboards are not)
+static int selectable_object_count = 0;
 
 // ============================================================
 // Interaction mode — object selection & manipulation
@@ -255,6 +273,39 @@ static int spawn_object(Scene *scene, const char *name, const Mesh *mesh,
 }
 
 // ============================================================
+// Helper: spawn a billboard object
+// ============================================================
+
+static int spawn_billboard(Scene *scene, int tex_slot, BillboardMode mode,
+                           float width, float height, vec3_t pos,
+                           uint8_t r, uint8_t g, uint8_t b) {
+    BillboardData *data = alloc_billboard_data();
+    if (!data) return -1;
+
+    data->texture_slot = tex_slot;
+    data->mode = mode;
+    data->width = width;
+    data->height = height;
+    data->color[0] = r;
+    data->color[1] = g;
+    data->color[2] = b;
+
+    SceneObject obj = {
+        .position = pos,
+        .rotation = {0, 0, 0},
+        .scale = {1, 1, 1},
+        .active = true,
+        .visible = true,
+        .collider_handle = -1,
+        .data = data,
+        .on_update = NULL,
+        .on_draw = billboard_draw,
+    };
+
+    return scene_add_object(scene, &obj);
+}
+
+// ============================================================
 // Camera mode application
 // ============================================================
 
@@ -367,6 +418,24 @@ static void demo_init(Scene *scene) {
         COLLISION_LAYER_DEFAULT | COLLISION_LAYER_ENV, NULL);
     collision_set_static(&scene->collision, ground_collider, true);
 
+    // --- Selectable count: only mesh objects above are selectable ---
+    selectable_object_count = scene->object_count;
+
+    // --- Billboard objects (decorative, not selectable) ---
+    billboard_init();
+    texture_load_slot(TEX_BILLBOARD_MARKER, "rom:/marker.sprite");
+    texture_load_slot(TEX_BILLBOARD_TREE, "rom:/tree.sprite");
+
+    // Marker billboard (spherical — floating above pyramid)
+    spawn_billboard(scene, TEX_BILLBOARD_MARKER, BILLBOARD_SPHERICAL,
+        50.0f, 50.0f, (vec3_t){0, 120, 350}, 255, 255, 255);
+
+    // Tree billboards (cylindrical — only rotate around Y axis)
+    spawn_billboard(scene, TEX_BILLBOARD_TREE, BILLBOARD_CYLINDRICAL,
+        120.0f, 160.0f, (vec3_t){350, -20, -150}, 255, 255, 255);
+    spawn_billboard(scene, TEX_BILLBOARD_TREE, BILLBOARD_CYLINDRICAL,
+        100.0f, 130.0f, (vec3_t){-350, -30, 200}, 255, 255, 255);
+
     // Camera collision OFF by default
     last_camera_mode = 0;
     last_camera_col = 0;
@@ -467,7 +536,7 @@ static void demo_update(Scene *scene, float dt) {
         if (pressed.z) {
             if (interaction_mode == MODE_NORMAL) {
                 interaction_mode = MODE_OBJECT_SELECT;
-                if (selected_object < 0 && scene->object_count > 0)
+                if (selected_object < 0 && selectable_object_count > 0)
                     selected_object = 0;
                 snd_play_sfx(SFX_OBJ_SELECT);
             } else {
@@ -479,13 +548,13 @@ static void demo_update(Scene *scene, float dt) {
 
         if (interaction_mode == MODE_OBJECT_SELECT) {
             // D-pad L/R: cycle selected object
-            if (pressed.d_left && scene->object_count > 0) {
+            if (pressed.d_left && selectable_object_count > 0) {
                 selected_object--;
-                if (selected_object < 0) selected_object = scene->object_count - 1;
+                if (selected_object < 0) selected_object = selectable_object_count - 1;
                 snd_play_sfx(SFX_MENU_NAV);
             }
-            if (pressed.d_right && scene->object_count > 0) {
-                selected_object = (selected_object + 1) % scene->object_count;
+            if (pressed.d_right && selectable_object_count > 0) {
+                selected_object = (selected_object + 1) % selectable_object_count;
                 snd_play_sfx(SFX_MENU_NAV);
             }
             // A: enter transform mode
@@ -724,11 +793,16 @@ static void demo_post_draw(Scene *scene) {
 static void demo_cleanup(Scene *scene) {
     (void)scene;
     snd_stop_bgm();
+    billboard_cleanup();
+    texture_free_slot(TEX_BILLBOARD_MARKER);
+    texture_free_slot(TEX_BILLBOARD_TREE);
     cube_cleanup();
     mesh_defs_cleanup();
     ground_collider = -1;
     obj_collider_count = 0;
     object_data_count = 0;
+    billboard_data_count = 0;
+    selectable_object_count = 0;
     interaction_mode = MODE_NORMAL;
     selected_object = -1;
     current_scene = NULL;

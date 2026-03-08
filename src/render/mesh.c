@@ -201,6 +201,11 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
                 break;
             }
 
+            // Alpha cutout: discard pixels with alpha=0 (for sprites with transparency)
+            if (mat->alpha_cutout) {
+                rdpq_mode_alphacompare(1);
+            }
+
             last_mat_type = (int)mat->type;
         }
 

@@ -115,6 +115,8 @@ main.c
 │   ├── render/lighting [Blinn-Phong calculation]
 │   ├── collision/collision [collision detection, raycasting]
 │   └── render/texture  [dynamic texture slot management]
+├── audio/audio         [audio mixer, SFX/BGM playback] (WIP)
+│   └── audio/sound_bank [sound event definitions]
 └── scenes/demo_scene   [demo scene: multi-object, selection, manipulation]
     ├── render/cube     [cube geometry definition (textured)]
     │   └── render/mesh [generic mesh rendering]
@@ -122,6 +124,8 @@ main.c
     │       ├── render/lighting
     │       └── render/texture
     ├── render/mesh_defs [shape library: pillar, platform, pyramid]
+    │   └── render/mesh
+    ├── render/billboard [camera-facing textured quads]
     │   └── render/mesh
     └── scene/scene
 ```
@@ -350,13 +354,16 @@ With Expansion Pak (8MB), an additional 4MB is available. Shared resources (fram
 | `src/render/floor.c/h` | Checkered floor grid (dynamic, Z-biased) |
 | `src/render/lighting.c/h` | Blinn-Phong lighting |
 | `src/render/texture.c/h` | Texture loading, TMEM management, dynamic slots |
+| `src/render/billboard.c/h` | Billboard system: camera-facing textured quads |
 | `src/math/vec3.h` | Vector math library (header-only) |
 | `src/collision/collision.c/h` | Collision detection, raycasting, overlap queries |
 | `src/scene/scene.c/h` | Scene lifecycle, manager, transitions, per-object callbacks |
-| `src/scenes/demo_scene.c/h` | Demo scene: 5 objects, selection/manipulation, HUD |
+| `src/scenes/demo_scene.c/h` | Demo scene: mesh objects, billboards, selection, HUD |
 | `src/input/input.c/h` | Controller input |
 | `src/ui/text.c/h` | Text rendering |
-| `src/ui/menu.c/h` | Menu system |
+| `src/ui/menu.c/h` | Tabbed menu system (L/R tabs, snapshot/revert) |
+| `src/audio/audio.c/h` | Audio mixer, SFX/BGM playback (WIP) |
+| `src/audio/sound_bank.c/h` | Sound event definitions and path mapping |
 
 ## Documentation Index
 
