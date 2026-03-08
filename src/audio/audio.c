@@ -24,8 +24,8 @@ static bool bgm_playing = false;
 static SoundId current_bgm = SOUND_NONE;
 
 // Volume (0-128 range, mapped to 0.0-1.0 for mixer)
-static int sfx_volume = 100;
-static int bgm_volume = 80;
+static int sfx_volume = 0;
+static int bgm_volume = 0;
 
 // Round-robin SFX channel allocation
 static int next_sfx_ch = SFX_CH_START;

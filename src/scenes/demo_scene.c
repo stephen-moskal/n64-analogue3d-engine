@@ -145,13 +145,19 @@ static const TextBoxConfig pos_text = {
     .align   = ALIGN_RIGHT,
 };
 
-// --- Menu item indices (must match main.c order) ---
-#define MENU_ITEM_BG_COLOR      0
-#define MENU_ITEM_DEBUG_TEXT    1
-#define MENU_ITEM_CAMERA_MODE  2
-#define MENU_ITEM_CAMERA_COL   3
-#define MENU_ITEM_FRAME_RATE   4
-#define MENU_ITEM_SOUND        5
+// --- Menu tab/item indices (must match main.c order) ---
+#define TAB_SETTINGS       0
+#define TAB_SOUND          1
+
+#define ITEM_BG_COLOR      0
+#define ITEM_DEBUG_TEXT     1
+#define ITEM_CAMERA_MODE   2
+#define ITEM_CAMERA_COL    3
+#define ITEM_FRAME_RATE    4
+
+#define ITEM_SOUND_MASTER  0
+#define ITEM_SFX_VOL       1
+#define ITEM_BGM_VOL       2
 
 // Background color options
 static const color_t bg_colors[] = {
@@ -170,7 +176,9 @@ static const char *camera_mode_names[] = {"ORBITAL", "FIXED", "FOLLOW"};
 #define FIXED_Y_SPEED     5.0f
 
 static int last_fps_option = 1;
-static int last_sound_option = 0;
+static int last_sound_master = 1;  // Off
+static int last_sfx_vol = 8;      // 80%
+static int last_bgm_vol = 6;      // 60%
 static float hud_fps = 0.0f;
 static uint32_t hud_fps_ticks = 0;
 
@@ -363,7 +371,9 @@ static void demo_init(Scene *scene) {
     last_camera_mode = 0;
     last_camera_col = 0;
     last_fps_option = 1;
-    last_sound_option = 0;
+    last_sound_master = 1;  // Off
+    last_sfx_vol = 8;
+    last_bgm_vol = 6;
     hud_fps = 0.0f;
     hud_fps_ticks = 0;
     interaction_mode = MODE_NORMAL;
@@ -508,11 +518,15 @@ static void demo_update(Scene *scene, float dt) {
     // --- Camera controls (only when not transforming objects) ---
 
     if (start_menu.is_open) {
-        int old_cursor = start_menu.cursor;
+        int old_tab = start_menu.active_tab;
+        int old_cursor = start_menu.tabs[start_menu.active_tab].cursor;
         bool was_open = start_menu.is_open;
         menu_update(&start_menu);
-        if (start_menu.is_open && start_menu.cursor != old_cursor) {
-            snd_play_sfx(SFX_MENU_NAV);
+        if (start_menu.is_open) {
+            int new_cursor = start_menu.tabs[start_menu.active_tab].cursor;
+            if (new_cursor != old_cursor || start_menu.active_tab != old_tab) {
+                snd_play_sfx(SFX_MENU_NAV);
+            }
         }
         if (was_open && !start_menu.is_open) {
             snd_play_sfx(SFX_MENU_SELECT);
@@ -520,16 +534,16 @@ static void demo_update(Scene *scene, float dt) {
     } else if (interaction_mode != MODE_OBJECT_TRANSFORM) {
         // L/R shoulder buttons: cycle camera mode
         if (pressed.l) {
-            int mode = menu_get_value(&start_menu, MENU_ITEM_CAMERA_MODE);
+            int mode = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_CAMERA_MODE);
             mode = (mode + 2) % 3;
-            start_menu.items[MENU_ITEM_CAMERA_MODE].selected = mode;
+            start_menu.tabs[TAB_SETTINGS].items[ITEM_CAMERA_MODE].selected = mode;
             apply_camera_mode(scene, mode);
             last_camera_mode = mode;
         }
         if (pressed.r) {
-            int mode = menu_get_value(&start_menu, MENU_ITEM_CAMERA_MODE);
+            int mode = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_CAMERA_MODE);
             mode = (mode + 1) % 3;
-            start_menu.items[MENU_ITEM_CAMERA_MODE].selected = mode;
+            start_menu.tabs[TAB_SETTINGS].items[ITEM_CAMERA_MODE].selected = mode;
             apply_camera_mode(scene, mode);
             last_camera_mode = mode;
         }
@@ -562,14 +576,14 @@ static void demo_update(Scene *scene, float dt) {
     }
 
     // Check for camera mode change from menu
-    int cam_mode = menu_get_value(&start_menu, MENU_ITEM_CAMERA_MODE);
+    int cam_mode = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_CAMERA_MODE);
     if (cam_mode != last_camera_mode) {
         apply_camera_mode(scene, cam_mode);
         last_camera_mode = cam_mode;
     }
 
     // Check for camera collision toggle from menu
-    int cam_col = menu_get_value(&start_menu, MENU_ITEM_CAMERA_COL);
+    int cam_col = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_CAMERA_COL);
     if (cam_col != last_camera_col) {
         if (cam_col == 1) {
             camera_set_collision(&scene->camera, &scene->collision,
@@ -581,7 +595,7 @@ static void demo_update(Scene *scene, float dt) {
     }
 
     // Check for frame rate change from menu
-    int fps_opt = menu_get_value(&start_menu, MENU_ITEM_FRAME_RATE);
+    int fps_opt = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_FRAME_RATE);
     if (fps_opt != last_fps_option) {
         switch (fps_opt) {
         case 0: engine_target_fps = 30; break;
@@ -590,25 +604,31 @@ static void demo_update(Scene *scene, float dt) {
         last_fps_option = fps_opt;
     }
 
-    // Check for sound toggle from menu
-    int snd_opt = menu_get_value(&start_menu, MENU_ITEM_SOUND);
-    if (snd_opt != last_sound_option) {
-        if (snd_opt == 0) {
-            // Sound On
-            snd_set_sfx_volume(100);
-            snd_set_bgm_volume(80);
+    // Check for sound settings from Sound tab
+    int snd_master = menu_get_value(&start_menu, TAB_SOUND, ITEM_SOUND_MASTER);
+    int sfx_vol_idx = menu_get_value(&start_menu, TAB_SOUND, ITEM_SFX_VOL);
+    int bgm_vol_idx = menu_get_value(&start_menu, TAB_SOUND, ITEM_BGM_VOL);
+
+    if (snd_master != last_sound_master || sfx_vol_idx != last_sfx_vol ||
+        bgm_vol_idx != last_bgm_vol) {
+        if (snd_master == 0) {
+            // Master On — apply volume sliders (index 0-10 → 0-128)
+            snd_set_sfx_volume(sfx_vol_idx * 13);
+            snd_set_bgm_volume(bgm_vol_idx * 13);
         } else {
-            // Sound Off
+            // Master Off — mute everything
             snd_set_sfx_volume(0);
             snd_set_bgm_volume(0);
         }
-        last_sound_option = snd_opt;
+        last_sound_master = snd_master;
+        last_sfx_vol = sfx_vol_idx;
+        last_bgm_vol = bgm_vol_idx;
     }
 
     scene->camera.dirty = true;
 
     // Update background color from menu
-    scene->bg_color = bg_colors[menu_get_value(&start_menu, MENU_ITEM_BG_COLOR)];
+    scene->bg_color = bg_colors[menu_get_value(&start_menu, TAB_SETTINGS, ITEM_BG_COLOR)];
 }
 
 // ============================================================
@@ -642,7 +662,7 @@ static void demo_post_draw(Scene *scene) {
                                 COLLISION_LAYER_ALL, &ray_result);
 
     // Debug text overlay
-    bool show_debug = (menu_get_value(&start_menu, MENU_ITEM_DEBUG_TEXT) == 0);
+    bool show_debug = (menu_get_value(&start_menu, TAB_SETTINGS, ITEM_DEBUG_TEXT) == 0);
     if (show_debug) {
         text_draw(&title_text, "SMozN64 Dev Engine");
 
@@ -679,7 +699,7 @@ static void demo_post_draw(Scene *scene) {
         }
 
         // Right side: camera mode
-        int cam_mode_idx = menu_get_value(&start_menu, MENU_ITEM_CAMERA_MODE);
+        int cam_mode_idx = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_CAMERA_MODE);
         text_draw_fmt(&cam_text, "CAM:%s%s",
             camera_mode_names[cam_mode_idx],
             scene->camera.collision_enabled ? " COL" : "");

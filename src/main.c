@@ -19,7 +19,7 @@ Menu start_menu;
 // Frame rate target (set by scenes via extern, 0 = no limiter)
 int engine_target_fps = 0;
 
-// Menu options
+// Menu options — Settings tab
 static const char *bg_options[] = {
     "Dark Blue", "Black", "Dark Red", "Dark Green", "Dark Purple",
     "Light Blue", "White",
@@ -28,7 +28,12 @@ static const char *toggle_options[] = {"On", "Off"};
 static const char *camera_mode_options[] = {"Orbital", "Fixed", "Follow"};
 static const char *camera_col_options[] = {"Off", "On"};
 static const char *fps_options[] = {"30", "60"};
+
+// Menu options — Sound tab
 static const char *sound_options[] = {"On", "Off"};
+static const char *vol_options[] = {
+    "0%", "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"
+};
 
 int main(void) {
     // Initialize debug output
@@ -51,12 +56,20 @@ int main(void) {
 
     // Initialize menu (global overlay, persists across scenes)
     menu_init(&start_menu, "Start Menu");
-    menu_add_item(&start_menu, "BG Color", bg_options, 7, 0);
-    menu_add_item(&start_menu, "Debug Text", toggle_options, 2, 0);
-    menu_add_item(&start_menu, "Camera", camera_mode_options, 3, 0);
-    menu_add_item(&start_menu, "Cam Collide", camera_col_options, 2, 0);
-    menu_add_item(&start_menu, "Frame Rate", fps_options, 2, 1);  // Default: 60
-    menu_add_item(&start_menu, "Sound", sound_options, 2, 0);    // Default: On
+
+    // Tab 0: Settings
+    int tab_s = menu_add_tab(&start_menu, "Settings");
+    menu_add_item(&start_menu, tab_s, "BG Color", bg_options, 7, 0);
+    menu_add_item(&start_menu, tab_s, "Debug Text", toggle_options, 2, 0);
+    menu_add_item(&start_menu, tab_s, "Camera", camera_mode_options, 3, 0);
+    menu_add_item(&start_menu, tab_s, "Cam Collide", camera_col_options, 2, 0);
+    menu_add_item(&start_menu, tab_s, "Frame Rate", fps_options, 2, 1);  // Default: 60
+
+    // Tab 1: Sound
+    int tab_a = menu_add_tab(&start_menu, "Sound");
+    menu_add_item(&start_menu, tab_a, "Master", sound_options, 2, 1);    // Default: Off
+    menu_add_item(&start_menu, tab_a, "SFX Vol", vol_options, 11, 8);    // Default: 80%
+    menu_add_item(&start_menu, tab_a, "BGM Vol", vol_options, 11, 6);    // Default: 60%
 
     // Initialize audio system
     snd_init();
