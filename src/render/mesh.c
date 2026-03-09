@@ -241,9 +241,15 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
             if (facing < 0.0f) continue;
         }
 
+        // Compute world position of group's representative vertex (for point lights)
+        vec3_t gv0_pos = {gv0->position[0], gv0->position[1], gv0->position[2]};
+        vec4_t wp_h;
+        mat4_mul_vec3(&wp_h, model, &gv0_pos);
+        float world_pos[3] = {wp_h.x, wp_h.y, wp_h.z};
+
         // Lighting — once per group
         float normal_f[3] = {nx, ny, nz};
-        color_t lit_color = lighting_calculate(light, normal_f, view_dir);
+        color_t lit_color = lighting_calculate(light, normal_f, view_dir, world_pos);
         uint8_t r = (uint8_t)((mat->base_color[0] * lit_color.r) / 255);
         uint8_t g_col = (uint8_t)((mat->base_color[1] * lit_color.g) / 255);
         uint8_t b = (uint8_t)((mat->base_color[2] * lit_color.b) / 255);

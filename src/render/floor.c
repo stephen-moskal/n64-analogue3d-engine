@@ -39,7 +39,7 @@ void floor_draw(const Camera *cam, const LightConfig *light) {
     // Compute lighting for floor (normal faces up)
     float normal[3] = {0.0f, 1.0f, 0.0f};
     float view_dir[3] = {cam->view_dir.x, cam->view_dir.y, cam->view_dir.z};
-    color_t lit = lighting_calculate(light, normal, view_dir);
+    color_t lit = lighting_calculate(light, normal, view_dir, NULL);
 
     // Pre-compute lit tile colors
     color_t col_light = RGBA32(

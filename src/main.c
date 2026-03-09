@@ -35,6 +35,15 @@ static const char *vol_options[] = {
     "0%", "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"
 };
 
+// Menu options — Lighting tab
+static const char *sun_dir_options[]    = {"Front", "Side", "Top", "Sunset", "Dawn"};
+static const char *sun_color_options[]  = {"Warm", "Cool", "Neutral", "Golden"};
+static const char *brightness_options[] = {"20%", "40%", "60%", "80%", "100%"};
+static const char *ambient_options[]    = {"10%", "20%", "30%", "40%", "50%"};
+static const char *shadow_options[]     = {"Off", "Blob", "Projected"};
+static const char *shadow_dk_options[]  = {"Light", "Medium", "Dark"};
+static const char *ptlight_options[]    = {"Off", "On"};
+
 int main(void) {
     // Initialize debug output
     debug_init_isviewer();
@@ -70,6 +79,16 @@ int main(void) {
     menu_add_item(&start_menu, tab_a, "Master", sound_options, 2, 1);    // Default: Off
     menu_add_item(&start_menu, tab_a, "SFX Vol", vol_options, 11, 8);    // Default: 80%
     menu_add_item(&start_menu, tab_a, "BGM Vol", vol_options, 11, 6);    // Default: 60%
+
+    // Tab 2: Lighting
+    int tab_l = menu_add_tab(&start_menu, "Lighting");
+    menu_add_item(&start_menu, tab_l, "Sun Dir",     sun_dir_options, 5, 0);     // Default: Front
+    menu_add_item(&start_menu, tab_l, "Sun Color",   sun_color_options, 4, 0);   // Default: Warm
+    menu_add_item(&start_menu, tab_l, "Brightness",  brightness_options, 5, 4);  // Default: 100%
+    menu_add_item(&start_menu, tab_l, "Ambient",     ambient_options, 5, 1);     // Default: 20%
+    menu_add_item(&start_menu, tab_l, "Shadows",     shadow_options, 3, 0);      // Default: Off
+    menu_add_item(&start_menu, tab_l, "Shadow Dark", shadow_dk_options, 3, 1);   // Default: Medium
+    menu_add_item(&start_menu, tab_l, "Pt Lights",   ptlight_options, 2, 0);     // Default: Off
 
     // Initialize audio system
     snd_init();

@@ -8,6 +8,7 @@
 #include "../ui/text.h"
 #include "../ui/menu.h"
 #include "../render/billboard.h"
+#include "../render/shadow.h"
 #include "../audio/audio.h"
 #include "../audio/sound_bank.h"
 
@@ -176,6 +177,47 @@ static const TextBoxConfig pos_text = {
 #define ITEM_SOUND_MASTER  0
 #define ITEM_SFX_VOL       1
 #define ITEM_BGM_VOL       2
+
+// --- Lighting tab indices ---
+#define TAB_LIGHTING       2
+
+#define ITEM_SUN_DIR       0
+#define ITEM_SUN_COLOR     1
+#define ITEM_BRIGHTNESS    2
+#define ITEM_AMBIENT       3
+#define ITEM_SHADOWS       4
+#define ITEM_SHADOW_DK     5
+#define ITEM_PT_LIGHTS     6
+
+// --- Lighting preset tables ---
+
+static const float sun_dir_presets[][3] = {
+    { 0.577f,  0.577f,  0.577f},   // Front (original default)
+    {-0.707f,  0.707f,  0.000f},   // Side (from left, 45 deg)
+    { 0.000f,  1.000f,  0.000f},   // Top (directly overhead)
+    { 0.866f,  0.200f,  0.458f},   // Sunset (low angle)
+    {-0.866f,  0.200f, -0.458f},   // Dawn (opposite sunset)
+};
+
+static const float sun_color_presets[][3] = {
+    {0.85f, 0.80f, 0.70f},   // Warm (original)
+    {0.70f, 0.80f, 0.90f},   // Cool (blue-ish)
+    {0.85f, 0.85f, 0.85f},   // Neutral (white)
+    {1.00f, 0.75f, 0.40f},   // Golden (sunset)
+};
+
+static const float brightness_presets[] = { 0.20f, 0.40f, 0.60f, 0.80f, 1.00f };
+static const float ambient_presets[]    = { 0.10f, 0.20f, 0.30f, 0.40f, 0.50f };
+static const float shadow_dark_presets[] = { 0.3f, 0.6f, 0.9f };
+
+// Track last lighting menu values to detect changes
+static int last_sun_dir = 0;
+static int last_sun_color = 0;
+static int last_brightness = 4;
+static int last_ambient = 1;
+static int last_shadows = 0;
+static int last_shadow_dark = 1;
+static int last_pt_lights = 0;
 
 // Background color options
 static const color_t bg_colors[] = {
@@ -443,6 +485,15 @@ static void demo_init(Scene *scene) {
     last_sound_master = 1;  // Off
     last_sfx_vol = 8;
     last_bgm_vol = 6;
+
+    // Lighting defaults
+    last_sun_dir = 0;
+    last_sun_color = 0;
+    last_brightness = 4;
+    last_ambient = 1;
+    last_shadows = 0;
+    last_shadow_dark = 1;
+    last_pt_lights = 0;
     hud_fps = 0.0f;
     hud_fps_ticks = 0;
     interaction_mode = MODE_NORMAL;
@@ -694,6 +745,77 @@ static void demo_update(Scene *scene, float dt) {
         last_bgm_vol = bgm_vol_idx;
     }
 
+    // --- Apply lighting settings from Lighting tab ---
+
+    int sun_dir_idx    = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_SUN_DIR);
+    int sun_color_idx  = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_SUN_COLOR);
+    int brightness_idx = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_BRIGHTNESS);
+    int ambient_idx    = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_AMBIENT);
+    int shadow_idx     = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_SHADOWS);
+    int shadow_dk_idx  = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_SHADOW_DK);
+    int pt_lights_idx  = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_LIGHTS);
+
+    if (sun_dir_idx != last_sun_dir || sun_color_idx != last_sun_color ||
+        brightness_idx != last_brightness || ambient_idx != last_ambient ||
+        shadow_idx != last_shadows || shadow_dk_idx != last_shadow_dark ||
+        pt_lights_idx != last_pt_lights) {
+
+        LightConfig *lc = &scene->lighting;
+
+        // Sun direction
+        lc->direction[0] = sun_dir_presets[sun_dir_idx][0];
+        lc->direction[1] = sun_dir_presets[sun_dir_idx][1];
+        lc->direction[2] = sun_dir_presets[sun_dir_idx][2];
+
+        // Sun color + brightness
+        lc->sun_color[0] = sun_color_presets[sun_color_idx][0];
+        lc->sun_color[1] = sun_color_presets[sun_color_idx][1];
+        lc->sun_color[2] = sun_color_presets[sun_color_idx][2];
+        lc->sun_intensity = brightness_presets[brightness_idx];
+
+        // Ambient (slightly blue tint)
+        float amb = ambient_presets[ambient_idx];
+        lc->ambient[0] = amb;
+        lc->ambient[1] = amb;
+        lc->ambient[2] = amb * 1.1f;
+        if (lc->ambient[2] > 1.0f) lc->ambient[2] = 1.0f;
+
+        // Shadows
+        lc->shadow.mode = (ShadowMode)shadow_idx;
+        lc->shadow.darkness = shadow_dark_presets[shadow_dk_idx];
+        lc->shadow.floor_y = FLOOR_Y;
+        lc->shadow.blob_radius = 80.0f;
+
+        // Point lights
+        if (pt_lights_idx == 1) {
+            lc->point_light_count = 2;
+            lc->point_lights[0] = (PointLight){
+                .position  = {-250.0f, 50.0f, 30.0f},
+                .color     = {1.0f, 0.7f, 0.3f},
+                .intensity = 1.2f,
+                .radius    = 200.0f,
+                .active    = true,
+            };
+            lc->point_lights[1] = (PointLight){
+                .position  = {250.0f, 50.0f, 30.0f},
+                .color     = {1.0f, 0.7f, 0.3f},
+                .intensity = 1.2f,
+                .radius    = 200.0f,
+                .active    = true,
+            };
+        } else {
+            lc->point_light_count = 0;
+        }
+
+        last_sun_dir = sun_dir_idx;
+        last_sun_color = sun_color_idx;
+        last_brightness = brightness_idx;
+        last_ambient = ambient_idx;
+        last_shadows = shadow_idx;
+        last_shadow_dark = shadow_dk_idx;
+        last_pt_lights = pt_lights_idx;
+    }
+
     scene->camera.dirty = true;
 
     // Update background color from menu
@@ -709,6 +831,40 @@ static void demo_draw(Scene *scene) {
 
     // Draw the checkered floor
     floor_draw(&scene->camera, &scene->lighting);
+
+    // Draw shadows on floor (after floor, before objects)
+    if (scene->lighting.shadow.mode != SHADOW_OFF) {
+        shadow_begin(&scene->camera, &scene->lighting);
+
+        for (int i = 0; i < selectable_object_count; i++) {
+            SceneObject *obj = scene_get_object(scene, i);
+            if (!obj || !obj->visible) continue;
+
+            ObjectData *data = (ObjectData *)obj->data;
+            if (!data || !data->mesh) continue;
+
+            mat4_t model;
+            mat4_from_srt(&model, &obj->scale,
+                          obj->rotation.x, obj->rotation.y, obj->rotation.z,
+                          &obj->position);
+
+            ShadowCaster caster = {
+                .mesh = data->mesh,
+                .model = &model,
+                .position = obj->position,
+                .bound_radius = data->mesh->bound_radius *
+                    (obj->scale.x > obj->scale.z ? obj->scale.x : obj->scale.z),
+            };
+
+            if (scene->lighting.shadow.mode == SHADOW_BLOB) {
+                shadow_draw_blob(&scene->camera, &scene->lighting, &caster);
+            } else {
+                shadow_draw_projected(&scene->camera, &scene->lighting, &caster);
+            }
+        }
+
+        shadow_end();
+    }
 }
 
 // ============================================================
