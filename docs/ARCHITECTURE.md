@@ -131,6 +131,8 @@ main.c
     │   ├── render/camera
     │   ├── render/lighting
     │   └── render/mesh
+    ├── render/particle  [particle system, direct RDP renderer]
+    │   └── render/camera
     └── scene/scene
 ```
 
@@ -191,7 +193,7 @@ while (1) {
     //      -> rdpq_clear(bg_color), rdpq_clear_z(ZBUF_MAX)
     //      -> scene->on_draw() [floor, 3D geometry]
     //      -> per-object on_draw()
-    //      -> scene->on_post_draw() [HUD, overlays]
+    //      -> scene->on_post_draw() [particles, HUD, overlays]
     //   -> transition overlay (if transitioning)
     rdpq_detach_show();
 
@@ -294,7 +296,84 @@ shadow_z = world_vertex.z - light_direction.z * t;
 // Render at (shadow_x, floor_y + 0.01, shadow_z)
 ```
 
-Draw order: floor → shadows → objects → HUD
+Draw order: floor → shadows → objects → particles → HUD
+
+## Particle System
+
+Emitter-based particle system with pool-based allocation and a direct RDP batch renderer that bypasses the `mesh_draw()` pipeline for maximum throughput.
+
+### Architecture
+
+```
+ParticleEmitterDef (static const, data-driven)
+    ↓ particle_emitter_create()
+ParticleEmitter (runtime: position, pool slice, spawn state)
+    ↓ particle_emitter_burst() or continuous spawn
+Particle pool[128] (global, contiguous slices per emitter)
+    ↓ particle_update(dt)
+Physics: gravity, drag, position integration, color/scale interpolation
+    ↓ particle_draw(cam)
+Direct RDP emission: camera-facing quads, batch by blend mode
+```
+
+### Renderer (Direct RDP Emission)
+
+The particle renderer follows the `floor_draw()` pattern — not `mesh_draw()`. This is critical for performance:
+
+| Approach | `rdpq_set_mode_standard()` calls | Why |
+|----------|----------------------------------|-----|
+| `mesh_draw()` per particle | 1 per particle (up to 128) | Mode reset per material boundary |
+| Direct RDP emission | 1 total (all particles) | Mode set once, batch all triangles |
+
+Steps:
+1. Compute camera basis vectors (right, up) once per frame
+2. Set RDP mode once: `rdpq_set_mode_standard()`, `RDPQ_COMBINER_FLAT`, Z-read ON / Z-write OFF, `RDPQ_BLENDER_ADDITIVE`
+3. Per alive particle: compute 4 quad corners from `position ± right*scale ± up*scale`
+4. Transform corners through `cam->vp` → screen space (same clip/guard-band/depth-clamp as mesh_draw)
+5. Emit 2 triangles via `rdpq_triangle(&TRIFMT_ZBUF, ...)` (3 floats: X, Y, Z — no texture)
+
+### ParticleEmitterDef (Effect Definition)
+
+Data-driven struct — define effects as `static const` and reuse across scenes:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `burst_count` | int | Particles spawned per burst call |
+| `spawn_rate` | float | Particles/sec for continuous mode |
+| `lifetime_min/max` | float | Random lifetime range (seconds) |
+| `velocity_min/max` | vec3_t | Per-axis random initial velocity |
+| `gravity` | vec3_t | Acceleration per second² |
+| `drag` | float | Velocity damping (0=none, 1=full stop) |
+| `color_start/end` | uint8_t[4] | RGBA at birth/death, linearly interpolated |
+| `scale_start/end` | float | Quad half-size at birth/death |
+| `spawn_shape` | enum | POINT or SPHERE (with radius) |
+| `blend_mode` | enum | ADDITIVE or ALPHA |
+
+### API
+
+```c
+void particle_init(void);
+void particle_cleanup(void);
+
+int  particle_emitter_create(const ParticleEmitterDef *def, vec3_t pos, int pool_size);
+void particle_emitter_destroy(int handle);
+void particle_emitter_set_position(int handle, vec3_t position);
+void particle_emitter_burst(int handle);           // Spawn burst_count particles
+void particle_emitter_set_active(int handle, bool); // Enable continuous spawning
+
+void particle_update(float dt);                    // Physics + interpolation
+void particle_draw(const Camera *cam);             // Direct RDP batch render
+int  particle_alive_count(void);                   // Active particle count
+```
+
+### Performance
+
+- **Pool**: 128 particles max, 8 emitters max, zero heap allocation
+- **Triangles**: 2 per alive particle (worst case 256 tris at full pool)
+- **RDP mode calls**: 1 per frame (all particles share one blend mode pass)
+- **TMEM cost**: Zero (flat-colored quads, no textures)
+- **Per-particle frustum culling** via `camera_sphere_visible()`
+- **Color batching**: `rdpq_set_prim_color()` only called when color changes
 
 ## Collision Detection
 
@@ -372,7 +451,7 @@ text_draw_fmt(&config, "formatted %d", value);
 | Z-buffer | ~150KB | 320x240 x 2 bytes |
 | Textures (sprites) | ~12KB | 6 x 32x32 RGBA16 |
 | TMEM per frame | 4KB max | RDP on-chip texture cache |
-| Code + data | ~327KB | Current ROM size |
+| Code + data | ~337KB | Current ROM size |
 | Audio buffers | ~64KB | Reserved for future |
 | **Available** | **~3MB** | For game assets and logic |
 
@@ -413,6 +492,7 @@ With Expansion Pak (8MB), an additional 4MB is available. Shared resources (fram
 | `src/render/texture.c/h` | Texture loading, TMEM management, dynamic slots |
 | `src/render/billboard.c/h` | Billboard system: camera-facing textured quads |
 | `src/render/shadow.c/h` | Shadow casting (blob + projected planar shadows) |
+| `src/render/particle.c/h` | Particle system: pool-based emitters, direct RDP batch renderer |
 | `src/math/vec3.h` | Vector math library (header-only) |
 | `src/collision/collision.c/h` | Collision detection, raycasting, overlap queries |
 | `src/scene/scene.c/h` | Scene lifecycle, manager, transitions, per-object callbacks |

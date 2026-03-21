@@ -32,6 +32,7 @@ OBJS = $(BUILD_DIR)/main.o \
        $(BUILD_DIR)/render/floor.o \
        $(BUILD_DIR)/render/billboard.o \
        $(BUILD_DIR)/render/shadow.o \
+       $(BUILD_DIR)/render/particle.o \
        $(BUILD_DIR)/input/input.o \
        $(BUILD_DIR)/ui/text.o \
        $(BUILD_DIR)/ui/menu.o \

@@ -8,7 +8,7 @@ Long-term vision: an action RPG engine supporting both souls-like combat and Fin
 
 ## Current State
 
-**19 stable source modules**, all verified on Ares emulator and Analogue 3D hardware (via SummerCart64). All 5 short-term features complete.
+**20 stable source modules**, all verified on Ares emulator and Analogue 3D hardware (via SummerCart64). All 5 short-term features complete. V2 Feature 6 (Particles) complete.
 
 | System | Status | Notes |
 |--------|--------|-------|
@@ -30,10 +30,11 @@ Long-term vision: an action RPG engine supporting both souls-like combat and Fin
 | Text Rendering | Working | 2 fonts, configurable alignment/color, left/right-aligned HUD |
 | Variable Timestep | Working | Logic runs once per frame at display rate (30 or 60 FPS) |
 | Texture Management | Working | 16 dynamic slots, per-frame TMEM upload |
+| Particle System | Mature | Pool-based emitters, burst/continuous, additive blend, direct RDP batch renderer |
 
 ### What's Missing
 
-No model loading (geometry is hand-coded C), no animation, no dynamic physics, no particle effects, no data-driven asset pipeline.
+No model loading (geometry is hand-coded C), no animation, no dynamic physics, no data-driven asset pipeline.
 
 ---
 
@@ -117,24 +118,24 @@ Configurable directional sun, point lights with attenuation, and shadow casting 
 
 With the original 5 features complete, these features extend the engine framework before transitioning to the T3D/GLTF model pipeline. Each feature remains hardware-verifiable and builds on existing systems. Ordered by dependency and visual impact.
 
-### Feature 6: Particle System
+### Feature 6: Particle System — COMPLETE
 
-**Problem:** No way to render dynamic visual effects — combat hits, spell casts, environmental atmosphere (dust, rain, torch flickers). These are essential for game feel in both souls-like and tactics genres.
+Emitter-based particle system with pool-based allocation, data-driven effect definitions, and a high-performance direct RDP batch renderer. Two demo effects (fire/sparks and magic/energy) burst from pillar tops via B button. See [ARCHITECTURE.md](ARCHITECTURE.md).
 
-**Solution:** Emitter-based particle system built on the existing billboard/`mesh_draw()` infrastructure. Pool-based allocation (fixed array, reuse dead particles). Each particle has configurable lifetime, velocity, gravity, color fade, and scale.
-
-```
-src/render/particle.c/h  — Emitter, particle pool, update/render
-```
-
-**What it unlocks:** Combat hit sparks, spell effects, dust/debris, environmental ambiance (torch flickers, rain). Foundation for all visual effects.
-
-**N64 constraints:**
-- Research shows 410+ particles at 60 FPS achievable on N64
-- Target: 200+ simultaneous particles as baseline
-- Use smallest possible textures (8×8 or 16×16) to minimize TMEM pressure
-- Batch render by blending mode to minimize RDP state changes
-- Additive blending is cheaper than alpha multiply for many effects
+**Delivered:**
+- `src/render/particle.c/h` — Particle pool (128 max), emitter management (8 max), physics update (gravity, drag, integration), color/scale interpolation
+- `ParticleEmitterDef` struct: data-driven effect definitions (burst count, spawn rate, lifetime range, velocity range, gravity, drag, color start/end, scale start/end, spawn shape, blend mode)
+- Direct RDP batch renderer: bypasses `mesh_draw()` overhead, sets `rdpq_set_mode_standard()` only ONCE for all particles (vs per-call in mesh pipeline)
+- Camera-facing billboard quads: 4 corners computed from camera right/up vectors, transformed through VP matrix, guard band + near-plane + depth clamping safety
+- Z-read ON, Z-write OFF: particles clip behind scene geometry, don't occlude each other or subsequent objects
+- Additive blending (`RDPQ_BLENDER_ADDITIVE`): overlapping particles produce glow effects
+- `TRIFMT_ZBUF` (3 floats: X, Y, Z): no texture coordinates needed for flat-colored particles — zero TMEM cost
+- Per-particle frustum culling via `camera_sphere_visible()`
+- Color change batching: `rdpq_set_prim_color()` only called when color differs from previous particle
+- Two demo effects: fire/sparks (left pillar, warm yellow→red, shrinking, arcing down) and magic/energy (right pillar, blue→purple, expanding, floating up)
+- Burst trigger: B button in normal mode fires both emitters with SFX
+- Performance: ~192 triangles worst case (96 particles × 2 tris), triangle count peaks at ~455 during burst and settles to ~345 steady state
+- Verified on hardware (Analogue 3D) at 60 FPS
 
 ---
 
@@ -366,7 +367,7 @@ Each state is a scene (or scene configuration) with its own update/draw logic. T
 | TMEM | 4 KB | Per-frame uploads (cube textures) | Shared |
 | CPU per frame | ~16 ms (60Hz) | ~3-5 ms (current scene) | ~11-13 ms |
 | RSP per frame | ~16 ms | Audio mixing only (future) | Available for T&L |
-| ROM | 64 MB max | ~327 KB (code + assets) | ~63.7 MB |
+| ROM | 64 MB max | ~337 KB (code + assets) | ~63.7 MB |
 
 ---
 

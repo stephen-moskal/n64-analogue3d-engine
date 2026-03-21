@@ -17,6 +17,7 @@ A Nintendo 64 homebrew game engine built with [libdragon](https://github.com/Dra
 | **Lighting** | Blinn-Phong with configurable sun, point lights, and shadow casting | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | **Shadows** | Blob shadows and projected shadow silhouettes on floor plane | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | **Billboards** | Camera-facing textured quads (spherical and cylindrical modes) | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| **Particles** | Emitter-based system with pool allocation, additive blend, direct RDP batch renderer | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | **Audio** | BGM streaming, SFX playback, mixer with 16 channels | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | **Collision** | Sphere and AABB colliders, raycasting, camera pushout | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | **Scene** | Object management, update/draw callbacks, multi-object scenes | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
@@ -37,6 +38,7 @@ A multi-object scene with lighting, shadows, and full camera controls running at
 - Hardware Z-buffer depth testing with 16-bit precision
 - Frustum and backface culling
 - Camera collision (raycast + sphere pushout + floor clamp)
+- Particle effects: fire/sparks and magic/energy bursts on pillar tops (B button)
 - Tabbed start menu with settings, sound, and lighting controls
 - FPS counter and rendering stats overlay
 
@@ -75,6 +77,7 @@ sc64deployer upload hello_cube.z64
 | Analog Stick | Orbit camera |
 | C-Up / C-Down | Zoom in / out |
 | C-Left / C-Right | Shift view up / down |
+| B | Burst particle effects |
 | Start | Open menu |
 
 ### Menu Mode
@@ -116,6 +119,7 @@ n64-dev-engine/
 │   │   ├── billboard.c/h      # Camera-facing textured quads
 │   │   ├── lighting.c/h       # Blinn-Phong, point lights, configurable sun
 │   │   ├── shadow.c/h         # Blob and projected shadow casting
+│   │   ├── particle.c/h       # Particle system, emitters, direct RDP renderer
 │   │   └── texture.c/h        # Sprite loading, TMEM upload, stats
 │   ├── input/
 │   │   └── input.c/h          # Controller polling, analog/button mapping
@@ -186,7 +190,6 @@ RDP: Triangle Rasterize → Texture Sample → Z-Buffer → Framebuffer
 See [ROADMAP.md](docs/ROADMAP.md) for the full development roadmap with detailed feature descriptions.
 
 **Next Engine Features:**
-- Particle system (combat effects, environmental ambiance)
 - Fog & atmosphere (distance fade, mood setting)
 - Sprite animation (frame-based billboard animation)
 - Basic physics (gravity, knockback, jumping)

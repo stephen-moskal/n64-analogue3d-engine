@@ -9,6 +9,7 @@
 #include "../ui/menu.h"
 #include "../render/billboard.h"
 #include "../render/shadow.h"
+#include "../render/particle.h"
 #include "../audio/audio.h"
 #include "../audio/sound_bank.h"
 
@@ -87,6 +88,49 @@ static int obj_collider_count = 0;
 
 static bool ray_hit = false;
 static CollisionResult ray_result;
+
+// ============================================================
+// Particle effect definitions (data-driven, reusable)
+// ============================================================
+
+static const ParticleEmitterDef fire_effect = {
+    .burst_count   = 30,
+    .spawn_rate    = 0.0f,
+    .lifetime_min  = 0.6f,
+    .lifetime_max  = 1.5f,
+    .velocity_min  = {-40.0f,  60.0f, -40.0f},
+    .velocity_max  = { 40.0f, 180.0f,  40.0f},
+    .gravity       = { 0.0f, -50.0f, 0.0f},
+    .drag          = 0.3f,
+    .color_start   = {255, 200, 60, 255},    // Bright yellow-orange
+    .color_end     = {180, 40, 10, 0},        // Dark red, fade out
+    .scale_start   = 8.0f,
+    .scale_end     = 3.0f,
+    .spawn_shape   = PARTICLE_SPAWN_SPHERE,
+    .spawn_radius  = 15.0f,
+    .blend_mode    = PARTICLE_BLEND_ADDITIVE,
+};
+
+static const ParticleEmitterDef magic_effect = {
+    .burst_count   = 25,
+    .spawn_rate    = 0.0f,
+    .lifetime_min  = 0.8f,
+    .lifetime_max  = 2.0f,
+    .velocity_min  = {-60.0f,  30.0f, -60.0f},
+    .velocity_max  = { 60.0f, 120.0f,  60.0f},
+    .gravity       = { 0.0f,  20.0f, 0.0f},     // Anti-gravity, float up
+    .drag          = 0.5f,
+    .color_start   = {140, 180, 255, 255},   // Light blue
+    .color_end     = {100, 40, 200, 0},       // Purple, fade out
+    .scale_start   = 5.0f,
+    .scale_end     = 12.0f,
+    .spawn_shape   = PARTICLE_SPAWN_SPHERE,
+    .spawn_radius  = 20.0f,
+    .blend_mode    = PARTICLE_BLEND_ADDITIVE,
+};
+
+static int emitter_fire = -1;
+static int emitter_magic = -1;
 
 // Track current camera mode to detect menu changes
 static int last_camera_mode = 0;
@@ -500,6 +544,13 @@ static void demo_init(Scene *scene) {
     transform_mode = TRANSFORM_MOVE;
     selected_object = -1;
 
+    // Particle emitters (on top of pillars)
+    particle_init();
+    emitter_fire = particle_emitter_create(&fire_effect,
+        (vec3_t){-250.0f, 100.0f, 0.0f}, 48);
+    emitter_magic = particle_emitter_create(&magic_effect,
+        (vec3_t){250.0f, 100.0f, 0.0f}, 48);
+
     // Start background music
     snd_play_bgm(BGM_DEMO);
 }
@@ -583,6 +634,13 @@ static void demo_update(Scene *scene, float dt) {
     // --- Interaction mode handling ---
 
     if (!start_menu.is_open) {
+        // B button: burst particles (only in normal mode)
+        if (interaction_mode == MODE_NORMAL && pressed.b) {
+            particle_emitter_burst(emitter_fire);
+            particle_emitter_burst(emitter_magic);
+            snd_play_sfx(SFX_MODE_CHANGE);
+        }
+
         // Z trigger: toggle object select mode
         if (pressed.z) {
             if (interaction_mode == MODE_NORMAL) {
@@ -820,6 +878,9 @@ static void demo_update(Scene *scene, float dt) {
 
     // Update background color from menu
     scene->bg_color = bg_colors[menu_get_value(&start_menu, TAB_SETTINGS, ITEM_BG_COLOR)];
+
+    // Update particles
+    particle_update(dt);
 }
 
 // ============================================================
@@ -872,6 +933,9 @@ static void demo_draw(Scene *scene) {
 // ============================================================
 
 static void demo_post_draw(Scene *scene) {
+    // Draw particles (after opaque objects, before HUD)
+    particle_draw(&scene->camera);
+
     // Count visible objects (for HUD)
     int visible_count = 0;
     for (int i = 0; i < scene->object_count; i++) {
@@ -949,6 +1013,9 @@ static void demo_post_draw(Scene *scene) {
 static void demo_cleanup(Scene *scene) {
     (void)scene;
     snd_stop_bgm();
+    particle_cleanup();
+    emitter_fire = -1;
+    emitter_magic = -1;
     billboard_cleanup();
     texture_free_slot(TEX_BILLBOARD_MARKER);
     texture_free_slot(TEX_BILLBOARD_TREE);
