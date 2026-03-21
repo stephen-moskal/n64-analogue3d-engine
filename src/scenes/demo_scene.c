@@ -238,6 +238,7 @@ static const TextBoxConfig pos_text = {
 #define ITEM_CAMERA_MODE   2
 #define ITEM_CAMERA_COL    3
 #define ITEM_FRAME_RATE    4
+#define ITEM_RESET_SCENE   5
 
 #define ITEM_SOUND_MASTER  0
 #define ITEM_SFX_VOL       1
@@ -311,8 +312,8 @@ static const float ptlight_color_presets[][3] = {
     {0.3f, 0.3f, 1.0f},   // Blue
     {1.0f, 1.0f, 1.0f},   // White
 };
-static const float ptlight_intensity_values[] = {0.4f, 0.8f, 1.2f, 1.6f, 2.0f, 3.0f, 5.0f, 8.0f};
-static const float ptlight_radius_values[]    = {100.0f, 150.0f, 200.0f, 300.0f, 400.0f, 600.0f, 800.0f, 1000.0f};
+static const float ptlight_intensity_values[] = {0.4f, 0.8f, 1.2f, 2.0f, 3.0f, 5.0f, 8.0f, 12.0f, 16.0f, 24.0f};
+static const float ptlight_radius_values[]    = {100.0f, 200.0f, 300.0f, 400.0f, 600.0f, 800.0f, 1000.0f, 1200.0f, 1500.0f, 2000.0f};
 
 // Track last lighting menu values to detect changes
 static int last_sun_dir = 0;
@@ -707,6 +708,16 @@ static void demo_update(Scene *scene, float dt) {
         } else {
             menu_open(&start_menu);
             snd_play_sfx(SFX_MENU_OPEN);
+        }
+    }
+
+    // --- Check for scene reset (only after menu closes with Apply) ---
+    if (!start_menu.is_open) {
+        int reset_val = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_RESET_SCENE);
+        if (reset_val == 1) {
+            start_menu.tabs[TAB_SETTINGS].items[ITEM_RESET_SCENE].selected = 0;
+            scene->reset_requested = true;
+            return;
         }
     }
 

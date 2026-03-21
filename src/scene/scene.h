@@ -68,6 +68,7 @@ typedef struct Scene {
 
     // State
     bool loaded;
+    bool reset_requested;  // Set true to trigger cleanup + reinit next frame
 } Scene;
 
 // --- Transition types ---

@@ -371,6 +371,10 @@ void particle_draw(const Camera *cam);             // Direct RDP batch render
 int  particle_alive_count(void);                   // Active particle count
 ```
 
+### Pool Compaction
+
+When an emitter is destroyed, `particle_emitter_destroy()` reclaims pool space by scanning active emitters for the highest pool endpoint and resetting `pool_allocated` to that value. This prevents permanent pool fragmentation when emitters are repeatedly created and destroyed (e.g., torch particles toggling with point light settings). Only 8 iterations (PARTICLE_MAX_EMITTERS) — negligible cost.
+
 ### Performance
 
 - **Pool**: 128 particles max, 8 emitters max, zero heap allocation
@@ -423,6 +427,8 @@ Per-vertex shade data: `{R, G, B, A}` where RGB = lit color (0.0-1.0 range), A =
 
 The floor grid shares vertices between adjacent tiles (prevents sub-pixel gaps). Shade-based formats require per-vertex color, but adjacent tiles need different checker colors — incompatible. Solution: per-tile average depth → `fog_blend_color()` → `rdpq_set_prim_color()`.
 
+The floor also computes per-tile point light contributions (`floor_point_light_add()`). When point lights and/or fog are active, the floor uses a per-tile rendering path that computes lighting at each tile center and blends fog per-tile. When neither is active, a fast batched path renders all light/dark tiles in two passes with only 2 `rdpq_set_prim_color()` calls total.
+
 Particles use `RDPQ_BLENDER_ADDITIVE`. Combining with `RDPQ_FOG_STANDARD` requires a 2-pass blender (assertion failure). Also, adding fog color via additive blend brightens distant particles (wrong). Solution: multiply RGBA by `1 - fog_factor` — distant particles fade to black (invisible in additive).
 
 ### Sky Gradient
@@ -433,17 +439,19 @@ Critical design rule: **bottom sky band = fog color = bg_color** in every preset
 
 ### Presets
 
-7 built-in presets, each configuring fog + sky + background color:
+7 built-in presets, each configuring fog + sky + background color + linked lighting hints:
 
-| Preset | Fog Near | Fog Far | Sky Bands | Mood |
-|--------|----------|---------|-----------|------|
-| Clear Day | 400 | 1400 | 4 (deep blue → pale blue) | Bright, open |
-| Overcast | 250 | 1000 | 3 (grey tones) | Muted |
-| Foggy | 100 | 600 | 2 (grey) | Low visibility |
-| Dense Fog | 50 | 350 | 2 (white-grey) | Very close |
-| Sunset | 300 | 1200 | 5 (purple → orange) | Warm dramatic |
-| Dusk | 200 | 900 | 4 (dark purple) | Twilight |
-| Night | 300 | 1000 | 3 (near-black) | Dark |
+| Preset | Fog Near | Fog Far | Sky Bands | Lighting Hint | Mood |
+|--------|----------|---------|-----------|---------------|------|
+| Clear Day | 400 | 1400 | 4 (deep blue → pale blue) | Full sun, neutral | Bright, open |
+| Overcast | 250 | 1000 | 3 (grey tones) | Dim sun, cool ambient | Muted |
+| Foggy | 100 | 600 | 2 (grey) | Low sun, high ambient | Low visibility |
+| Dense Fog | 50 | 350 | 2 (white-grey) | Minimal sun, fog ambient | Very close |
+| Sunset | 300 | 1200 | 5 (purple → orange) | Golden sun, warm ambient | Warm dramatic |
+| Dusk | 200 | 900 | 4 (dark purple) | Dim sun, cool-purple | Twilight |
+| Night | 300 | 1000 | 3 (near-black) | Near-zero sun, dark blue | Dark |
+
+Each preset includes a `LightingHint` with `sun_intensity`, `ambient` color, and `sun_color`. When applied, the demo scene reads these hints and adjusts the `LightConfig` accordingly, creating cohesive atmosphere-lighting combinations (e.g., Night mode dims the sun to 5% and shifts ambient to dark blue).
 
 ### Performance
 
@@ -479,6 +487,7 @@ See [SCENE_SYSTEM.md](SCENE_SYSTEM.md) for full documentation.
 - Code-defined scenes with callback lifecycle (init/update/draw/post_draw/cleanup)
 - Each scene owns Camera, LightConfig, CollisionWorld
 - Scene manager with transitions (cut, fade-black, fade-white)
+- **Soft reset**: set `scene->reset_requested = true` to trigger cleanup + reinit next frame (reusable for game logic: level restarts, death screens, debug reset)
 - Up to 32 objects and 16 textures per scene
 - Per-object update/draw callbacks via SceneObject
 - Draw order: sky_draw → on_draw (floor/3D) → per-object on_draw → on_post_draw (particles → HUD/overlays)
@@ -569,7 +578,7 @@ With Expansion Pak (8MB), an additional 4MB is available. Shared resources (fram
 | `src/render/mesh.c/h` | Generic mesh type, builder API, universal draw function |
 | `src/render/mesh_defs.c/h` | Shape library: pillar, platform, pyramid factory functions |
 | `src/render/cube.c/h` | Cube geometry (textured, built on Mesh) |
-| `src/render/floor.c/h` | Checkered floor grid (dynamic, Z-biased) |
+| `src/render/floor.c/h` | Checkered floor grid (dynamic, Z-biased, point light illumination) |
 | `src/render/lighting.c/h` | Blinn-Phong lighting, point lights, configurable sun |
 | `src/render/texture.c/h` | Texture loading, TMEM management, dynamic slots |
 | `src/render/billboard.c/h` | Billboard system: camera-facing textured quads |
@@ -578,11 +587,11 @@ With Expansion Pak (8MB), an additional 4MB is available. Shared resources (fram
 | `src/render/atmosphere.c/h` | Fog config, sky gradient renderer, 7 atmosphere presets |
 | `src/math/vec3.h` | Vector math library (header-only) |
 | `src/collision/collision.c/h` | Collision detection, raycasting, overlap queries |
-| `src/scene/scene.c/h` | Scene lifecycle, manager, transitions, per-object callbacks |
+| `src/scene/scene.c/h` | Scene lifecycle, manager, transitions, per-object callbacks, soft reset |
 | `src/scenes/demo_scene.c/h` | Demo scene: mesh objects, billboards, selection, HUD |
 | `src/input/input.c/h` | Controller input |
 | `src/ui/text.c/h` | Text rendering |
-| `src/ui/menu.c/h` | Tabbed menu system (4 tabs: Settings, Sound, Lighting, Environ), scrollable |
+| `src/ui/menu.c/h` | Tabbed menu system (4 tabs: Settings, Sound, Lighting, Environ), scrollable, disabled items |
 | `src/audio/audio.c/h` | Audio mixer, SFX/BGM playback |
 | `src/audio/sound_bank.c/h` | Sound event definitions and path mapping |
 

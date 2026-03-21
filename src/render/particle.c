@@ -117,6 +117,17 @@ void particle_emitter_destroy(int handle) {
 
     memset(em, 0, sizeof(ParticleEmitter));
     em->def = NULL;
+
+    // Compact pool: reclaim freed space at the tail.
+    // Scan active emitters to find the highest pool endpoint.
+    int max_end = 0;
+    for (int i = 0; i < PARTICLE_MAX_EMITTERS; i++) {
+        if (emitters[i].def != NULL) {
+            int end = emitters[i].pool_start + emitters[i].pool_count;
+            if (end > max_end) max_end = end;
+        }
+    }
+    pool_allocated = max_end;
 }
 
 void particle_emitter_set_position(int handle, vec3_t position) {

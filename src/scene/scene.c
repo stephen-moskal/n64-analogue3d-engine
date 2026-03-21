@@ -146,6 +146,14 @@ void scene_manager_switch(SceneManager *mgr, Scene *next,
 }
 
 void scene_manager_update(SceneManager *mgr, float dt) {
+    // Handle scene reset request (reusable soft-reset for any scene)
+    if (mgr->current && mgr->current->reset_requested) {
+        mgr->current->reset_requested = false;
+        scene_cleanup(mgr->current);
+        scene_init(mgr->current);
+        return;  // Let init settle — update starts next frame
+    }
+
     if (!mgr->transitioning) {
         // Normal update
         if (mgr->current) {
