@@ -45,8 +45,8 @@ static const char *shadow_options[]     = {"Off", "Blob", "Projected"};
 static const char *shadow_dk_options[]  = {"Light", "Medium", "Dark"};
 static const char *ptlight_options[]    = {"Off", "On"};
 static const char *ptlight_color_opts[] = {"Warm", "Cool", "Red", "Green", "Blue", "White"};
-static const char *ptlight_int_opts[]   = {"0.4", "0.8", "1.2", "1.6", "2.0"};
-static const char *ptlight_rad_opts[]   = {"100", "150", "200", "300", "400"};
+static const char *ptlight_int_opts[]   = {"0.4", "0.8", "1.2", "1.6", "2.0", "3.0", "5.0", "8.0"};
+static const char *ptlight_rad_opts[]   = {"100", "150", "200", "300", "400", "600", "800", "1000"};
 
 // Menu options — Environ tab
 static const char *atmo_preset_options[] = {
@@ -104,8 +104,8 @@ int main(void) {
     menu_add_item(&start_menu, tab_l, "Shadow Dark", shadow_dk_options, 3, 1);   // Default: Medium
     menu_add_item(&start_menu, tab_l, "Pt Lights",   ptlight_options, 2, 0);     // Default: Off
     menu_add_item(&start_menu, tab_l, "Pt Color",    ptlight_color_opts, 6, 0); // Default: Warm
-    menu_add_item(&start_menu, tab_l, "Pt Intensity", ptlight_int_opts, 5, 2);  // Default: 1.2
-    menu_add_item(&start_menu, tab_l, "Pt Radius",   ptlight_rad_opts, 5, 2);   // Default: 200
+    menu_add_item(&start_menu, tab_l, "Pt Intensity", ptlight_int_opts, 8, 2);  // Default: 1.2
+    menu_add_item(&start_menu, tab_l, "Pt Radius",   ptlight_rad_opts, 8, 2);   // Default: 200
 
     // Tab 3: Environ
     int tab_e = menu_add_tab(&start_menu, "Environ");

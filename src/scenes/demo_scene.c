@@ -311,8 +311,8 @@ static const float ptlight_color_presets[][3] = {
     {0.3f, 0.3f, 1.0f},   // Blue
     {1.0f, 1.0f, 1.0f},   // White
 };
-static const float ptlight_intensity_values[] = {0.4f, 0.8f, 1.2f, 1.6f, 2.0f};
-static const float ptlight_radius_values[]    = {100.0f, 150.0f, 200.0f, 300.0f, 400.0f};
+static const float ptlight_intensity_values[] = {0.4f, 0.8f, 1.2f, 1.6f, 2.0f, 3.0f, 5.0f, 8.0f};
+static const float ptlight_radius_values[]    = {100.0f, 150.0f, 200.0f, 300.0f, 400.0f, 600.0f, 800.0f, 1000.0f};
 
 // Track last lighting menu values to detect changes
 static int last_sun_dir = 0;
@@ -321,11 +321,6 @@ static int last_brightness = 4;
 static int last_ambient = 1;
 static int last_shadows = 0;
 static int last_shadow_dark = 1;
-static int last_pt_lights = 0;
-static int last_pt_color = 0;
-static int last_pt_intensity = 2;
-static int last_pt_radius = 2;
-
 // Track atmosphere menu values
 static int last_atmo_preset = 0;
 static int last_fog_toggle = 0;
@@ -608,10 +603,6 @@ static void demo_init(Scene *scene) {
     last_ambient = 1;
     last_shadows = 0;
     last_shadow_dark = 1;
-    last_pt_lights = 0;
-    last_pt_color = 0;
-    last_pt_intensity = 2;
-    last_pt_radius = 2;
     last_atmo_preset = 0;
     last_fog_toggle = 0;
     last_fog_near = 3;
@@ -899,16 +890,9 @@ static void demo_update(Scene *scene, float dt) {
     int ambient_idx    = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_AMBIENT);
     int shadow_idx     = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_SHADOWS);
     int shadow_dk_idx  = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_SHADOW_DK);
-    int pt_lights_idx  = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_LIGHTS);
-    int pt_color_idx   = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_COLOR);
-    int pt_int_idx     = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_INTENSITY);
-    int pt_rad_idx     = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_RADIUS);
-
     if (sun_dir_idx != last_sun_dir || sun_color_idx != last_sun_color ||
         brightness_idx != last_brightness || ambient_idx != last_ambient ||
-        shadow_idx != last_shadows || shadow_dk_idx != last_shadow_dark ||
-        pt_lights_idx != last_pt_lights || pt_color_idx != last_pt_color ||
-        pt_int_idx != last_pt_intensity || pt_rad_idx != last_pt_radius) {
+        shadow_idx != last_shadows || shadow_dk_idx != last_shadow_dark) {
 
         LightConfig *lc = &scene->lighting;
 
@@ -936,66 +920,12 @@ static void demo_update(Scene *scene, float dt) {
         lc->shadow.floor_y = FLOOR_Y;
         lc->shadow.blob_radius = 80.0f;
 
-        // Point lights with tuning
-        float pt_r = ptlight_color_presets[pt_color_idx][0];
-        float pt_g = ptlight_color_presets[pt_color_idx][1];
-        float pt_b = ptlight_color_presets[pt_color_idx][2];
-        float pt_intensity = ptlight_intensity_values[pt_int_idx];
-        float pt_radius = ptlight_radius_values[pt_rad_idx];
-
-        if (pt_lights_idx == 1) {
-            lc->point_light_count = 2;
-            lc->point_lights[0] = (PointLight){
-                .position  = {-250.0f, 50.0f, 30.0f},
-                .color     = {pt_r, pt_g, pt_b},
-                .intensity = pt_intensity,
-                .radius    = pt_radius,
-                .active    = true,
-            };
-            lc->point_lights[1] = (PointLight){
-                .position  = {250.0f, 50.0f, 30.0f},
-                .color     = {pt_r, pt_g, pt_b},
-                .intensity = pt_intensity,
-                .radius    = pt_radius,
-                .active    = true,
-            };
-        } else {
-            lc->point_light_count = 0;
-        }
-
-        // Torch emitter lifecycle
-        if (pt_lights_idx == 1 && last_pt_lights != 1) {
-            // Turning on — create torch particle emitters
-            emitter_torch_l = particle_emitter_create(&torch_flame,
-                (vec3_t){-250.0f, 100.0f, 0.0f}, 16);
-            emitter_torch_r = particle_emitter_create(&torch_flame,
-                (vec3_t){250.0f, 100.0f, 0.0f}, 16);
-            if (emitter_torch_l >= 0) particle_emitter_set_active(emitter_torch_l, true);
-            if (emitter_torch_r >= 0) particle_emitter_set_active(emitter_torch_r, true);
-        } else if (pt_lights_idx != 1 && last_pt_lights == 1) {
-            // Turning off — destroy torch emitters
-            if (emitter_torch_l >= 0) particle_emitter_destroy(emitter_torch_l);
-            if (emitter_torch_r >= 0) particle_emitter_destroy(emitter_torch_r);
-            emitter_torch_l = -1;
-            emitter_torch_r = -1;
-        }
-
-        // Update disabled state for point light sub-options
-        bool pt_on = (pt_lights_idx == 1);
-        menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_COLOR, !pt_on);
-        menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_INTENSITY, !pt_on);
-        menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_RADIUS, !pt_on);
-
         last_sun_dir = sun_dir_idx;
         last_sun_color = sun_color_idx;
         last_brightness = brightness_idx;
         last_ambient = ambient_idx;
         last_shadows = shadow_idx;
         last_shadow_dark = shadow_dk_idx;
-        last_pt_lights = pt_lights_idx;
-        last_pt_color = pt_color_idx;
-        last_pt_intensity = pt_int_idx;
-        last_pt_radius = pt_rad_idx;
     }
 
     scene->camera.dirty = true;
@@ -1057,6 +987,66 @@ static void demo_update(Scene *scene, float dt) {
     last_fog_far = fog_far_idx;
     last_fog_color = fog_color_idx;
     last_sky_toggle = sky_toggle;
+
+    // --- Apply point lights unconditionally (survives atmosphere preset changes) ---
+    {
+        int pt_lights_idx = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_LIGHTS);
+        int pt_color_idx  = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_COLOR);
+        int pt_int_idx    = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_INTENSITY);
+        int pt_rad_idx    = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_RADIUS);
+
+        LightConfig *lc = &scene->lighting;
+
+        if (pt_lights_idx == 1) {
+            float pt_r = ptlight_color_presets[pt_color_idx][0];
+            float pt_g = ptlight_color_presets[pt_color_idx][1];
+            float pt_b = ptlight_color_presets[pt_color_idx][2];
+            float pt_intensity = ptlight_intensity_values[pt_int_idx];
+            float pt_radius = ptlight_radius_values[pt_rad_idx];
+
+            lc->point_light_count = 2;
+            lc->point_lights[0] = (PointLight){
+                .position  = {-250.0f, 50.0f, 30.0f},
+                .color     = {pt_r, pt_g, pt_b},
+                .intensity = pt_intensity,
+                .radius    = pt_radius,
+                .active    = true,
+            };
+            lc->point_lights[1] = (PointLight){
+                .position  = {250.0f, 50.0f, 30.0f},
+                .color     = {pt_r, pt_g, pt_b},
+                .intensity = pt_intensity,
+                .radius    = pt_radius,
+                .active    = true,
+            };
+        } else {
+            lc->point_light_count = 0;
+        }
+
+        // Torch emitter lifecycle — state-based (survives preset changes)
+        bool want_torches = (pt_lights_idx == 1);
+        bool have_torches = (emitter_torch_l >= 0);
+
+        if (want_torches && !have_torches) {
+            emitter_torch_l = particle_emitter_create(&torch_flame,
+                (vec3_t){-250.0f, 100.0f, 0.0f}, 16);
+            emitter_torch_r = particle_emitter_create(&torch_flame,
+                (vec3_t){250.0f, 100.0f, 0.0f}, 16);
+            if (emitter_torch_l >= 0) particle_emitter_set_active(emitter_torch_l, true);
+            if (emitter_torch_r >= 0) particle_emitter_set_active(emitter_torch_r, true);
+        } else if (!want_torches && have_torches) {
+            if (emitter_torch_l >= 0) particle_emitter_destroy(emitter_torch_l);
+            if (emitter_torch_r >= 0) particle_emitter_destroy(emitter_torch_r);
+            emitter_torch_l = -1;
+            emitter_torch_r = -1;
+        }
+
+        // Disabled state for point light sub-options
+        bool pt_on = (pt_lights_idx == 1);
+        menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_COLOR, !pt_on);
+        menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_INTENSITY, !pt_on);
+        menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_RADIUS, !pt_on);
+    }
 
     // Background color: atmosphere preset overrides Settings tab
     if (atmo_preset > 0) {
