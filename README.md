@@ -170,22 +170,33 @@ RDP: Triangle Rasterize → Texture Sample → Z-Buffer → Framebuffer
 
 ## Documentation
 
+- [Development Roadmap](docs/ROADMAP.md) — Feature progress, v2 roadmap, milestones
+- [Architecture](docs/ARCHITECTURE.md) — N64 hardware overview, libdragon stack, lighting, shadows
 - [Rendering Pipeline](docs/RENDERING.md) — RDP modes, Z-buffer, triangle formats, frame structure
 - [Camera System](docs/CAMERA.md) — Orbital camera, coordinate system, math library, frustum culling
 - [Texture System](docs/TEXTURES.md) — Asset pipeline, TMEM constraints, sprite slots
+- [Mesh System](docs/MESH_SYSTEM.md) — Mesh builder API, shape library, universal renderer
 - [Menu System](docs/MENU_SYSTEM.md) — API reference, data model, integration patterns
 - [Input System](docs/INPUT.md) — Controller layout, button mappings, analog handling
-- [Architecture](docs/ARCHITECTURE.md) — N64 hardware overview, libdragon stack, lighting model
 - [Environment Setup](docs/SETUP.md) — Prerequisites, Docker, emulator, SummerCart64
 - [Development Workflow](docs/WORKFLOW.md) — Build cycle, debugging, asset pipeline
 
 ## Future Plans
 
-- Load 3D models from files
-- Scene/level definition system
-- Isometric tile system for tactics gameplay
-- Character units with animation
-- Turn-based combat system
+See [ROADMAP.md](docs/ROADMAP.md) for the full development roadmap with detailed feature descriptions.
+
+**Next Engine Features:**
+- Particle system (combat effects, environmental ambiance)
+- Fog & atmosphere (distance fade, mood setting)
+- Sprite animation (frame-based billboard animation)
+- Basic physics (gravity, knockback, jumping)
+- Input action mapping (abstract game actions)
+
+**Milestones:**
+- External model loading via Tiny3D + GLTF pipeline
+- Skeletal animation and character system
+- Souls-like combat test scene (1v1 arena)
+- Turn-based tactics battle system
 
 ## License
 

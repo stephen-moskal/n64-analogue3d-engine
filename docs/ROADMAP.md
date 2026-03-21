@@ -4,32 +4,36 @@ A methodical, incremental plan for building a flexible N64 graphics engine. Each
 
 This project is **educational**: we build systems from scratch to understand them deeply, document everything along the way, and verify on real hardware. It is also intended to be **powerful**: we adopt proven tools (T3D, Fast64) when they unlock capabilities that would take months to replicate.
 
-Long-term vision: a Final Fantasy Tactics-style strategy game. But the engine should be general enough for other genres.
+Long-term vision: an action RPG engine supporting both souls-like combat and Final Fantasy Tactics-style strategy modes. The engine should be general enough for other genres.
 
 ## Current State
 
-**15 stable source modules**, all verified on Ares emulator and Analogue 3D hardware (via SummerCart64).
+**19 stable source modules**, all verified on Ares emulator and Analogue 3D hardware (via SummerCart64). All 5 short-term features complete.
 
 | System | Status | Notes |
 |--------|--------|-------|
 | 3D Rendering | Working | CPU software transforms + RDP rasterization, Z-buffered, textured |
 | Mesh System | Mature | Generic Mesh type, builder API, universal `mesh_draw()`, frustum culling |
 | Shape Library | Working | Factory functions for pillar, platform, pyramid (mesh_defs) |
-| Multi-Object Scene | Working | 5 objects with different meshes, positions, scales, colliders |
+| Multi-Object Scene | Working | 8 objects with different meshes, positions, scales, colliders |
 | Object Manipulation | Working | Select, move, rotate, scale objects via controller (Z/A/B/analog) |
 | Camera | Mature | 3 modes (orbital, fixed, follow), frustum culling, 3-layer collision |
 | Collision | Mature | Sphere/AABB, raycasting, layer bitmasks, overlap queries |
 | Scene Management | Mature | Lifecycle callbacks (init/update/draw/post_draw/cleanup), transitions, per-object callbacks |
-| Lighting | Working | Single directional Blinn-Phong (ambient + diffuse + specular) |
+| Lighting | Mature | Configurable sun, point lights (×4), shadow casting (blob + projected) |
+| Shadow System | Mature | Blob + projected planar shadows, configurable darkness |
+| Billboard System | Mature | Camera-facing quads, spherical + cylindrical modes |
+| Audio System | Working | BGM streaming, SFX playback, 16-channel mixer |
+| Sound Bank | Working | 9 sound events, DFS path mapping |
 | Input | Working | Analog stick, D-pad, C-buttons, shoulder buttons, Start, Z-trigger |
-| Menu System | Working | 5-item overlay with navigation, apply/cancel |
+| Menu System | Mature | Tabbed menu (Settings, Sound, Lighting), snapshot/revert |
 | Text Rendering | Working | 2 fonts, configurable alignment/color, left/right-aligned HUD |
 | Variable Timestep | Working | Logic runs once per frame at display rate (30 or 60 FPS) |
 | Texture Management | Working | 16 dynamic slots, per-frame TMEM upload |
 
 ### What's Missing
 
-No model loading (geometry is hand-coded C), no animation, no audio, no sprites/2D rendering, no dynamic physics, no data-driven asset pipeline.
+No model loading (geometry is hand-coded C), no animation, no dynamic physics, no particle effects, no data-driven asset pipeline.
 
 ---
 
@@ -66,78 +70,143 @@ SceneObject system fully activated with 5 objects (cube, 2 pillars, platform, py
 
 ---
 
-### Feature 3: Basic Audio (Music + SFX)
+### Feature 3: Basic Audio (Music + SFX) — COMPLETE
 
-**Problem:** A silent engine feels like a tech demo, not a game. Audio is also a significant subsystem that needs to coexist with rendering in the N64's memory and CPU budget.
+Audio subsystem integrated with libdragon's mixer. Background music via WAV64 streaming, sound effects for all interactive events. See [ARCHITECTURE.md](ARCHITECTURE.md).
 
-**Solution:** Integrate libdragon's audio mixer. Background music via XM format (tracker music — compact, fits N64 RAM easily). Sound effects via WAV64 for discrete events.
-
-```
-src/audio/audio.h    — Audio init, music playback, SFX triggers
-src/audio/audio.c    — Wrapper around libdragon mixer + xm64player + wav64
-```
-
-**libdragon provides:**
-- `mixer_init()` — RSP-based audio mixing
-- `xm64player_t` — XM module playback (music)
-- `wav64_t` — WAV sample playback (SFX)
-- Audio runs on RSP alongside graphics — libdragon handles the scheduling
-
-**What it unlocks:** Scene atmosphere (background music per scene), interaction feedback (collision SFX, menu sounds), and validates that audio and rendering can share RSP time without frame drops.
-
-**N64 constraints:**
-- Audio buffers use ~64KB RAM (already budgeted in ARCHITECTURE.md)
-- XM files are typically 10-50KB — very RAM-friendly
-- RSP time-slicing between audio and graphics is handled by libdragon
+**Delivered:**
+- `src/audio/audio.c/h` — Mixer init (22050 Hz, 4 DMA buffers), SFX/BGM playback, volume control
+- `src/audio/sound_bank.c/h` — 9 sound events (menu open/close/nav/select, object select/deselect/mode_change, collision, BGM)
+- `snd_*` namespace (avoids collision with libdragon's `audio_init()`), 16 mixer channels, round-robin SFX allocation (channels 2-7), BGM on channel 0
+- Menu Sound tab with master/SFX/BGM volume controls
+- Verified on hardware at 60 FPS
 
 ---
 
-### Feature 4: 2D Sprite & Billboard System
+### Feature 4: Billboard System — COMPLETE
 
-**Problem:** The engine can only draw 3D triangles and text. No way to render HUD elements, selection indicators, particle placeholders, health bars, or item icons.
+Camera-facing textured quads for world-space sprites (markers, trees, effects). Built on the existing `mesh_draw()` pipeline for consistent rendering. See [ARCHITECTURE.md](ARCHITECTURE.md).
 
-**Solution:** Two rendering modes:
-1. **Screen-space sprites** — fixed pixel position on screen (HUD, icons, UI panels)
-2. **World-space billboards** — 3D position but always face the camera (markers, effects, labels)
-
-```
-src/render/sprite2d.h  — Sprite types, billboard API
-src/render/sprite2d.c  — Screen-space and billboard rendering
-```
-
-**What it unlocks:** HUD system for any game genre. Selection indicators for the FFT grid. Foundation for a future particle system (particles are just billboards with a lifetime). World-space labels for debug visualization.
-
-**Implementation detail:** Billboards use the existing camera VP matrix to compute screen position, then draw a textured quad. Screen-space sprites skip the 3D transform entirely — just blit at pixel coordinates.
+**Delivered:**
+- `src/render/billboard.c/h` — Camera-facing textured quads via `mesh_draw()` pipeline
+- Two modes: spherical (fully faces camera) + cylindrical (Y-axis only rotation)
+- Shared unit quad mesh (2 triangles) built once at init, material swapped per draw
+- Alpha cutout support, 32×32 RGBA16 sprites (2KB, fits 4KB TMEM)
+- Edge case handling: camera directly above → fallback vectors
+- Billboard objects (marker, tree) in demo scene, non-selectable
+- Verified on hardware at 60 FPS
 
 ---
 
-### Feature 5: Enhanced Lighting
+### Feature 5: Advanced Lighting & Shadows — COMPLETE
 
-**Problem:** Single global directional light with per-face computation. Every object has the same flat lighting regardless of position. No local light sources (torches, spell effects, glowing items).
+Configurable directional sun, point lights with attenuation, and shadow casting (blob + projected). Real-time tuning via Lighting menu tab. See [ARCHITECTURE.md](ARCHITECTURE.md).
 
-**Solution:** Multiple light sources per scene. Add point lights with distance attenuation. Move to per-vertex lighting (interpolated across faces) for meshes with enough vertex density.
+**Delivered:**
+- `src/render/lighting.h/c` — Enhanced `LightConfig`: configurable sun (direction, color, intensity), ambient RGB, specular (intensity + shininess via `fast_pow_int` binary exponentiation)
+- `PointLight` struct: position, color, intensity, radius, active — up to 4 per scene, smooth quadratic falloff `(1-(d/r)²)²`
+- `src/render/shadow.h/c` — `ShadowCaster` struct, blob shadows (dark quad at floor), projected shadows (mesh silhouette projected along light direction onto floor plane)
+- Shadow RDP state: 1-cycle mode (hardware-safe), Z-read ON, Z-write OFF (shadows don't occlude objects)
+- Lighting menu tab: 7 parameters (Sun Dir, Sun Color, Brightness, Ambient, Shadows, Shadow Dark, Pt Lights)
+- 2 demo point lights positioned near pillars, ~58 extra triangles worst case
+- Verified on hardware at 60 FPS
+
+---
+
+## V2 Roadmap: Engine Framework Features
+
+With the original 5 features complete, these features extend the engine framework before transitioning to the T3D/GLTF model pipeline. Each feature remains hardware-verifiable and builds on existing systems. Ordered by dependency and visual impact.
+
+### Feature 6: Particle System
+
+**Problem:** No way to render dynamic visual effects — combat hits, spell casts, environmental atmosphere (dust, rain, torch flickers). These are essential for game feel in both souls-like and tactics genres.
+
+**Solution:** Emitter-based particle system built on the existing billboard/`mesh_draw()` infrastructure. Pool-based allocation (fixed array, reuse dead particles). Each particle has configurable lifetime, velocity, gravity, color fade, and scale.
 
 ```
-LightConfig changes:
-- Array of lights (max 4 per scene — N64 CPU budget)
-- Light types: DIRECTIONAL (existing), POINT (new)
-- Per-vertex lighting option on Mesh
-- Attenuation: 1 / (constant + linear*d + quadratic*d^2)
+src/render/particle.c/h  — Emitter, particle pool, update/render
 ```
 
-**What it unlocks:** Environmental mood (dark dungeon with torch points, bright outdoor with sun). Spell and item effects that cast light. Visual depth that makes multi-object scenes readable.
+**What it unlocks:** Combat hit sparks, spell effects, dust/debris, environmental ambiance (torch flickers, rain). Foundation for all visual effects.
 
 **N64 constraints:**
-- Per-vertex lighting is CPU-intensive — limit to 4 active lights
-- Point light attenuation is a per-vertex distance calculation
-- Can skip lights outside an object's bounding sphere (light culling)
-- When we migrate to T3D (Milestone 1), RSP handles lighting — this CPU implementation still teaches the math
+- Research shows 410+ particles at 60 FPS achievable on N64
+- Target: 200+ simultaneous particles as baseline
+- Use smallest possible textures (8×8 or 16×16) to minimize TMEM pressure
+- Batch render by blending mode to minimize RDP state changes
+- Additive blending is cheaper than alpha multiply for many effects
+
+---
+
+### Feature 7: Fog & Atmosphere
+
+**Problem:** Objects pop in at the far plane boundary. No atmospheric depth cues. Scenes feel flat without distance fade.
+
+**Solution:** Distance-based fog using libdragon's built-in `rdpq_mode_fog(RDPQ_FOG_STANDARD)` + `rdpq_set_fog_color()`. Configurable fog near/far planes and color. Menu option for fog density.
+
+```
+Integration into mesh_draw() and floor_draw()
+```
+
+**What it unlocks:** Atmospheric depth perception, hides far-plane pop-in, mood setting (dungeon haze, outdoor distance, battle arena smoke).
+
+**N64 constraints:**
+- Fog is RDP hardware-accelerated — essentially free
+- Fog color can match sky/background for seamless blending
+- Near/far fog planes independent of projection near/far
+
+---
+
+### Feature 8: Sprite Animation
+
+**Problem:** Billboards are static single frames. No way to animate effects (fire, water, explosions) or show NPC idle cycles. Particle effects need animated sprites.
+
+**Solution:** Frame-based animation system for billboards and 2D elements. Animation definitions (texture atlas or per-frame sprites), playback controller (play, pause, loop, one-shot), frame timing via dt accumulator.
+
+```
+src/render/anim_sprite.c/h  — AnimDef, AnimState, billboard animation extension
+```
+
+**What it unlocks:** Animated effects (fire, water, explosions), NPC idle animations, UI flourishes, richer particle effects with animated frames.
+
+---
+
+### Feature 9: Basic Physics
+
+**Problem:** The collision system is query-only — it detects overlaps but doesn't respond. No gravity, no velocity, no forces. Objects can't fall, jump, or get knocked back.
+
+**Solution:** Lightweight physics layer on top of the existing collision system. `PhysicsBody` struct with velocity, acceleration, gravity, damping, and grounded flag. Ground detection via collision raycasts, basic impulse response for knockback.
+
+```
+src/physics/physics.c/h  — PhysicsBody, gravity, impulse, ground detection
+```
+
+**What it unlocks:** Gravity, jumping, knockback from hits, projectile arcs, falling objects. Essential for souls-like combat feel (dodge rolls, hit reactions).
+
+**N64 constraints:**
+- NOT a full rigid body solver — no stacking, friction matrices, or constraint solving
+- Just enough for movement, jumping, and hit reactions
+- One raycast per physics body per frame for ground detection (~64 rays max)
+
+---
+
+### Feature 10: Input Action Mapping
+
+**Problem:** Controller buttons are hard-coded to specific behaviors (analog = camera orbit, C-buttons = zoom). No way to rebind or create context-dependent controls (menu vs combat vs exploration).
+
+**Solution:** Abstract controller buttons into named game actions (move, attack, dodge, interact, menu). Per-context action maps with pressed/held/released states and analog dead zones.
+
+```
+Refactor src/input/input.c/h  — ActionMap, InputContext, action states
+```
+
+**What it unlocks:** Rebindable controls, cleaner game logic, multi-context input (menu, combat, exploration each with different mappings). Required before building any game-specific input handling.
 
 ---
 
 ## Milestone 1: Asset Pipeline & T3D Rendering Upgrade
 
-**The transition from "educational prototype" to "content-ready engine."**
+**The transition from "educational prototype" to "content-ready engine."** Required for both FFT-style and souls-like game modes — the GLTF pipeline provides characters, weapons, and environments for either genre.
 
 ### Why T3D
 
@@ -182,14 +251,14 @@ Rendered on screen via RSP
 
 ---
 
-## Milestone 2: Animation & Entity System
+## Milestone 2: Animation & Character System
 
 **The transition from "objects exist" to "objects live."**
 
 ### Skeletal Animation
 
 With T3D providing the runtime, this milestone focuses on the authoring workflow and game integration:
-- **Animation state machine** — States (idle, walk, attack, hit, death) with transition rules
+- **Animation state machine** — States (idle, walk, attack, hit, death, dodge) with transition rules
 - **Blend transitions** — Smooth crossfade between animation clips
 - **Animation events** — Trigger SFX or game logic at specific keyframes (e.g., "deal damage" at frame 12 of attack animation)
 
@@ -204,14 +273,25 @@ Entity
 ├── Collidable     (collider shape, layer, callbacks)
 ├── Animated       (animation state machine, current clip)
 ├── Controller     (input-driven or AI-driven movement)
+├── Combat         (hitboxes, hurtboxes, i-frames, stamina)
 └── GameData       (HP, stats, inventory — game-specific)
 ```
 
 This is NOT a full ECS (entity-component-system) — that's over-engineering for N64. It's a tagged-struct pattern where entities have optional capability pointers.
 
-### Grid-Based Movement (FFT Prep)
+### Souls-Like Combat Foundation
 
-For the strategy game vision:
+For the action combat vision:
+- **Hitbox/hurtbox system** — Attack hitboxes active during specific animation frames, hurtboxes on character body
+- **Dodge with i-frames** — Invincibility window during dodge roll animation, physics-driven movement
+- **Attack windups & recovery** — Slow, committal attacks with telegraph, active, and recovery phases
+- **Stamina system** — Resource that gates attacks, dodges, and sprinting
+
+The test scene target is a souls-like combat demo: 1 player character + 1 enemy with a basic attack/dodge loop. This validates the animation and entity systems before building either FFT or souls-like game modes.
+
+### Grid-Based Movement (FFT Track)
+
+For the strategy game vision (parallel development track):
 - **Tile grid overlay** — World-space grid with configurable tile size
 - **Grid snapping** — Entities snap to tile centers
 - **Pathfinding** — A* on the tile grid (N64 CPU can handle grids up to ~32x32 easily)
@@ -223,6 +303,8 @@ For the strategy game vision:
 
 **The transition from "engine" to "game."**
 
+First playable target is a souls-like combat test scene (1v1 arena), validating animation, physics, and input systems end-to-end. The FFT battle system is the second track, sharing the same foundation.
+
 ### Game State Machine
 
 ```
@@ -233,7 +315,15 @@ Title Screen → World Map → Battle Setup → Battle → Victory/Defeat → Sa
 
 Each state is a scene (or scene configuration) with its own update/draw logic. The existing scene transition system handles the visual transitions; this adds the logical flow.
 
-### Turn-Based Battle System (FFT-Specific)
+### Combat Test Scene (Souls-Like)
+
+- **1v1 arena** — Player character vs single enemy in enclosed space
+- **Basic attack loop** — Light attack, heavy attack with windup/recovery
+- **Dodge mechanic** — Roll with i-frames, stamina cost
+- **Hit reactions** — Knockback, stagger, particle effects on impact
+- **Health/stamina UI** — HUD bars using existing text/menu system
+
+### Turn-Based Battle System (FFT Track)
 
 - **Initiative/turn order** — Speed-based queue determining who acts when
 - **Action system** — Move, Attack, Ability, Item, Wait
@@ -248,8 +338,8 @@ Each state is a scene (or scene configuration) with its own update/draw logic. T
 
 ### AI Foundation
 
-- **Decision trees** — Simple priority-based AI for enemy turns
-- **A* pathfinding** — Already built for grid movement (Milestone 2)
+- **Decision trees** — Simple priority-based AI for enemy behavior
+- **A* pathfinding** — Built for grid movement (FFT) and arena navigation (souls-like)
 - **Threat assessment** — Target selection based on distance, HP, advantage
 
 ---
@@ -276,7 +366,7 @@ Each state is a scene (or scene configuration) with its own update/draw logic. T
 | TMEM | 4 KB | Per-frame uploads (cube textures) | Shared |
 | CPU per frame | ~16 ms (60Hz) | ~3-5 ms (current scene) | ~11-13 ms |
 | RSP per frame | ~16 ms | Audio mixing only (future) | Available for T&L |
-| ROM | 64 MB max | ~280 KB (code + assets) | ~63.7 MB |
+| ROM | 64 MB max | ~327 KB (code + assets) | ~63.7 MB |
 
 ---
 
@@ -300,7 +390,10 @@ Each feature and milestone produces corresponding documentation:
 |-------------------|---------------|
 | Mesh Abstraction | `docs/MESH_SYSTEM.md` |
 | Audio | `docs/AUDIO.md` |
-| Sprites & Billboards | `docs/SPRITES.md` |
+| Billboards | `docs/ARCHITECTURE.md` (Billboard section) |
+| Lighting & Shadows | `docs/ARCHITECTURE.md` (Lighting & Shadow sections) |
+| Particle System | `docs/PARTICLES.md` |
+| Physics | `docs/PHYSICS.md` |
 | T3D Integration | `docs/T3D_INTEGRATION.md`, updated `RENDERING.md` |
 | Entity System | `docs/ENTITY_SYSTEM.md` |
 | Game Framework | `docs/GAME_FRAMEWORK.md` |

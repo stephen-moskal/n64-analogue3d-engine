@@ -115,7 +115,7 @@ main.c
 │   ├── render/lighting [Blinn-Phong calculation]
 │   ├── collision/collision [collision detection, raycasting]
 │   └── render/texture  [dynamic texture slot management]
-├── audio/audio         [audio mixer, SFX/BGM playback] (WIP)
+├── audio/audio         [audio mixer, SFX/BGM playback]
 │   └── audio/sound_bank [sound event definitions]
 └── scenes/demo_scene   [demo scene: multi-object, selection, manipulation]
     ├── render/cube     [cube geometry definition (textured)]
@@ -126,6 +126,10 @@ main.c
     ├── render/mesh_defs [shape library: pillar, platform, pyramid]
     │   └── render/mesh
     ├── render/billboard [camera-facing textured quads]
+    │   └── render/mesh
+    ├── render/shadow    [blob + projected shadow casting]
+    │   ├── render/camera
+    │   ├── render/lighting
     │   └── render/mesh
     └── scene/scene
 ```
@@ -215,29 +219,82 @@ RDP: Rasterize -> Texture Sample -> Z-Test -> Framebuffer
 
 ## Lighting Model
 
-Per-face Blinn-Phong lighting computed on the CPU:
+Per-face Blinn-Phong lighting computed on the CPU with configurable directional sun, up to 4 point lights, and shadow casting.
+
+### Lighting Formula
 
 ```
 color = ambient
-      + diffuse * max(0, dot(normal, light_dir))
-      + specular * pow(max(0, dot(normal, half_vec)), 32)
+      + sun_color * sun_intensity * max(0, dot(normal, light_dir))          // diffuse
+      + specular_intensity * fast_pow_int(max(0, dot(normal, half_vec)), shininess)  // specular
+      + Σ point_light_contribution                                          // point lights
 ```
 
-Where `half_vec = normalize(light_dir + view_dir)`.
+Where `half_vec = normalize(light_dir + view_dir)` and `fast_pow_int` uses binary exponentiation (5 multiplies for shininess=32 vs costly `powf`).
+
+### Point Lights
+
+Up to 4 point lights per scene (`MAX_POINT_LIGHTS`). Each has position, color, intensity, radius, and active flag. Smooth quadratic attenuation reaching zero at the radius boundary:
+
+```
+attenuation = (1 - (dist/radius)²)² * intensity
+```
+
+Optimizations: early-out when `distance² >= radius²` (before `sqrtf`), diffuse only (no specular per point light to stay within CPU budget).
 
 ### Default Light Configuration
 
 | Component | Value | Notes |
 |-----------|-------|-------|
-| Ambient | (0.15, 0.15, 0.20) | Slightly blue tint |
-| Diffuse | (0.85, 0.80, 0.70) | Warm white |
+| Sun Color | (0.85, 0.80, 0.70) | Warm white |
+| Sun Intensity | 1.0 | Brightness multiplier [0.0, 2.0] |
 | Direction | normalized(1, 1, 1) | Upper-right-front |
-| Specular | 0.5 intensity, shininess ~32 | Blinn-Phong |
+| Ambient | (0.15, 0.15, 0.20) | Slightly blue tint |
+| Specular | 0.5 intensity, shininess 8 | Blinn-Phong |
+| Point Lights | 0 active | Up to 4 per scene |
+| Shadows | OFF | Blob or projected modes available |
 
 The lit color modulates the per-face base color and texture:
 ```c
 final_pixel = texture_sample * (face_base_color * lighting) / 255
 ```
+
+## Shadow System
+
+Two shadow modes rendered after the floor and before objects. Configured via `ShadowConfig` in `LightConfig`.
+
+### Shadow Modes
+
+| Mode | Cost | Visual |
+|------|------|--------|
+| `SHADOW_OFF` | 0 tris | No shadows |
+| `SHADOW_BLOB` | 2 tris/object | Dark quad under each object, scaled by bounding radius |
+| `SHADOW_PROJECTED` | ~10 tris/object | Mesh silhouette projected onto floor plane along light direction |
+
+### RDP State
+
+```c
+rdpq_set_mode_standard();           // 1-cycle mode (CRITICAL for hardware)
+rdpq_mode_combiner(RDPQ_COMBINER_FLAT);
+rdpq_mode_zbuf(true, false);        // Z-read ON, Z-write OFF
+```
+
+- **Z-read ON**: shadows respect floor depth, don't render through objects
+- **Z-write OFF**: shadows don't occlude objects drawn afterward
+- Shadow color derived from `ShadowConfig.darkness` (0.0 = invisible, 1.0 = fully black)
+
+### Projected Shadow Math
+
+Per-vertex planar projection along the light direction onto `y = floor_y`:
+
+```c
+float t = (world_vertex.y - floor_y) / light_direction.y;
+shadow_x = world_vertex.x - light_direction.x * t;
+shadow_z = world_vertex.z - light_direction.z * t;
+// Render at (shadow_x, floor_y + 0.01, shadow_z)
+```
+
+Draw order: floor → shadows → objects → HUD
 
 ## Collision Detection
 
@@ -315,7 +372,7 @@ text_draw_fmt(&config, "formatted %d", value);
 | Z-buffer | ~150KB | 320x240 x 2 bytes |
 | Textures (sprites) | ~12KB | 6 x 32x32 RGBA16 |
 | TMEM per frame | 4KB max | RDP on-chip texture cache |
-| Code + data | ~288KB | Current ROM size |
+| Code + data | ~327KB | Current ROM size |
 | Audio buffers | ~64KB | Reserved for future |
 | **Available** | **~3MB** | For game assets and logic |
 
@@ -352,17 +409,18 @@ With Expansion Pak (8MB), an additional 4MB is available. Shared resources (fram
 | `src/render/mesh_defs.c/h` | Shape library: pillar, platform, pyramid factory functions |
 | `src/render/cube.c/h` | Cube geometry (textured, built on Mesh) |
 | `src/render/floor.c/h` | Checkered floor grid (dynamic, Z-biased) |
-| `src/render/lighting.c/h` | Blinn-Phong lighting |
+| `src/render/lighting.c/h` | Blinn-Phong lighting, point lights, configurable sun |
 | `src/render/texture.c/h` | Texture loading, TMEM management, dynamic slots |
 | `src/render/billboard.c/h` | Billboard system: camera-facing textured quads |
+| `src/render/shadow.c/h` | Shadow casting (blob + projected planar shadows) |
 | `src/math/vec3.h` | Vector math library (header-only) |
 | `src/collision/collision.c/h` | Collision detection, raycasting, overlap queries |
 | `src/scene/scene.c/h` | Scene lifecycle, manager, transitions, per-object callbacks |
 | `src/scenes/demo_scene.c/h` | Demo scene: mesh objects, billboards, selection, HUD |
 | `src/input/input.c/h` | Controller input |
 | `src/ui/text.c/h` | Text rendering |
-| `src/ui/menu.c/h` | Tabbed menu system (L/R tabs, snapshot/revert) |
-| `src/audio/audio.c/h` | Audio mixer, SFX/BGM playback (WIP) |
+| `src/ui/menu.c/h` | Tabbed menu system (3 tabs: Settings, Sound, Lighting) |
+| `src/audio/audio.c/h` | Audio mixer, SFX/BGM playback |
 | `src/audio/sound_bank.c/h` | Sound event definitions and path mapping |
 
 ## Documentation Index
