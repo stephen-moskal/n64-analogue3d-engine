@@ -108,6 +108,18 @@ Projected shadows cast object silhouettes onto the floor plane based on the sun 
 
 ![Projected shadows from cube, pillar, pyramid, and platform onto the checkered floor](docs/images/SHADOW%20CAST%20EXAMPLE.png)
 
+### Atmosphere & Point Lights
+
+Night mode with point light sources illuminating the scene — torch flames on pillars, floor tile lighting, and linked atmosphere-lighting preset:
+
+![Night atmosphere with point lights illuminating cube, pillars, floor tiles, and torch flame particles on pillar tops](docs/images/DARK%20WITH%20POINT%20LIGHTS.png)
+
+### Environment Menu
+
+Configure atmosphere presets, fog, and sky from the Environ tab — shown here with the Sunset preset active:
+
+![Environ tab showing Sunset preset with fog and sky settings, purple-to-orange sky gradient visible behind the menu](docs/images/ENVIRONMENT%20MENU%20SUNSET.png)
+
 ## Project Structure
 
 ```
