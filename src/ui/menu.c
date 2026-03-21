@@ -65,6 +65,7 @@ void menu_open(Menu *menu) {
             menu->snapshot[t][i] = menu->tabs[t].items[i].selected;
         }
         menu->tabs[t].cursor = 0;
+        menu->tabs[t].scroll_offset = 0;
     }
     menu->active_tab = 0;
     menu->analog_cooldown = 0;
@@ -105,6 +106,14 @@ void menu_update(Menu *menu) {
     }
     if (pressed.d_down) {
         tab->cursor = (tab->cursor + 1) % tab->item_count;
+    }
+
+    // Keep cursor in visible scroll window
+    if (tab->item_count > MENU_VISIBLE_ITEMS) {
+        if (tab->cursor < tab->scroll_offset)
+            tab->scroll_offset = tab->cursor;
+        if (tab->cursor >= tab->scroll_offset + MENU_VISIBLE_ITEMS)
+            tab->scroll_offset = tab->cursor - MENU_VISIBLE_ITEMS + 1;
     }
 
     // D-pad left/right: cycle option
@@ -163,8 +172,16 @@ void menu_draw(const Menu *menu) {
 
     const MenuTab *tab = &menu->tabs[menu->active_tab];
 
-    // Compute menu height based on active tab's item count
-    int footer_y = MENU_ITEMS_Y + tab->item_count * MENU_ROW_HEIGHT + MENU_FOOTER_PAD;
+    // Scrollable item range
+    int visible = tab->item_count < MENU_VISIBLE_ITEMS ? tab->item_count : MENU_VISIBLE_ITEMS;
+    int start = tab->scroll_offset;
+    int end = start + visible;
+    if (end > tab->item_count) end = tab->item_count;
+    bool scroll_up = (start > 0);
+    bool scroll_down = (end < tab->item_count);
+
+    // Compute menu height based on visible item count
+    int footer_y = MENU_ITEMS_Y + visible * MENU_ROW_HEIGHT + MENU_FOOTER_PAD;
     int menu_y0 = MENU_TITLE_Y - MENU_PAD;
     int menu_y1 = footer_y + MENU_ROW_HEIGHT;
 
@@ -206,9 +223,22 @@ void menu_draw(const Menu *menu) {
     rdpq_fill_rectangle(MENU_X0 + MENU_PAD, MENU_SEP_Y,
                         MENU_X1 - MENU_PAD, MENU_SEP_Y + 1);
 
-    // Menu items for active tab
-    for (int i = 0; i < tab->item_count; i++) {
-        float row_y = MENU_ITEMS_Y + i * MENU_ROW_HEIGHT;
+    // Scroll-up indicator
+    if (scroll_up) {
+        TextBoxConfig up_cfg = {
+            .x       = MENU_X0,
+            .y       = MENU_SEP_Y + 3,
+            .width   = MENU_X1 - MENU_X0,
+            .font_id = FONT_DEBUG_MONO,
+            .color   = COLOR_FOOTER,
+            .align   = ALIGN_CENTER,
+        };
+        text_draw(&up_cfg, "...");
+    }
+
+    // Menu items for active tab (scrollable window)
+    for (int i = start; i < end; i++) {
+        float row_y = MENU_ITEMS_Y + (i - start) * MENU_ROW_HEIGHT;
         bool selected = (i == tab->cursor);
         color_t color = selected ? COLOR_SELECTED : COLOR_NORMAL;
 
@@ -232,6 +262,20 @@ void menu_draw(const Menu *menu) {
         };
         const char *opt = tab->items[i].options[tab->items[i].selected];
         text_draw_fmt(&value_cfg, "< %s >", opt);
+    }
+
+    // Scroll-down indicator
+    if (scroll_down) {
+        float ind_y = MENU_ITEMS_Y + visible * MENU_ROW_HEIGHT - 8;
+        TextBoxConfig down_cfg = {
+            .x       = MENU_X0,
+            .y       = ind_y,
+            .width   = MENU_X1 - MENU_X0,
+            .font_id = FONT_DEBUG_MONO,
+            .color   = COLOR_FOOTER,
+            .align   = ALIGN_CENTER,
+        };
+        text_draw(&down_cfg, "...");
     }
 
     // Footer hint

@@ -6,6 +6,7 @@
 #include "scene/scene.h"
 #include "scenes/demo_scene.h"
 #include "audio/audio.h"
+#include "render/atmosphere.h"
 
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
@@ -44,6 +45,16 @@ static const char *shadow_options[]     = {"Off", "Blob", "Projected"};
 static const char *shadow_dk_options[]  = {"Light", "Medium", "Dark"};
 static const char *ptlight_options[]    = {"Off", "On"};
 
+// Menu options — Environ tab
+static const char *atmo_preset_options[] = {
+    "Custom", "Clear Day", "Overcast", "Foggy", "Dense Fog", "Sunset", "Dusk", "Night"
+};
+static const char *fog_toggle_options[] = {"Off", "On"};
+static const char *fog_near_options[]   = {"50", "100", "150", "200", "300", "400"};
+static const char *fog_far_options[]    = {"400", "600", "800", "1000", "1200", "1400"};
+static const char *fog_color_options[]  = {"Grey", "Blue", "White", "Warm", "Purple", "Dark"};
+static const char *sky_toggle_options[] = {"Off", "On"};
+
 int main(void) {
     // Initialize debug output
     debug_init_isviewer();
@@ -68,7 +79,7 @@ int main(void) {
 
     // Tab 0: Settings
     int tab_s = menu_add_tab(&start_menu, "Settings");
-    menu_add_item(&start_menu, tab_s, "BG Color", bg_options, 7, 0);
+    menu_add_item(&start_menu, tab_s, "BG Color", bg_options, 7, 5);
     menu_add_item(&start_menu, tab_s, "Debug Text", toggle_options, 2, 0);
     menu_add_item(&start_menu, tab_s, "Camera", camera_mode_options, 3, 0);
     menu_add_item(&start_menu, tab_s, "Cam Collide", camera_col_options, 2, 0);
@@ -90,8 +101,18 @@ int main(void) {
     menu_add_item(&start_menu, tab_l, "Shadow Dark", shadow_dk_options, 3, 1);   // Default: Medium
     menu_add_item(&start_menu, tab_l, "Pt Lights",   ptlight_options, 2, 0);     // Default: Off
 
-    // Initialize audio system
+    // Tab 3: Environ
+    int tab_e = menu_add_tab(&start_menu, "Environ");
+    menu_add_item(&start_menu, tab_e, "Preset",    atmo_preset_options, 8, 0);  // Default: Custom
+    menu_add_item(&start_menu, tab_e, "Fog",       fog_toggle_options, 2, 0);   // Default: Off
+    menu_add_item(&start_menu, tab_e, "Fog Near",  fog_near_options, 6, 3);     // Default: 200
+    menu_add_item(&start_menu, tab_e, "Fog Far",   fog_far_options, 6, 4);      // Default: 1200
+    menu_add_item(&start_menu, tab_e, "Fog Color", fog_color_options, 6, 0);    // Default: Grey
+    menu_add_item(&start_menu, tab_e, "Sky",       sky_toggle_options, 2, 0);   // Default: Off
+
+    // Initialize audio and atmosphere
     snd_init();
+    atmosphere_init();
 
     // Allocate Z-buffer (shared across all scenes)
     surface_t zbuf = surface_alloc(FMT_RGBA16, SCREEN_WIDTH, SCREEN_HEIGHT);

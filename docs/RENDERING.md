@@ -148,10 +148,14 @@ The `rdpq_triangle()` function accepts different vertex formats:
 | `TRIFMT_TEX` | 5 | `{X, Y, S, T, INV_W}` | Textured, no depth |
 | `TRIFMT_ZBUF` | 3 | `{X, Y, Z}` | Z-buffered, no texture |
 | `TRIFMT_ZBUF_TEX` | 6 | `{X, Y, Z, S, T, INV_W}` | Textured + Z-buffer |
+| `TRIFMT_ZBUF_SHADE` | 7 | `{X, Y, Z, R, G, B, A}` | Shaded + Z-buffer (fog) |
+| `TRIFMT_ZBUF_SHADE_TEX` | 10 | `{X, Y, Z, R, G, B, A, S, T, INV_W}` | Shaded + textured + Z (fog) |
 
 The engine uses:
-- `TRIFMT_ZBUF_TEX` for textured 3D geometry (cube via mesh system)
-- `TRIFMT_ZBUF` for flat-colored Z-buffered geometry (floor — no texture coords needed, saves CPU per-triangle gradient computation)
+- `TRIFMT_ZBUF_TEX` for textured 3D geometry (cube via mesh system) when fog is OFF
+- `TRIFMT_ZBUF` for flat-colored Z-buffered geometry (floor, particles — no texture coords)
+- `TRIFMT_ZBUF_SHADE` for flat-colored geometry with hardware fog (shade RGB = lit color, shade A = fog factor)
+- `TRIFMT_ZBUF_SHADE_TEX` for textured geometry with hardware fog
 - `TRIFMT_FILL` for UI overlays (menu background)
 
 **Performance note:** Use the simplest format that fits your needs. `TRIFMT_ZBUF` skips texture gradient computation in `rdpq_triangle()`, which is meaningful at high triangle counts (floor: 200 triangles/frame).

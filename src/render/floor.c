@@ -1,5 +1,6 @@
 #include "floor.h"
 #include "texture.h"
+#include "atmosphere.h"
 #include <math.h>
 
 #define FLOOR_HALF_SIZE  500.0f
@@ -33,6 +34,7 @@
 // Static to avoid stack usage on N64.
 // TRIFMT_ZBUF format: {X, Y, Z} — 3 floats per vertex (no texture coords)
 static float grid[VERT_COUNT][VERT_COUNT][3];
+static float grid_depth[VERT_COUNT][VERT_COUNT];  // clip.w for CPU fog
 static bool  grid_valid[VERT_COUNT][VERT_COUNT];
 
 void floor_draw(const Camera *cam, const LightConfig *light) {
@@ -82,6 +84,7 @@ void floor_draw(const Camera *cam, const LightConfig *light) {
             }
 
             grid_valid[row][col] = true;
+            grid_depth[row][col] = clip.w;
             grid[row][col][0] = sx;
             grid[row][col][1] = sy;
             float depth = clip.z * inv_w * 0.5f + 0.5f + Z_BIAS;
@@ -95,31 +98,64 @@ void floor_draw(const Camera *cam, const LightConfig *light) {
     rdpq_mode_combiner(RDPQ_COMBINER_FLAT);
     rdpq_mode_zbuf(true, true);
 
-    // Draw tiles batched by color to minimize prim_color changes.
-    // Pass 0: light tiles, Pass 1: dark tiles.
+    const FogConfig *fog = atmosphere_get_fog();
     int tri_count = 0;
-    for (int pass = 0; pass < 2; pass++) {
-        rdpq_set_prim_color(pass == 0 ? col_light : col_dark);
+
+    if (fog->enabled) {
+        // Fogged path: per-tile color blend toward fog color.
+        // Can't use shade-based formats because floor shares vertices
+        // between adjacent tiles that need different colors.
+        color_t last_color = RGBA32(0, 0, 0, 0);
 
         for (int row = 0; row < TILE_COUNT; row++) {
             for (int col = 0; col < TILE_COUNT; col++) {
-                // Select tiles for this pass:
-                // pass 0 (light): (row+col) is odd
-                // pass 1 (dark):  (row+col) is even
-                int is_light = (row + col) & 1;
-                if ((pass == 0) != is_light) continue;
-
-                // All 4 corners must be valid
                 if (!grid_valid[row][col]     || !grid_valid[row][col+1] ||
                     !grid_valid[row+1][col+1] || !grid_valid[row+1][col])
                     continue;
 
-                // Two triangles per tile: (BL, BR, TR) and (BL, TR, TL)
+                int is_light = (row + col) & 1;
+                color_t base = is_light ? col_light : col_dark;
+
+                // Average depth of tile corners
+                float avg_depth = (grid_depth[row][col] + grid_depth[row][col+1] +
+                                   grid_depth[row+1][col+1] + grid_depth[row+1][col]) * 0.25f;
+
+                color_t fogged = fog_blend_color(base, avg_depth);
+
+                // Only update prim color when it actually changes
+                if (fogged.r != last_color.r || fogged.g != last_color.g ||
+                    fogged.b != last_color.b) {
+                    rdpq_set_prim_color(fogged);
+                    last_color = fogged;
+                }
+
                 rdpq_triangle(&TRIFMT_ZBUF,
                     grid[row][col], grid[row][col+1], grid[row+1][col+1]);
                 rdpq_triangle(&TRIFMT_ZBUF,
                     grid[row][col], grid[row+1][col+1], grid[row+1][col]);
                 tri_count += 2;
+            }
+        }
+    } else {
+        // Non-fogged path: batch by color (2 prim_color calls total)
+        for (int pass = 0; pass < 2; pass++) {
+            rdpq_set_prim_color(pass == 0 ? col_light : col_dark);
+
+            for (int row = 0; row < TILE_COUNT; row++) {
+                for (int col = 0; col < TILE_COUNT; col++) {
+                    int is_light = (row + col) & 1;
+                    if ((pass == 0) != is_light) continue;
+
+                    if (!grid_valid[row][col]     || !grid_valid[row][col+1] ||
+                        !grid_valid[row+1][col+1] || !grid_valid[row+1][col])
+                        continue;
+
+                    rdpq_triangle(&TRIFMT_ZBUF,
+                        grid[row][col], grid[row][col+1], grid[row+1][col+1]);
+                    rdpq_triangle(&TRIFMT_ZBUF,
+                        grid[row][col], grid[row+1][col+1], grid[row+1][col]);
+                    tri_count += 2;
+                }
             }
         }
     }

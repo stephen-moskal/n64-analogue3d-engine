@@ -10,6 +10,7 @@
 #include "../render/billboard.h"
 #include "../render/shadow.h"
 #include "../render/particle.h"
+#include "../render/atmosphere.h"
 #include "../audio/audio.h"
 #include "../audio/sound_bank.h"
 
@@ -233,6 +234,16 @@ static const TextBoxConfig pos_text = {
 #define ITEM_SHADOW_DK     5
 #define ITEM_PT_LIGHTS     6
 
+// --- Environ tab indices ---
+#define TAB_ENVIRON        3
+
+#define ITEM_ATMO_PRESET   0
+#define ITEM_FOG_TOGGLE    1
+#define ITEM_FOG_NEAR      2
+#define ITEM_FOG_FAR       3
+#define ITEM_FOG_COLOR     4
+#define ITEM_SKY_TOGGLE    5
+
 // --- Lighting preset tables ---
 
 static const float sun_dir_presets[][3] = {
@@ -254,6 +265,19 @@ static const float brightness_presets[] = { 0.20f, 0.40f, 0.60f, 0.80f, 1.00f };
 static const float ambient_presets[]    = { 0.10f, 0.20f, 0.30f, 0.40f, 0.50f };
 static const float shadow_dark_presets[] = { 0.3f, 0.6f, 0.9f };
 
+// --- Atmosphere preset tables ---
+
+static const color_t fog_color_presets[] = {
+    {0x80, 0x80, 0x90, 0xFF},  // Grey
+    {0x60, 0x80, 0xD0, 0xFF},  // Blue
+    {0xC0, 0xC0, 0xC0, 0xFF},  // White
+    {0xD0, 0x80, 0x40, 0xFF},  // Warm
+    {0x50, 0x30, 0x60, 0xFF},  // Purple
+    {0x10, 0x10, 0x20, 0xFF},  // Dark
+};
+static const float fog_near_values[] = {50, 100, 150, 200, 300, 400};
+static const float fog_far_values[]  = {400, 600, 800, 1000, 1200, 1400};
+
 // Track last lighting menu values to detect changes
 static int last_sun_dir = 0;
 static int last_sun_color = 0;
@@ -262,6 +286,14 @@ static int last_ambient = 1;
 static int last_shadows = 0;
 static int last_shadow_dark = 1;
 static int last_pt_lights = 0;
+
+// Track atmosphere menu values
+static int last_atmo_preset = 0;
+static int last_fog_toggle = 0;
+static int last_fog_near = 3;
+static int last_fog_far = 4;
+static int last_fog_color = 0;
+static int last_sky_toggle = 0;
 
 // Background color options
 static const color_t bg_colors[] = {
@@ -538,6 +570,12 @@ static void demo_init(Scene *scene) {
     last_shadows = 0;
     last_shadow_dark = 1;
     last_pt_lights = 0;
+    last_atmo_preset = 0;
+    last_fog_toggle = 0;
+    last_fog_near = 3;
+    last_fog_far = 4;
+    last_fog_color = 0;
+    last_sky_toggle = 0;
     hud_fps = 0.0f;
     hud_fps_ticks = 0;
     interaction_mode = MODE_NORMAL;
@@ -876,8 +914,55 @@ static void demo_update(Scene *scene, float dt) {
 
     scene->camera.dirty = true;
 
-    // Update background color from menu
-    scene->bg_color = bg_colors[menu_get_value(&start_menu, TAB_SETTINGS, ITEM_BG_COLOR)];
+    // --- Apply atmosphere settings from Environ tab ---
+
+    int atmo_preset  = menu_get_value(&start_menu, TAB_ENVIRON, ITEM_ATMO_PRESET);
+    int fog_toggle   = menu_get_value(&start_menu, TAB_ENVIRON, ITEM_FOG_TOGGLE);
+    int fog_near_idx = menu_get_value(&start_menu, TAB_ENVIRON, ITEM_FOG_NEAR);
+    int fog_far_idx  = menu_get_value(&start_menu, TAB_ENVIRON, ITEM_FOG_FAR);
+    int fog_color_idx= menu_get_value(&start_menu, TAB_ENVIRON, ITEM_FOG_COLOR);
+    int sky_toggle   = menu_get_value(&start_menu, TAB_ENVIRON, ITEM_SKY_TOGGLE);
+
+    if (atmo_preset != last_atmo_preset && atmo_preset > 0) {
+        // Named preset selected: apply all atmosphere settings
+        AtmospherePresetID id = (AtmospherePresetID)(atmo_preset - 1);
+        atmosphere_apply_preset(id);
+        const AtmospherePreset *p = atmosphere_get_preset(id);
+        scene->bg_color = p->bg_color;
+
+        // Sync menu toggles to reflect preset state
+        start_menu.tabs[TAB_ENVIRON].items[ITEM_FOG_TOGGLE].selected = 1;
+        start_menu.tabs[TAB_ENVIRON].items[ITEM_SKY_TOGGLE].selected = 1;
+        fog_toggle = 1;
+        sky_toggle = 1;
+    } else if (atmo_preset == 0 &&
+               (atmo_preset != last_atmo_preset || fog_toggle != last_fog_toggle ||
+                fog_near_idx != last_fog_near || fog_far_idx != last_fog_far ||
+                fog_color_idx != last_fog_color || sky_toggle != last_sky_toggle)) {
+        // Custom mode: apply individual settings
+        atmosphere_set_fog_enabled(fog_toggle == 1);
+        atmosphere_set_fog_near(fog_near_values[fog_near_idx]);
+        atmosphere_set_fog_far(fog_far_values[fog_far_idx]);
+        atmosphere_set_fog_color(fog_color_presets[fog_color_idx]);
+        atmosphere_set_sky_enabled(sky_toggle == 1);
+    }
+
+    last_atmo_preset = atmo_preset;
+    last_fog_toggle = fog_toggle;
+    last_fog_near = fog_near_idx;
+    last_fog_far = fog_far_idx;
+    last_fog_color = fog_color_idx;
+    last_sky_toggle = sky_toggle;
+
+    // Background color: atmosphere preset overrides Settings tab
+    if (atmo_preset > 0) {
+        // Preset already set bg_color above
+    } else if (atmosphere_get_fog_enabled()) {
+        // Custom fog: match bg to fog color for seamless blending
+        scene->bg_color = fog_color_presets[fog_color_idx];
+    } else {
+        scene->bg_color = bg_colors[menu_get_value(&start_menu, TAB_SETTINGS, ITEM_BG_COLOR)];
+    }
 
     // Update particles
     particle_update(dt);
@@ -889,6 +974,9 @@ static void demo_update(Scene *scene, float dt) {
 
 static void demo_draw(Scene *scene) {
     texture_stats_reset();
+
+    // Draw sky gradient bands (behind all geometry)
+    sky_draw();
 
     // Draw the checkered floor
     floor_draw(&scene->camera, &scene->lighting);
@@ -1040,7 +1128,7 @@ static Scene demo_scene = {
     .object_count = 0,
     .texture_count = 0,
     .world_offset = {0, 0, 0},
-    .bg_color = {0x10, 0x10, 0x30, 0xFF},
+    .bg_color = {0x60, 0x80, 0xD0, 0xFF},
     .on_init = demo_init,
     .on_update = demo_update,
     .on_draw = demo_draw,

@@ -1,5 +1,6 @@
 #include "mesh.h"
 #include "texture.h"
+#include "atmosphere.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -173,7 +174,14 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
 
     int total_tris = 0;
 
-    // 5. Set RDP mode ONCE before all groups.
+    // 5. Query fog state once per draw call
+    const FogConfig *fog = atmosphere_get_fog();
+    bool use_fog = fog->enabled;
+    if (use_fog) {
+        rdpq_set_fog_color(fog->color);
+    }
+
+    // 6. Set RDP mode ONCE before all groups.
     //    Only change texture/color per group — avoid repeated mode resets.
     //    If a mesh mixes material types, mode is reset only at the boundary.
     int last_mat_type = -1;
@@ -189,19 +197,31 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
             rdpq_set_mode_standard();
             rdpq_mode_zbuf(true, true);
 
-            switch (mat->type) {
-            case MATERIAL_TEXTURED:
-                rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
-                rdpq_mode_persp(true);
-                rdpq_mode_filter(FILTER_BILINEAR);
-                break;
-
-            case MATERIAL_FLAT_COLOR:
-                rdpq_mode_combiner(RDPQ_COMBINER_FLAT);
-                break;
+            if (use_fog) {
+                switch (mat->type) {
+                case MATERIAL_TEXTURED:
+                    rdpq_mode_combiner(RDPQ_COMBINER_TEX_SHADE);
+                    rdpq_mode_persp(true);
+                    rdpq_mode_filter(FILTER_BILINEAR);
+                    break;
+                case MATERIAL_FLAT_COLOR:
+                    rdpq_mode_combiner(RDPQ_COMBINER_SHADE);
+                    break;
+                }
+                rdpq_mode_fog(RDPQ_FOG_STANDARD);
+            } else {
+                switch (mat->type) {
+                case MATERIAL_TEXTURED:
+                    rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
+                    rdpq_mode_persp(true);
+                    rdpq_mode_filter(FILTER_BILINEAR);
+                    break;
+                case MATERIAL_FLAT_COLOR:
+                    rdpq_mode_combiner(RDPQ_COMBINER_FLAT);
+                    break;
+                }
             }
 
-            // Alpha cutout: discard pixels with alpha=0 (for sprites with transparency)
             if (mat->alpha_cutout) {
                 rdpq_mode_alphacompare(1);
             }
@@ -253,7 +273,23 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
         uint8_t r = (uint8_t)((mat->base_color[0] * lit_color.r) / 255);
         uint8_t g_col = (uint8_t)((mat->base_color[1] * lit_color.g) / 255);
         uint8_t b = (uint8_t)((mat->base_color[2] * lit_color.b) / 255);
-        rdpq_set_prim_color(RGBA32(r, g_col, b, 255));
+        // When fog on: shade RGB carries lit color, shade A carries fog factor
+        // When fog off: prim_color carries lit color (current path)
+        float shade_r = r / 255.0f;
+        float shade_g = g_col / 255.0f;
+        float shade_b = b / 255.0f;
+        if (!use_fog) {
+            rdpq_set_prim_color(RGBA32(r, g_col, b, 255));
+        }
+
+        // Select triangle format for this group
+        const rdpq_trifmt_t *trifmt;
+        if (use_fog) {
+            trifmt = (mat->type == MATERIAL_TEXTURED)
+                ? &TRIFMT_ZBUF_SHADE_TEX : &TRIFMT_ZBUF_SHADE;
+        } else {
+            trifmt = &TRIFMT_ZBUF_TEX;
+        }
 
         // Draw all triangles in this group
         for (int i = group->index_start;
@@ -263,9 +299,8 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
             const MeshVertex *v1 = &mesh->vertices[mesh->indices[i + 1]];
             const MeshVertex *v2 = &mesh->vertices[mesh->indices[i + 2]];
 
-            // Transform and project 3 vertices
             const MeshVertex *tri_verts[3] = {v0, v1, v2};
-            float screen[3][6];  // {X, Y, Z, S, T, INV_W}
+            float screen[3][10];  // Max: {X,Y,Z,R,G,B,A,S,T,INV_W}
             bool reject = false;
 
             for (int v = 0; v < 3; v++) {
@@ -275,8 +310,7 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
                 vec4_t clip;
                 mat4_mul_vec3(&clip, &mvp, &pos);
 
-                // Near-plane rejection: vertices behind or very close to
-                // camera produce garbage Z from the perspective divide.
+                // Near-plane rejection
                 if (clip.w < 1.0f) { reject = true; break; }
 
                 float inv_w = 1.0f / clip.w;
@@ -287,26 +321,38 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
                 screen[v][0] = (ndc_x * 0.5f + 0.5f) * 320.0f;
                 screen[v][1] = (1.0f - (ndc_y * 0.5f + 0.5f)) * 240.0f;
 
-                // Guard band: reject vertices that overflow RDP fixed-point
+                // Guard band check
                 if (screen[v][0] < GUARD_X_MIN || screen[v][0] > GUARD_X_MAX ||
                     screen[v][1] < GUARD_Y_MIN || screen[v][1] > GUARD_Y_MAX) {
                     reject = true; break;
                 }
 
-                // Depth with clamp to valid [0, 1] range
                 float depth = ndc_z * 0.5f + 0.5f;
                 if (depth < 0.0f) depth = 0.0f;
                 if (depth > 1.0f) depth = 1.0f;
                 screen[v][2] = depth;
 
-                screen[v][3] = tri_verts[v]->uv[0];
-                screen[v][4] = tri_verts[v]->uv[1];
-                screen[v][5] = inv_w;
+                if (use_fog) {
+                    float fog_t = fog_calculate_factor(clip.w);
+                    screen[v][3] = shade_r;
+                    screen[v][4] = shade_g;
+                    screen[v][5] = shade_b;
+                    screen[v][6] = 1.0f - fog_t;  // 1.0=visible, 0.0=full fog
+                    if (mat->type == MATERIAL_TEXTURED) {
+                        screen[v][7] = tri_verts[v]->uv[0];
+                        screen[v][8] = tri_verts[v]->uv[1];
+                        screen[v][9] = inv_w;
+                    }
+                } else {
+                    screen[v][3] = tri_verts[v]->uv[0];
+                    screen[v][4] = tri_verts[v]->uv[1];
+                    screen[v][5] = inv_w;
+                }
             }
 
             if (reject) continue;
 
-            rdpq_triangle(&TRIFMT_ZBUF_TEX, screen[0], screen[1], screen[2]);
+            rdpq_triangle(trifmt, screen[0], screen[1], screen[2]);
             total_tris++;
         }
     }

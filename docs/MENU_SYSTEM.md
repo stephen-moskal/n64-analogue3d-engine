@@ -1,6 +1,6 @@
 # Menu System
 
-A lightweight, reusable menu system for in-game settings, pause menus, and option screens. Designed to be data-driven: define items and options, the system handles navigation, rendering, and cancel/revert.
+A lightweight, reusable tabbed menu system for in-game settings, pause menus, and option screens. Designed to be data-driven: define tabs, items, and options. The system handles navigation, rendering, scrolling, and cancel/revert.
 
 ## Quick Start
 
@@ -11,23 +11,25 @@ A lightweight, reusable menu system for in-game settings, pause menus, and optio
 static const char *difficulty[] = {"Easy", "Normal", "Hard"};
 static const char *sound[] = {"On", "Off"};
 
-// Create menu
+// Create menu with tabs
 static Menu my_menu;
 menu_init(&my_menu, "Options");
-menu_add_item(&my_menu, "Difficulty", difficulty, 3, 1);  // default: Normal
-menu_add_item(&my_menu, "Sound", sound, 2, 0);            // default: On
+
+int tab_game = menu_add_tab(&my_menu, "Game");
+menu_add_item(&my_menu, tab_game, "Difficulty", difficulty, 3, 1);  // default: Normal
+menu_add_item(&my_menu, tab_game, "Sound", sound, 2, 0);            // default: On
 
 // In game loop:
 if (start_pressed) menu_open(&my_menu);
 
 if (my_menu.is_open) {
-    menu_update(&my_menu);    // Handles all input
-    menu_draw(&my_menu);      // Renders overlay
+    menu_update(&my_menu);    // Handles all input (D-pad, L/R tabs)
+    menu_draw(&my_menu);      // Renders overlay with scrolling
 }
 
-// Read current values:
-int diff = menu_get_value(&my_menu, 0);   // 0=Easy, 1=Normal, 2=Hard
-int snd  = menu_get_value(&my_menu, 1);   // 0=On, 1=Off
+// Read current values (tab index, item index):
+int diff = menu_get_value(&my_menu, 0, 0);   // tab 0, item 0
+int snd  = menu_get_value(&my_menu, 0, 1);   // tab 0, item 1
 ```
 
 ## API Reference
@@ -36,11 +38,17 @@ int snd  = menu_get_value(&my_menu, 1);   // 0=On, 1=Off
 
 Initialize a menu with a title. Zeroes all state.
 
-### `menu_add_item(Menu *menu, const char *label, const char **options, int count, int default_idx)`
+### `menu_add_tab(Menu *menu, const char *label)`
 
-Add an item with a label and an array of option strings. Returns the item index (0-based) or -1 if full. The `default_idx` sets the initial selected option.
+Add a tab with a header label. Returns the tab index (0-based) or -1 if full.
 
-**Limits:** `MENU_MAX_ITEMS` (8) items, `MENU_MAX_OPTIONS` (8) options per item.
+**Limits:** `MENU_MAX_TABS` (6) tabs.
+
+### `menu_add_item(Menu *menu, int tab, const char *label, const char **options, int count, int default_idx)`
+
+Add an item to a specific tab. Returns the item index (0-based within tab) or -1 if full. The `default_idx` sets the initial selected option.
+
+**Limits:** `MENU_MAX_ITEMS` (12) items per tab, `MENU_MAX_OPTIONS` (12) options per item. Tabs with more than `MENU_VISIBLE_ITEMS` (7) items automatically scroll.
 
 ### `menu_open(Menu *menu)`
 
@@ -58,27 +66,35 @@ Reads controller input and handles navigation. Call once per frame when menu is 
 
 Renders the menu overlay. Call after all 3D geometry and other UI elements.
 
-### `menu_get_value(const Menu *menu, int item_index)`
+### `menu_get_value(const Menu *menu, int tab, int item_index)`
 
-Returns the currently selected option index for the given item. Safe to call whether the menu is open or closed.
+Returns the currently selected option index for the given tab and item. Safe to call whether the menu is open or closed.
 
 ## Data Structures
 
 ```c
 typedef struct {
     const char *label;                       // Left column text
-    const char *options[MENU_MAX_OPTIONS];    // Cycle-able choices
+    const char *options[MENU_MAX_OPTIONS];   // Cycle-able choices
     int option_count;
     int selected;                            // Current option index
 } MenuItem;
 
 typedef struct {
-    const char *title;
+    const char *label;                       // Tab header text
     MenuItem items[MENU_MAX_ITEMS];
     int item_count;
-    int cursor;                              // Highlighted row
+    int cursor;                              // Highlighted row within tab
+    int scroll_offset;                       // First visible item index
+} MenuTab;
+
+typedef struct {
+    const char *title;
+    MenuTab tabs[MENU_MAX_TABS];
+    int tab_count;
+    int active_tab;                          // Currently visible tab
     bool is_open;
-    int snapshot[MENU_MAX_ITEMS];            // For cancel/revert
+    int snapshot[MENU_MAX_TABS][MENU_MAX_ITEMS]; // For cancel/revert (all tabs)
     int analog_cooldown;                     // Analog stick repeat timer
 } Menu;
 ```
@@ -88,23 +104,26 @@ typedef struct {
 | Input | Action |
 |-------|--------|
 | Start | Toggle menu open/close (handled in game code, not menu_update) |
-| D-pad Up/Down | Move cursor between items (wraps) |
+| D-pad Up/Down | Move cursor between items (wraps), auto-scrolls when >7 items |
 | D-pad Left/Right | Cycle selected option for current item (wraps) |
 | Analog Stick Left/Right | Same as D-pad left/right (with repeat cooldown) |
-| A Button | Confirm — close menu, keep all changes |
-| B Button | Cancel — close menu, revert to values from when menu was opened |
+| L/R Shoulder | Switch between tabs |
+| A Button | Confirm — close menu, keep all changes (all tabs) |
+| B Button | Cancel — close menu, revert to values from when menu was opened (all tabs) |
 
 ## Visual Layout
 
 ```
 ┌──────────────────────────────┐
 │          Start Menu          │  Title (white, centered)
+│  [Settings]  Sound  Lighting │  Tab headers (active=yellow)
 │──────────────────────────────│  Separator line
-│                              │
+│            ...               │  Scroll-up indicator (if needed)
 │  BG Color      < Dark Blue > │  Cursor row (yellow)
 │  Debug Text    <     On    > │  Other rows (gray)
-│                              │
-│       A:OK     B:Cancel      │  Footer hint (dim gray)
+│  Camera       < Orbital >   │
+│            ...               │  Scroll-down indicator (if needed)
+│  L/R:Tab  A:OK  B:Cancel    │  Footer hint (dim gray)
 └──────────────────────────────┘
 ```
 

@@ -1,5 +1,6 @@
 #include "particle.h"
 #include "texture.h"
+#include "atmosphere.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -297,6 +298,8 @@ void particle_draw(const Camera *cam) {
     }
     if (alive == 0) return;
 
+    bool use_fog = atmosphere_get_fog_enabled();
+
     // Compute camera basis vectors (billboard-facing, same as billboard.c spherical)
     vec3_t world_up = {0.0f, 1.0f, 0.0f};
     vec3_t neg_view = vec3_negate(&cam->view_dir);
@@ -344,16 +347,30 @@ void particle_draw(const Camera *cam) {
         if (!camera_sphere_visible(cam, &p->position, p->scale * 2.0f))
             continue;
 
+        // Apply fog dimming: distant particles fade to black (correct for additive blend)
+        uint8_t pr = p->color[0], pg = p->color[1];
+        uint8_t pb = p->color[2], pa = p->color[3];
+        if (use_fog) {
+            vec4_t center_clip;
+            mat4_mul_vec3(&center_clip, &cam->vp, &p->position);
+            float fog_t = fog_calculate_factor(center_clip.w);
+            float dim = 1.0f - fog_t;
+            pr = (uint8_t)(pr * dim);
+            pg = (uint8_t)(pg * dim);
+            pb = (uint8_t)(pb * dim);
+            pa = (uint8_t)(pa * dim);
+            if (pa == 0 && pr == 0) continue;
+        }
+
         // Only change prim color when it differs
         if (!color_set ||
-            p->color[0] != last_r || p->color[1] != last_g ||
-            p->color[2] != last_b || p->color[3] != last_a) {
-            rdpq_set_prim_color(RGBA32(p->color[0], p->color[1],
-                                       p->color[2], p->color[3]));
-            last_r = p->color[0];
-            last_g = p->color[1];
-            last_b = p->color[2];
-            last_a = p->color[3];
+            pr != last_r || pg != last_g ||
+            pb != last_b || pa != last_a) {
+            rdpq_set_prim_color(RGBA32(pr, pg, pb, pa));
+            last_r = pr;
+            last_g = pg;
+            last_b = pb;
+            last_a = pa;
             color_set = true;
         }
 

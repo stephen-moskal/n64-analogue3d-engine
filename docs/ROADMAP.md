@@ -8,7 +8,7 @@ Long-term vision: an action RPG engine supporting both souls-like combat and Fin
 
 ## Current State
 
-**20 stable source modules**, all verified on Ares emulator and Analogue 3D hardware (via SummerCart64). All 5 short-term features complete. V2 Feature 6 (Particles) complete.
+**21 stable source modules**, all verified on Ares emulator and Analogue 3D hardware (via SummerCart64). All 5 short-term features complete. V2 Features 6-7 (Particles, Fog & Atmosphere) complete.
 
 | System | Status | Notes |
 |--------|--------|-------|
@@ -26,7 +26,8 @@ Long-term vision: an action RPG engine supporting both souls-like combat and Fin
 | Audio System | Working | BGM streaming, SFX playback, 16-channel mixer |
 | Sound Bank | Working | 9 sound events, DFS path mapping |
 | Input | Working | Analog stick, D-pad, C-buttons, shoulder buttons, Start, Z-trigger |
-| Menu System | Mature | Tabbed menu (Settings, Sound, Lighting), snapshot/revert |
+| Fog & Atmosphere | Mature | Hardware fog, CPU fog (floor/particles), sky gradient, 7 presets |
+| Menu System | Mature | Tabbed menu (Settings, Sound, Lighting, Environ), scrollable, snapshot/revert |
 | Text Rendering | Working | 2 fonts, configurable alignment/color, left/right-aligned HUD |
 | Variable Timestep | Working | Logic runs once per frame at display rate (30 or 60 FPS) |
 | Texture Management | Working | 16 dynamic slots, per-frame TMEM upload |
@@ -34,7 +35,7 @@ Long-term vision: an action RPG engine supporting both souls-like combat and Fin
 
 ### What's Missing
 
-No model loading (geometry is hand-coded C), no animation, no dynamic physics, no data-driven asset pipeline.
+No model loading (geometry is hand-coded C), no animation, no dynamic physics, no data-driven asset pipeline, no sprite animation.
 
 ---
 
@@ -139,22 +140,21 @@ Emitter-based particle system with pool-based allocation, data-driven effect def
 
 ---
 
-### Feature 7: Fog & Atmosphere
+### Feature 7: Fog & Atmosphere — COMPLETE
 
-**Problem:** Objects pop in at the far plane boundary. No atmospheric depth cues. Scenes feel flat without distance fade.
+Distance-based fog and configurable sky gradients for atmospheric depth cues and mood setting. Hybrid approach: hardware RDP fog for meshes, CPU-side fog for floor tiles and additive particles. See [ARCHITECTURE.md](ARCHITECTURE.md).
 
-**Solution:** Distance-based fog using libdragon's built-in `rdpq_mode_fog(RDPQ_FOG_STANDARD)` + `rdpq_set_fog_color()`. Configurable fog near/far planes and color. Menu option for fog density.
-
-```
-Integration into mesh_draw() and floor_draw()
-```
-
-**What it unlocks:** Atmospheric depth perception, hides far-plane pop-in, mood setting (dungeon haze, outdoor distance, battle arena smoke).
-
-**N64 constraints:**
-- Fog is RDP hardware-accelerated — essentially free
-- Fog color can match sky/background for seamless blending
-- Near/far fog planes independent of projection near/far
+**Delivered:**
+- `src/render/atmosphere.c/h` — FogConfig, SkyConfig, 7 presets (Clear Day, Overcast, Foggy, Dense Fog, Sunset, Dusk, Night), utility functions
+- Hardware fog in `mesh_draw()`: `RDPQ_FOG_STANDARD` via shade alpha, auto-switches vertex format (`TRIFMT_ZBUF_SHADE`/`TRIFMT_ZBUF_SHADE_TEX`) and combiner (`RDPQ_COMBINER_SHADE`/`RDPQ_COMBINER_TEX_SHADE`)
+- CPU fog in `floor_draw()`: per-tile color blend via `fog_blend_color()` (floor shares vertices between tiles — can't use shade formats)
+- CPU fog in `particle_draw()`: RGBA dimming (multiply by `1 - fog_factor`) — compatible with `RDPQ_BLENDER_ADDITIVE`
+- Smooth sky gradient: 60 interpolated fill rectangle strips (4px each) between gradient stops, replacing hard-edged flat bands
+- Seamless blending: bottom sky band = fog color = bg_color in every preset
+- ENVIRON menu tab: Preset selector (8 options), Fog On/Off, Fog Near/Far, Fog Color, Sky On/Off
+- Menu system upgraded: `MENU_MAX_TABS=6`, `MENU_MAX_ITEMS=12`, `MENU_VISIBLE_ITEMS=7`, scrolling with indicators
+- Zero overhead when fog disabled — identical code paths as before
+- Verified on hardware (Analogue 3D) at 60 FPS
 
 ---
 

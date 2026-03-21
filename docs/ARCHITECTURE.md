@@ -122,7 +122,8 @@ main.c
     │   └── render/mesh [generic mesh rendering]
     │       ├── render/camera
     │       ├── render/lighting
-    │       └── render/texture
+    │       ├── render/texture
+    │       └── render/atmosphere
     ├── render/mesh_defs [shape library: pillar, platform, pyramid]
     │   └── render/mesh
     ├── render/billboard [camera-facing textured quads]
@@ -132,7 +133,9 @@ main.c
     │   ├── render/lighting
     │   └── render/mesh
     ├── render/particle  [particle system, direct RDP renderer]
-    │   └── render/camera
+    │   ├── render/camera
+    │   └── render/atmosphere
+    ├── render/atmosphere [fog config, sky gradient, 7 presets]
     └── scene/scene
 ```
 
@@ -148,6 +151,8 @@ dfs_init(...);              // ROM filesystem
 input_init();               // Joypad
 text_init();                // Load fonts
 menu_init(&menu, title);    // Menu state
+snd_init();                 // Audio mixer
+atmosphere_init();          // Fog/sky global state
 surface_alloc(...);         // Z-buffer (shared across scenes)
 
 // Scene manager init
@@ -374,6 +379,83 @@ int  particle_alive_count(void);                   // Active particle count
 - **TMEM cost**: Zero (flat-colored quads, no textures)
 - **Per-particle frustum culling** via `camera_sphere_visible()`
 - **Color batching**: `rdpq_set_prim_color()` only called when color changes
+- **Fog integration**: CPU-side fog dimming (multiply RGBA by `1 - fog_factor`), since hardware fog conflicts with additive blender
+
+## Fog & Atmosphere System
+
+Distance-based fog and configurable sky gradients for atmospheric depth cues and mood setting. Uses a hybrid approach: hardware RDP fog for mesh geometry, CPU-side fog for floor tiles and particles.
+
+### Architecture
+
+```
+AtmospherePreset (static const, data-driven)
+    ↓ atmosphere_apply_preset()
+FogConfig (global: enabled, color, near, far)
+SkyConfig (global: enabled, band_count, band_colors[5])
+    ↓
+Renderers query atmosphere state per frame:
+  mesh_draw()     → hardware fog (RDPQ_FOG_STANDARD via shade alpha)
+  floor_draw()    → CPU fog (per-tile color blend toward fog color)
+  particle_draw() → CPU fog (RGBA dimming for additive blend compat)
+  sky_draw()      → gradient fill rectangles (interpolated strips)
+```
+
+### Hardware Fog (mesh_draw)
+
+The RDP's built-in fog blender (`RDPQ_FOG_STANDARD`) uses the shade alpha channel as a per-vertex fog mix factor:
+
+```
+output = vertex_color * shade_alpha + fog_color * (1 - shade_alpha)
+```
+
+When fog is enabled, `mesh_draw()` switches vertex formats and combiners:
+
+| Fog | Material | Format | Floats/vert | Combiner |
+|-----|----------|--------|-------------|----------|
+| OFF | Flat | `TRIFMT_ZBUF_TEX` | 6 | `RDPQ_COMBINER_FLAT` |
+| OFF | Textured | `TRIFMT_ZBUF_TEX` | 6 | `RDPQ_COMBINER_TEX_FLAT` |
+| ON | Flat | `TRIFMT_ZBUF_SHADE` | 7 | `RDPQ_COMBINER_SHADE` |
+| ON | Textured | `TRIFMT_ZBUF_SHADE_TEX` | 10 | `RDPQ_COMBINER_TEX_SHADE` |
+
+Per-vertex shade data: `{R, G, B, A}` where RGB = lit color (0.0-1.0 range), A = `1.0 - fog_factor` (1.0 = fully visible, 0.0 = fully fogged). The fog factor is computed from `clip.w` (camera-space depth) using linear interpolation between fog near and far planes.
+
+### CPU Fog (floor + particles)
+
+The floor grid shares vertices between adjacent tiles (prevents sub-pixel gaps). Shade-based formats require per-vertex color, but adjacent tiles need different checker colors — incompatible. Solution: per-tile average depth → `fog_blend_color()` → `rdpq_set_prim_color()`.
+
+Particles use `RDPQ_BLENDER_ADDITIVE`. Combining with `RDPQ_FOG_STANDARD` requires a 2-pass blender (assertion failure). Also, adding fog color via additive blend brightens distant particles (wrong). Solution: multiply RGBA by `1 - fog_factor` — distant particles fade to black (invisible in additive).
+
+### Sky Gradient
+
+`sky_draw()` renders a smooth vertical gradient using 60 horizontal fill rectangle strips (4px each). Band colors from `SkyConfig` are treated as evenly-spaced gradient stops; each strip's color is linearly interpolated between the two nearest stops. This produces smooth transitions instead of hard-edged flat bands.
+
+Critical design rule: **bottom sky band = fog color = bg_color** in every preset. This creates seamless blending from sky → fog → background clear color.
+
+### Presets
+
+7 built-in presets, each configuring fog + sky + background color:
+
+| Preset | Fog Near | Fog Far | Sky Bands | Mood |
+|--------|----------|---------|-----------|------|
+| Clear Day | 400 | 1400 | 4 (deep blue → pale blue) | Bright, open |
+| Overcast | 250 | 1000 | 3 (grey tones) | Muted |
+| Foggy | 100 | 600 | 2 (grey) | Low visibility |
+| Dense Fog | 50 | 350 | 2 (white-grey) | Very close |
+| Sunset | 300 | 1200 | 5 (purple → orange) | Warm dramatic |
+| Dusk | 200 | 900 | 4 (dark purple) | Twilight |
+| Night | 300 | 1000 | 3 (near-black) | Dark |
+
+### Performance
+
+- **Fog OFF**: Zero overhead — identical code paths, formats, and combiners as before
+- **Fog ON (mesh)**: +1 float per vertex (shade alpha), 2-cycle mode (RDP throughput halved, but low tri count)
+- **Fog ON (floor)**: ~100 `rdpq_set_prim_color()` calls vs 2 unfogged (color dedup reduces actual calls)
+- **Fog ON (particles)**: +1 VP multiply per particle for fog factor
+- **Sky**: 60 fill rectangles per frame — negligible RDP cost
+
+### Menu Integration
+
+ENVIRON tab (tab 3) with 6 items: Preset (8 options), Fog On/Off, Fog Near, Fog Far, Fog Color, Sky On/Off. Named presets auto-enable fog+sky and sync menu toggles. Custom mode allows individual control.
 
 ## Collision Detection
 
@@ -399,7 +481,7 @@ See [SCENE_SYSTEM.md](SCENE_SYSTEM.md) for full documentation.
 - Scene manager with transitions (cut, fade-black, fade-white)
 - Up to 32 objects and 16 textures per scene
 - Per-object update/draw callbacks via SceneObject
-- Draw order: on_draw (floor/3D) → per-object on_draw → on_post_draw (HUD/overlays)
+- Draw order: sky_draw → on_draw (floor/3D) → per-object on_draw → on_post_draw (particles → HUD/overlays)
 - Support for both independent and shared-coordinate scenes
 
 ## Camera System
@@ -493,13 +575,14 @@ With Expansion Pak (8MB), an additional 4MB is available. Shared resources (fram
 | `src/render/billboard.c/h` | Billboard system: camera-facing textured quads |
 | `src/render/shadow.c/h` | Shadow casting (blob + projected planar shadows) |
 | `src/render/particle.c/h` | Particle system: pool-based emitters, direct RDP batch renderer |
+| `src/render/atmosphere.c/h` | Fog config, sky gradient renderer, 7 atmosphere presets |
 | `src/math/vec3.h` | Vector math library (header-only) |
 | `src/collision/collision.c/h` | Collision detection, raycasting, overlap queries |
 | `src/scene/scene.c/h` | Scene lifecycle, manager, transitions, per-object callbacks |
 | `src/scenes/demo_scene.c/h` | Demo scene: mesh objects, billboards, selection, HUD |
 | `src/input/input.c/h` | Controller input |
 | `src/ui/text.c/h` | Text rendering |
-| `src/ui/menu.c/h` | Tabbed menu system (3 tabs: Settings, Sound, Lighting) |
+| `src/ui/menu.c/h` | Tabbed menu system (4 tabs: Settings, Sound, Lighting, Environ), scrollable |
 | `src/audio/audio.c/h` | Audio mixer, SFX/BGM playback |
 | `src/audio/sound_bank.c/h` | Sound event definitions and path mapping |
 
