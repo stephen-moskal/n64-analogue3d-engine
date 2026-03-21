@@ -27,6 +27,10 @@
 #define COLOR_TAB_IDLE RGBA32(0x88, 0x88, 0x88, 0xFF)
 #define COLOR_FOOTER   RGBA32(0x88, 0x88, 0x88, 0xFF)
 #define COLOR_SEP      RGBA32(0x66, 0x66, 0x88, 0xFF)
+#define COLOR_DISABLED RGBA32(0x55, 0x55, 0x55, 0xFF)
+
+// Forward declaration
+static int find_next_enabled(const MenuTab *tab, int from, int direction);
 
 void menu_init(Menu *menu, const char *title) {
     memset(menu, 0, sizeof(Menu));
@@ -66,6 +70,10 @@ void menu_open(Menu *menu) {
         }
         menu->tabs[t].cursor = 0;
         menu->tabs[t].scroll_offset = 0;
+        // Ensure cursor starts on an enabled item
+        if (menu->tabs[t].item_count > 0 && menu->tabs[t].items[0].disabled) {
+            menu->tabs[t].cursor = find_next_enabled(&menu->tabs[t], -1, 1);
+        }
     }
     menu->active_tab = 0;
     menu->analog_cooldown = 0;
@@ -84,6 +92,16 @@ void menu_close(Menu *menu, bool apply) {
     menu->is_open = false;
 }
 
+// Find next enabled item in a given direction (1=down, -1=up).
+// Returns current position if all items are disabled.
+static int find_next_enabled(const MenuTab *tab, int from, int direction) {
+    for (int i = 0; i < tab->item_count; i++) {
+        int idx = (from + direction * (i + 1) + tab->item_count * tab->item_count) % tab->item_count;
+        if (!tab->items[idx].disabled) return idx;
+    }
+    return from;
+}
+
 void menu_update(Menu *menu) {
     if (!menu->is_open || menu->tab_count == 0) return;
 
@@ -92,20 +110,29 @@ void menu_update(Menu *menu) {
     // L/R: switch tabs
     if (pressed.l && menu->tab_count > 1) {
         menu->active_tab = (menu->active_tab - 1 + menu->tab_count) % menu->tab_count;
+        // Ensure cursor lands on an enabled item in the new tab
+        MenuTab *new_tab = &menu->tabs[menu->active_tab];
+        if (new_tab->item_count > 0 && new_tab->items[new_tab->cursor].disabled) {
+            new_tab->cursor = find_next_enabled(new_tab, new_tab->cursor, 1);
+        }
     }
     if (pressed.r && menu->tab_count > 1) {
         menu->active_tab = (menu->active_tab + 1) % menu->tab_count;
+        MenuTab *new_tab = &menu->tabs[menu->active_tab];
+        if (new_tab->item_count > 0 && new_tab->items[new_tab->cursor].disabled) {
+            new_tab->cursor = find_next_enabled(new_tab, new_tab->cursor, 1);
+        }
     }
 
     MenuTab *tab = &menu->tabs[menu->active_tab];
     if (tab->item_count == 0) goto check_close;
 
-    // D-pad up/down: move cursor within active tab
+    // D-pad up/down: move cursor, skip disabled items
     if (pressed.d_up) {
-        tab->cursor = (tab->cursor - 1 + tab->item_count) % tab->item_count;
+        tab->cursor = find_next_enabled(tab, tab->cursor, -1);
     }
     if (pressed.d_down) {
-        tab->cursor = (tab->cursor + 1) % tab->item_count;
+        tab->cursor = find_next_enabled(tab, tab->cursor, 1);
     }
 
     // Keep cursor in visible scroll window
@@ -116,27 +143,32 @@ void menu_update(Menu *menu) {
             tab->scroll_offset = tab->cursor - MENU_VISIBLE_ITEMS + 1;
     }
 
-    // D-pad left/right: cycle option
+    // D-pad left/right: cycle option (skip if disabled)
     MenuItem *cur = &tab->items[tab->cursor];
-    if (pressed.d_left) {
-        cur->selected = (cur->selected - 1 + cur->option_count) % cur->option_count;
-    }
-    if (pressed.d_right) {
-        cur->selected = (cur->selected + 1) % cur->option_count;
-    }
-
-    // Analog stick left/right with cooldown
-    if (menu->analog_cooldown > 0) {
-        menu->analog_cooldown--;
-    } else {
-        joypad_inputs_t inputs = joypad_get_inputs(JOYPAD_PORT_1);
-        if (inputs.stick_x < -ANALOG_THRESHOLD) {
+    if (!cur->disabled) {
+        if (pressed.d_left) {
             cur->selected = (cur->selected - 1 + cur->option_count) % cur->option_count;
-            menu->analog_cooldown = ANALOG_COOLDOWN;
-        } else if (inputs.stick_x > ANALOG_THRESHOLD) {
-            cur->selected = (cur->selected + 1) % cur->option_count;
-            menu->analog_cooldown = ANALOG_COOLDOWN;
         }
+        if (pressed.d_right) {
+            cur->selected = (cur->selected + 1) % cur->option_count;
+        }
+
+        // Analog stick left/right with cooldown
+        if (menu->analog_cooldown > 0) {
+            menu->analog_cooldown--;
+        } else {
+            joypad_inputs_t inputs = joypad_get_inputs(JOYPAD_PORT_1);
+            if (inputs.stick_x < -ANALOG_THRESHOLD) {
+                cur->selected = (cur->selected - 1 + cur->option_count) % cur->option_count;
+                menu->analog_cooldown = ANALOG_COOLDOWN;
+            } else if (inputs.stick_x > ANALOG_THRESHOLD) {
+                cur->selected = (cur->selected + 1) % cur->option_count;
+                menu->analog_cooldown = ANALOG_COOLDOWN;
+            }
+        }
+    } else {
+        // Still decrement cooldown even when disabled
+        if (menu->analog_cooldown > 0) menu->analog_cooldown--;
     }
 
 check_close:
@@ -239,8 +271,10 @@ void menu_draw(const Menu *menu) {
     // Menu items for active tab (scrollable window)
     for (int i = start; i < end; i++) {
         float row_y = MENU_ITEMS_Y + (i - start) * MENU_ROW_HEIGHT;
-        bool selected = (i == tab->cursor);
-        color_t color = selected ? COLOR_SELECTED : COLOR_NORMAL;
+        bool is_disabled = tab->items[i].disabled;
+        bool selected = (i == tab->cursor) && !is_disabled;
+        color_t color = is_disabled ? COLOR_DISABLED :
+                        (selected ? COLOR_SELECTED : COLOR_NORMAL);
 
         // Label (left column)
         TextBoxConfig label_cfg = {
@@ -251,7 +285,7 @@ void menu_draw(const Menu *menu) {
         };
         text_draw(&label_cfg, tab->items[i].label);
 
-        // Value with arrows (right column)
+        // Value (right column) — no arrows if disabled
         TextBoxConfig value_cfg = {
             .x       = MENU_VALUE_X,
             .y       = row_y,
@@ -261,7 +295,11 @@ void menu_draw(const Menu *menu) {
             .align   = ALIGN_CENTER,
         };
         const char *opt = tab->items[i].options[tab->items[i].selected];
-        text_draw_fmt(&value_cfg, "< %s >", opt);
+        if (is_disabled) {
+            text_draw(&value_cfg, opt);
+        } else {
+            text_draw_fmt(&value_cfg, "< %s >", opt);
+        }
     }
 
     // Scroll-down indicator
@@ -298,4 +336,10 @@ int menu_get_value(const Menu *menu, int tab, int item_index) {
     if (tab < 0 || tab >= menu->tab_count) return 0;
     if (item_index < 0 || item_index >= menu->tabs[tab].item_count) return 0;
     return menu->tabs[tab].items[item_index].selected;
+}
+
+void menu_item_set_disabled(Menu *menu, int tab, int item, bool disabled) {
+    if (tab < 0 || tab >= menu->tab_count) return;
+    if (item < 0 || item >= menu->tabs[tab].item_count) return;
+    menu->tabs[tab].items[item].disabled = disabled;
 }

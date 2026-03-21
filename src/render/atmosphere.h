@@ -44,10 +44,17 @@ typedef enum {
 } AtmospherePresetID;
 
 typedef struct {
+    float sun_intensity;    // [0.0, 1.0] — directional light brightness
+    float ambient[3];       // RGB ambient light levels
+    float sun_color[3];     // RGB sun color
+} LightingHint;
+
+typedef struct {
     const char *name;
     FogConfig   fog;
     SkyConfig   sky;
-    color_t     bg_color;    // Background clear color
+    color_t     bg_color;       // Background clear color
+    LightingHint lighting;      // Suggested lighting for this atmosphere
 } AtmospherePreset;
 
 // ============================================================

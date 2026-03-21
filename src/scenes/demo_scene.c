@@ -130,8 +130,28 @@ static const ParticleEmitterDef magic_effect = {
     .blend_mode    = PARTICLE_BLEND_ADDITIVE,
 };
 
+static const ParticleEmitterDef torch_flame = {
+    .burst_count   = 0,
+    .spawn_rate    = 20.0f,
+    .lifetime_min  = 0.3f,
+    .lifetime_max  = 0.8f,
+    .velocity_min  = {-15.0f,  30.0f, -15.0f},
+    .velocity_max  = { 15.0f,  80.0f,  15.0f},
+    .gravity       = { 0.0f,  20.0f, 0.0f},
+    .drag          = 0.4f,
+    .color_start   = {255, 180, 60, 200},
+    .color_end     = {200, 60, 10, 0},
+    .scale_start   = 6.0f,
+    .scale_end     = 2.0f,
+    .spawn_shape   = PARTICLE_SPAWN_SPHERE,
+    .spawn_radius  = 8.0f,
+    .blend_mode    = PARTICLE_BLEND_ADDITIVE,
+};
+
 static int emitter_fire = -1;
 static int emitter_magic = -1;
+static int emitter_torch_l = -1;
+static int emitter_torch_r = -1;
 
 // Track current camera mode to detect menu changes
 static int last_camera_mode = 0;
@@ -233,6 +253,9 @@ static const TextBoxConfig pos_text = {
 #define ITEM_SHADOWS       4
 #define ITEM_SHADOW_DK     5
 #define ITEM_PT_LIGHTS     6
+#define ITEM_PT_COLOR      7
+#define ITEM_PT_INTENSITY  8
+#define ITEM_PT_RADIUS     9
 
 // --- Environ tab indices ---
 #define TAB_ENVIRON        3
@@ -278,6 +301,19 @@ static const color_t fog_color_presets[] = {
 static const float fog_near_values[] = {50, 100, 150, 200, 300, 400};
 static const float fog_far_values[]  = {400, 600, 800, 1000, 1200, 1400};
 
+// --- Point light tuning tables ---
+
+static const float ptlight_color_presets[][3] = {
+    {1.0f, 0.7f, 0.3f},   // Warm (torch)
+    {0.5f, 0.7f, 1.0f},   // Cool (blue)
+    {1.0f, 0.3f, 0.2f},   // Red
+    {0.3f, 1.0f, 0.3f},   // Green
+    {0.3f, 0.3f, 1.0f},   // Blue
+    {1.0f, 1.0f, 1.0f},   // White
+};
+static const float ptlight_intensity_values[] = {0.4f, 0.8f, 1.2f, 1.6f, 2.0f};
+static const float ptlight_radius_values[]    = {100.0f, 150.0f, 200.0f, 300.0f, 400.0f};
+
 // Track last lighting menu values to detect changes
 static int last_sun_dir = 0;
 static int last_sun_color = 0;
@@ -286,6 +322,9 @@ static int last_ambient = 1;
 static int last_shadows = 0;
 static int last_shadow_dark = 1;
 static int last_pt_lights = 0;
+static int last_pt_color = 0;
+static int last_pt_intensity = 2;
+static int last_pt_radius = 2;
 
 // Track atmosphere menu values
 static int last_atmo_preset = 0;
@@ -570,6 +609,9 @@ static void demo_init(Scene *scene) {
     last_shadows = 0;
     last_shadow_dark = 1;
     last_pt_lights = 0;
+    last_pt_color = 0;
+    last_pt_intensity = 2;
+    last_pt_radius = 2;
     last_atmo_preset = 0;
     last_fog_toggle = 0;
     last_fog_near = 3;
@@ -585,9 +627,17 @@ static void demo_init(Scene *scene) {
     // Particle emitters (on top of pillars)
     particle_init();
     emitter_fire = particle_emitter_create(&fire_effect,
-        (vec3_t){-250.0f, 100.0f, 0.0f}, 48);
+        (vec3_t){-250.0f, 100.0f, 0.0f}, 40);
     emitter_magic = particle_emitter_create(&magic_effect,
-        (vec3_t){250.0f, 100.0f, 0.0f}, 48);
+        (vec3_t){250.0f, 100.0f, 0.0f}, 40);
+    emitter_torch_l = -1;
+    emitter_torch_r = -1;
+
+    // Set initial disabled states for menu items
+    // Point light sub-options disabled by default (Pt Lights = Off)
+    menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_COLOR, true);
+    menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_INTENSITY, true);
+    menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_RADIUS, true);
 
     // Start background music
     snd_play_bgm(BGM_DEMO);
@@ -850,11 +900,15 @@ static void demo_update(Scene *scene, float dt) {
     int shadow_idx     = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_SHADOWS);
     int shadow_dk_idx  = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_SHADOW_DK);
     int pt_lights_idx  = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_LIGHTS);
+    int pt_color_idx   = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_COLOR);
+    int pt_int_idx     = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_INTENSITY);
+    int pt_rad_idx     = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_RADIUS);
 
     if (sun_dir_idx != last_sun_dir || sun_color_idx != last_sun_color ||
         brightness_idx != last_brightness || ambient_idx != last_ambient ||
         shadow_idx != last_shadows || shadow_dk_idx != last_shadow_dark ||
-        pt_lights_idx != last_pt_lights) {
+        pt_lights_idx != last_pt_lights || pt_color_idx != last_pt_color ||
+        pt_int_idx != last_pt_intensity || pt_rad_idx != last_pt_radius) {
 
         LightConfig *lc = &scene->lighting;
 
@@ -882,26 +936,55 @@ static void demo_update(Scene *scene, float dt) {
         lc->shadow.floor_y = FLOOR_Y;
         lc->shadow.blob_radius = 80.0f;
 
-        // Point lights
+        // Point lights with tuning
+        float pt_r = ptlight_color_presets[pt_color_idx][0];
+        float pt_g = ptlight_color_presets[pt_color_idx][1];
+        float pt_b = ptlight_color_presets[pt_color_idx][2];
+        float pt_intensity = ptlight_intensity_values[pt_int_idx];
+        float pt_radius = ptlight_radius_values[pt_rad_idx];
+
         if (pt_lights_idx == 1) {
             lc->point_light_count = 2;
             lc->point_lights[0] = (PointLight){
                 .position  = {-250.0f, 50.0f, 30.0f},
-                .color     = {1.0f, 0.7f, 0.3f},
-                .intensity = 1.2f,
-                .radius    = 200.0f,
+                .color     = {pt_r, pt_g, pt_b},
+                .intensity = pt_intensity,
+                .radius    = pt_radius,
                 .active    = true,
             };
             lc->point_lights[1] = (PointLight){
                 .position  = {250.0f, 50.0f, 30.0f},
-                .color     = {1.0f, 0.7f, 0.3f},
-                .intensity = 1.2f,
-                .radius    = 200.0f,
+                .color     = {pt_r, pt_g, pt_b},
+                .intensity = pt_intensity,
+                .radius    = pt_radius,
                 .active    = true,
             };
         } else {
             lc->point_light_count = 0;
         }
+
+        // Torch emitter lifecycle
+        if (pt_lights_idx == 1 && last_pt_lights != 1) {
+            // Turning on — create torch particle emitters
+            emitter_torch_l = particle_emitter_create(&torch_flame,
+                (vec3_t){-250.0f, 100.0f, 0.0f}, 16);
+            emitter_torch_r = particle_emitter_create(&torch_flame,
+                (vec3_t){250.0f, 100.0f, 0.0f}, 16);
+            if (emitter_torch_l >= 0) particle_emitter_set_active(emitter_torch_l, true);
+            if (emitter_torch_r >= 0) particle_emitter_set_active(emitter_torch_r, true);
+        } else if (pt_lights_idx != 1 && last_pt_lights == 1) {
+            // Turning off — destroy torch emitters
+            if (emitter_torch_l >= 0) particle_emitter_destroy(emitter_torch_l);
+            if (emitter_torch_r >= 0) particle_emitter_destroy(emitter_torch_r);
+            emitter_torch_l = -1;
+            emitter_torch_r = -1;
+        }
+
+        // Update disabled state for point light sub-options
+        bool pt_on = (pt_lights_idx == 1);
+        menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_COLOR, !pt_on);
+        menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_INTENSITY, !pt_on);
+        menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_RADIUS, !pt_on);
 
         last_sun_dir = sun_dir_idx;
         last_sun_color = sun_color_idx;
@@ -910,6 +993,9 @@ static void demo_update(Scene *scene, float dt) {
         last_shadows = shadow_idx;
         last_shadow_dark = shadow_dk_idx;
         last_pt_lights = pt_lights_idx;
+        last_pt_color = pt_color_idx;
+        last_pt_intensity = pt_int_idx;
+        last_pt_radius = pt_rad_idx;
     }
 
     scene->camera.dirty = true;
@@ -924,11 +1010,21 @@ static void demo_update(Scene *scene, float dt) {
     int sky_toggle   = menu_get_value(&start_menu, TAB_ENVIRON, ITEM_SKY_TOGGLE);
 
     if (atmo_preset != last_atmo_preset && atmo_preset > 0) {
-        // Named preset selected: apply all atmosphere settings
+        // Named preset selected: apply all atmosphere + lighting settings
         AtmospherePresetID id = (AtmospherePresetID)(atmo_preset - 1);
         atmosphere_apply_preset(id);
         const AtmospherePreset *p = atmosphere_get_preset(id);
         scene->bg_color = p->bg_color;
+
+        // Apply preset lighting hints to scene
+        LightConfig *lc = &scene->lighting;
+        lc->sun_intensity = p->lighting.sun_intensity;
+        lc->ambient[0] = p->lighting.ambient[0];
+        lc->ambient[1] = p->lighting.ambient[1];
+        lc->ambient[2] = p->lighting.ambient[2];
+        lc->sun_color[0] = p->lighting.sun_color[0];
+        lc->sun_color[1] = p->lighting.sun_color[1];
+        lc->sun_color[2] = p->lighting.sun_color[2];
 
         // Sync menu toggles to reflect preset state
         start_menu.tabs[TAB_ENVIRON].items[ITEM_FOG_TOGGLE].selected = 1;
@@ -946,6 +1042,14 @@ static void demo_update(Scene *scene, float dt) {
         atmosphere_set_fog_color(fog_color_presets[fog_color_idx]);
         atmosphere_set_sky_enabled(sky_toggle == 1);
     }
+
+    // Update disabled state for Environ sub-options
+    bool is_custom = (atmo_preset == 0);
+    menu_item_set_disabled(&start_menu, TAB_ENVIRON, ITEM_FOG_TOGGLE, !is_custom);
+    menu_item_set_disabled(&start_menu, TAB_ENVIRON, ITEM_FOG_NEAR, !is_custom);
+    menu_item_set_disabled(&start_menu, TAB_ENVIRON, ITEM_FOG_FAR, !is_custom);
+    menu_item_set_disabled(&start_menu, TAB_ENVIRON, ITEM_FOG_COLOR, !is_custom);
+    menu_item_set_disabled(&start_menu, TAB_ENVIRON, ITEM_SKY_TOGGLE, !is_custom);
 
     last_atmo_preset = atmo_preset;
     last_fog_toggle = fog_toggle;
@@ -1104,6 +1208,8 @@ static void demo_cleanup(Scene *scene) {
     particle_cleanup();
     emitter_fire = -1;
     emitter_magic = -1;
+    emitter_torch_l = -1;
+    emitter_torch_r = -1;
     billboard_cleanup();
     texture_free_slot(TEX_BILLBOARD_MARKER);
     texture_free_slot(TEX_BILLBOARD_TREE);

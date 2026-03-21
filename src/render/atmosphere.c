@@ -47,6 +47,11 @@ static const AtmospherePreset presets[ATMOSPHERE_PRESET_COUNT] = {
             },
         },
         .bg_color = {0xC0, 0xD8, 0xE8, 0xFF},
+        .lighting = {
+            .sun_intensity = 1.0f,
+            .ambient = {0.20f, 0.20f, 0.25f},
+            .sun_color = {0.85f, 0.80f, 0.70f},
+        },
     },
     [ATMOSPHERE_OVERCAST] = {
         .name = "Overcast",
@@ -66,6 +71,11 @@ static const AtmospherePreset presets[ATMOSPHERE_PRESET_COUNT] = {
             },
         },
         .bg_color = {0x88, 0x88, 0x90, 0xFF},
+        .lighting = {
+            .sun_intensity = 0.6f,
+            .ambient = {0.25f, 0.25f, 0.28f},
+            .sun_color = {0.70f, 0.70f, 0.75f},
+        },
     },
     [ATMOSPHERE_FOGGY] = {
         .name = "Foggy",
@@ -84,6 +94,11 @@ static const AtmospherePreset presets[ATMOSPHERE_PRESET_COUNT] = {
             },
         },
         .bg_color = {0xA0, 0xA0, 0xA8, 0xFF},
+        .lighting = {
+            .sun_intensity = 0.4f,
+            .ambient = {0.30f, 0.30f, 0.32f},
+            .sun_color = {0.65f, 0.65f, 0.70f},
+        },
     },
     [ATMOSPHERE_DENSE_FOG] = {
         .name = "Dense Fog",
@@ -102,6 +117,11 @@ static const AtmospherePreset presets[ATMOSPHERE_PRESET_COUNT] = {
             },
         },
         .bg_color = {0xB0, 0xB0, 0xB0, 0xFF},
+        .lighting = {
+            .sun_intensity = 0.2f,
+            .ambient = {0.35f, 0.35f, 0.35f},
+            .sun_color = {0.60f, 0.60f, 0.65f},
+        },
     },
     [ATMOSPHERE_SUNSET] = {
         .name = "Sunset",
@@ -123,6 +143,11 @@ static const AtmospherePreset presets[ATMOSPHERE_PRESET_COUNT] = {
             },
         },
         .bg_color = {0xD0, 0x80, 0x40, 0xFF},
+        .lighting = {
+            .sun_intensity = 0.7f,
+            .ambient = {0.15f, 0.10f, 0.10f},
+            .sun_color = {1.00f, 0.55f, 0.25f},
+        },
     },
     [ATMOSPHERE_DUSK] = {
         .name = "Dusk",
@@ -143,6 +168,11 @@ static const AtmospherePreset presets[ATMOSPHERE_PRESET_COUNT] = {
             },
         },
         .bg_color = {0x40, 0x30, 0x60, 0xFF},
+        .lighting = {
+            .sun_intensity = 0.3f,
+            .ambient = {0.08f, 0.06f, 0.12f},
+            .sun_color = {0.50f, 0.30f, 0.50f},
+        },
     },
     [ATMOSPHERE_NIGHT] = {
         .name = "Night",
@@ -162,6 +192,11 @@ static const AtmospherePreset presets[ATMOSPHERE_PRESET_COUNT] = {
             },
         },
         .bg_color = {0x08, 0x08, 0x18, 0xFF},
+        .lighting = {
+            .sun_intensity = 0.05f,
+            .ambient = {0.03f, 0.03f, 0.06f},
+            .sun_color = {0.20f, 0.20f, 0.40f},
+        },
     },
 };
 

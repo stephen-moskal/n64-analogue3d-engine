@@ -14,6 +14,7 @@ typedef struct {
     const char *options[MENU_MAX_OPTIONS];    // Right column choices
     int option_count;
     int selected;                            // Current option index
+    bool disabled;                           // Greyed out, cursor skips over
 } MenuItem;
 
 typedef struct {
@@ -43,5 +44,6 @@ void menu_close(Menu *menu, bool apply);
 void menu_update(Menu *menu);
 void menu_draw(const Menu *menu);
 int  menu_get_value(const Menu *menu, int tab, int item_index);
+void menu_item_set_disabled(Menu *menu, int tab, int item, bool disabled);
 
 #endif
