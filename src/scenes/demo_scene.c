@@ -14,6 +14,7 @@
 #include "../render/atmosphere.h"
 #include "../audio/audio.h"
 #include "../audio/sound_bank.h"
+#include "../physics/physics.h"
 
 // ============================================================
 // Object Data — stored in SceneObject.data for mesh objects
@@ -153,6 +154,19 @@ static int emitter_fire = -1;
 static int emitter_magic = -1;
 static int emitter_torch_l = -1;
 static int emitter_torch_r = -1;
+
+// --- Physics ball state ---
+static PhysicsWorld physics_world;
+static int ball_body_handle = -1;
+static int ball_object_index = -1;
+static bool ball_spawned = false;
+static int platform_aabb_collider = -1;
+
+// Ball spawn position (above platform)
+#define BALL_SPAWN_X       0.0f
+#define BALL_SPAWN_Y      50.0f
+#define BALL_SPAWN_Z    -300.0f
+#define BALL_RELAUNCH_VY  400.0f
 
 // Track current camera mode to detect menu changes
 static int last_camera_mode = 0;
@@ -575,6 +589,14 @@ static void demo_init(Scene *scene) {
         COLLISION_LAYER_DEFAULT | COLLISION_LAYER_ENV, NULL);
     collision_set_static(&scene->collision, ground_collider, true);
 
+    // Platform AABB for physics raycasts (flat top surface at Y=-85)
+    // Platform pos=(0,-92.5,-300), scale=(80,30,60), mesh half-sizes=(2,0.25,1)
+    // World extents: X=±160, Y=±7.5, Z=±60 from center
+    platform_aabb_collider = collision_add_aabb(&scene->collision,
+        (vec3_t){-160, -100, -360}, (vec3_t){160, -85, -240},
+        COLLISION_LAYER_ENV, COLLISION_LAYER_ENV, NULL);
+    collision_set_static(&scene->collision, platform_aabb_collider, true);
+
     // --- Selectable count: only mesh objects above are selectable ---
     selectable_object_count = scene->object_count;
 
@@ -619,6 +641,12 @@ static void demo_init(Scene *scene) {
     interaction_mode = MODE_NORMAL;
     transform_mode = TRANSFORM_MOVE;
     selected_object = -1;
+
+    // Initialize physics world (uses scene collision for raycasts)
+    physics_world_init(&physics_world, &scene->collision);
+    ball_body_handle = -1;
+    ball_object_index = -1;
+    ball_spawned = false;
 
     // Particle emitters (on top of pillars)
     particle_init();
@@ -728,8 +756,29 @@ static void demo_update(Scene *scene, float dt) {
     // --- Interaction mode handling ---
 
     if (!start_menu.is_open) {
-        // Cancel button: burst particles (only in normal mode)
+        // Cancel button: spawn/re-launch physics ball (normal mode)
         if (interaction_mode == MODE_NORMAL && action_pressed(ACTION_CANCEL)) {
+            if (!ball_spawned) {
+                // First press: spawn ball above platform
+                vec3_t spawn_pos = {BALL_SPAWN_X, BALL_SPAWN_Y, BALL_SPAWN_Z};
+                ball_body_handle = physics_body_add(&physics_world,
+                    &PHYSICS_DEF_BALL, spawn_pos);
+                if (ball_body_handle >= 0) {
+                    ball_object_index = spawn_object(scene, "Ball",
+                        mesh_defs_get_sphere(), spawn_pos,
+                        (vec3_t){20, 20, 20}, false, 0, 0);
+                    ball_spawned = true;
+                }
+            } else {
+                // Subsequent presses: re-launch with upward impulse
+                PhysicsBody *body = physics_body_get(&physics_world, ball_body_handle);
+                if (body) {
+                    body->position = (vec3_t){BALL_SPAWN_X, BALL_SPAWN_Y, BALL_SPAWN_Z};
+                    body->velocity = VEC3_ZERO;
+                    physics_body_apply_impulse(body,
+                        (vec3_t){0, BALL_RELAUNCH_VY, 0});
+                }
+            }
             particle_emitter_burst(emitter_fire);
             particle_emitter_burst(emitter_magic);
             snd_play_sfx(SFX_MODE_CHANGE);
@@ -1080,6 +1129,18 @@ static void demo_update(Scene *scene, float dt) {
         scene->bg_color = bg_colors[menu_get_value(&start_menu, TAB_SETTINGS, ITEM_BG_COLOR)];
     }
 
+    // Update physics (semi-fixed timestep)
+    physics_world_update(&physics_world, dt);
+
+    // Sync ball position from physics body to scene object
+    if (ball_spawned && ball_body_handle >= 0 && ball_object_index >= 0) {
+        PhysicsBody *body = physics_body_get(&physics_world, ball_body_handle);
+        SceneObject *ball_obj = scene_get_object(scene, ball_object_index);
+        if (body && ball_obj) {
+            ball_obj->position = body->position;
+        }
+    }
+
     // Update particles
     particle_update(dt);
 }
@@ -1228,10 +1289,14 @@ static void demo_cleanup(Scene *scene) {
     cube_cleanup();
     mesh_defs_cleanup();
     ground_collider = -1;
+    platform_aabb_collider = -1;
     obj_collider_count = 0;
     object_data_count = 0;
     billboard_data_count = 0;
     selectable_object_count = 0;
+    ball_body_handle = -1;
+    ball_object_index = -1;
+    ball_spawned = false;
     interaction_mode = MODE_NORMAL;
     selected_object = -1;
     current_scene = NULL;

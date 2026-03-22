@@ -118,6 +118,8 @@ main.c
 │   └── render/texture  [dynamic texture slot management]
 ├── audio/audio         [audio mixer, SFX/BGM playback]
 │   └── audio/sound_bank [sound event definitions]
+├── physics/physics     [physics simulation, semi-fixed timestep, gravity, bounce]
+│   └── collision/collision
 └── scenes/demo_scene   [demo scene: multi-object, selection, manipulation]
     ├── render/cube     [cube geometry definition (textured)]
     │   └── render/mesh [generic mesh rendering]
@@ -125,7 +127,7 @@ main.c
     │       ├── render/lighting
     │       ├── render/texture
     │       └── render/atmosphere
-    ├── render/mesh_defs [shape library: pillar, platform, pyramid]
+    ├── render/mesh_defs [shape library: pillar, platform, pyramid, sphere]
     │   └── render/mesh
     ├── render/billboard [camera-facing textured quads]
     │   └── render/mesh
@@ -137,6 +139,7 @@ main.c
     │   ├── render/camera
     │   └── render/atmosphere
     ├── render/atmosphere [fog config, sky gradient, 7 presets]
+    ├── physics/physics   [physics bodies, gravity, bounce response]
     └── scene/scene
 ```
 
@@ -168,6 +171,7 @@ scene->on_init();           // Scene-specific setup
   camera_init(&cam, &preset); // Camera matrices
   cube_init();                // Model geometry (demo scene)
   collision_add_*();          // Add colliders
+  physics_world_init();       // Physics world (optional, scene-local)
 ```
 
 ### Frame Loop (Variable Timestep)
@@ -576,6 +580,23 @@ See [COLLISION.md](COLLISION.md) for full documentation.
 - Overlap queries
 - Up to 64 colliders, 32 results per frame
 
+## Physics System
+
+See [PHYSICS.md](PHYSICS.md) for full documentation.
+
+### Summary
+
+- Semi-fixed timestep (1/60s) with accumulator pattern — deterministic simulation independent of display frame rate
+- Euler integration: gravity → external forces → damping → position
+- Ground detection via downward raycasts through the collision system
+- Bounce response: velocity decomposition into normal (reflected with restitution) and tangent (damped with friction) components
+- Rest detection: bodies stop micro-bouncing when velocity falls below threshold
+- Data-driven `PhysicsBodyDef` for material presets (mass, restitution, friction, damping, gravity scale, radius)
+- 3 built-in presets: Ball (bouncy), Heavy (low bounce), Floaty (low gravity)
+- Scene-local `PhysicsWorld` — opt-in per scene, no changes to Scene struct
+- Up to 32 bodies, max 4 steps per frame (spiral-of-death protection)
+- Impulse and force application APIs for knockback, jumping, and projectile launch
+
 ## Scene System
 
 See [SCENE_SYSTEM.md](SCENE_SYSTEM.md) for full documentation.
@@ -674,7 +695,7 @@ With Expansion Pak (8MB), an additional 4MB is available. Shared resources (fram
 | `src/main.c` | Entry point, display/input/menu init, variable-timestep game loop |
 | `src/render/camera.c/h` | Multi-mode camera, 3D math, frustum culling, collision |
 | `src/render/mesh.c/h` | Generic mesh type, builder API, universal draw function |
-| `src/render/mesh_defs.c/h` | Shape library: pillar, platform, pyramid factory functions |
+| `src/render/mesh_defs.c/h` | Shape library: pillar, platform, pyramid, sphere factory functions |
 | `src/render/cube.c/h` | Cube geometry (textured, built on Mesh) |
 | `src/render/floor.c/h` | Checkered floor grid (dynamic, Z-biased, point light illumination) |
 | `src/render/lighting.c/h` | Blinn-Phong lighting, point lights, configurable sun |
@@ -685,6 +706,7 @@ With Expansion Pak (8MB), an additional 4MB is available. Shared resources (fram
 | `src/render/atmosphere.c/h` | Fog config, sky gradient renderer, 7 atmosphere presets |
 | `src/math/vec3.h` | Vector math library (header-only) |
 | `src/collision/collision.c/h` | Collision detection, raycasting, overlap queries |
+| `src/physics/physics.c/h` | Physics simulation: gravity, impulse, bounce, ground detection |
 | `src/scene/scene.c/h` | Scene lifecycle, manager, transitions, per-object callbacks, soft reset |
 | `src/scenes/demo_scene.c/h` | Demo scene: mesh objects, billboards, selection, HUD |
 | `src/input/action.c/h` | Action mapping: remappable bindings, contexts, pressed/held/released |
@@ -703,6 +725,7 @@ With Expansion Pak (8MB), an additional 4MB is available. Shared resources (fram
 | [TEXTURES.md](TEXTURES.md) | Texture pipeline and TMEM |
 | [CAMERA.md](CAMERA.md) | Camera modes, math, frustum, collision |
 | [COLLISION.md](COLLISION.md) | Collision detection and raycasting |
+| [PHYSICS.md](PHYSICS.md) | Physics engine: gravity, bounce, impulse, timestep |
 | [SCENE_SYSTEM.md](SCENE_SYSTEM.md) | Scene/world management |
 | [MENU_SYSTEM.md](MENU_SYSTEM.md) | Menu overlay system |
 | [INPUT.md](INPUT.md) | Controller input handling |

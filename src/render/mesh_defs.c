@@ -10,6 +10,7 @@
 static Mesh pillar_mesh;
 static Mesh platform_mesh;
 static Mesh pyramid_mesh;
+static Mesh sphere_mesh;
 static bool initialized = false;
 
 // --- Pillar: 8-sided cylinder, height [-1,1], radius 1.0 ---
@@ -258,6 +259,117 @@ static void build_pyramid(void) {
     mesh_compute_bounds(&pyramid_mesh);
 }
 
+// --- Sphere: 6-longitude × 6-latitude UV sphere, unit radius ---
+
+static void build_sphere(void) {
+    mesh_init(&sphere_mesh);
+    sphere_mesh.backface_cull = true;
+
+    int mat = mesh_add_material(&sphere_mesh, (Material){
+        .type = MATERIAL_FLAT_COLOR,
+        .texture_slot = -1,
+        .base_color = {200, 60, 60}   // Red
+    });
+
+    const int LAT = 6;   // latitude segments (pole-to-pole)
+    const int LON = 6;   // longitude segments (around equator)
+
+    // Build one group per latitude band for per-group lighting.
+    // phi goes from PI (south pole) to 0 (north pole).
+    for (int lat = 0; lat < LAT; lat++) {
+        float phi0 = M_PI * (1.0f - (float)lat / LAT);       // bottom of band
+        float phi1 = M_PI * (1.0f - (float)(lat + 1) / LAT); // top of band
+
+        mesh_begin_group(&sphere_mesh, mat);
+
+        if (lat == 0) {
+            // Bottom cap — triangle fan from south pole
+            int pole = sphere_mesh.vertex_count;
+            mesh_add_vertex(&sphere_mesh, (MeshVertex){
+                .position = {0, -1, 0},
+                .normal = {0, -1, 0}, .uv = {0, 0}
+            });
+
+            int ring = sphere_mesh.vertex_count;
+            float sp1 = sinf(phi1), cp1 = cosf(phi1);
+            for (int lon = 0; lon <= LON; lon++) {
+                float theta = 2.0f * M_PI * (float)lon / LON;
+                float st = sinf(theta), ct = cosf(theta);
+                float px = sp1 * st, py = cp1, pz = sp1 * ct;
+                mesh_add_vertex(&sphere_mesh, (MeshVertex){
+                    .position = {px, py, pz},
+                    .normal = {px, py, pz}, .uv = {0, 0}
+                });
+            }
+
+            for (int lon = 0; lon < LON; lon++) {
+                mesh_add_triangle(&sphere_mesh,
+                    pole, ring + lon + 1, ring + lon);
+            }
+        } else if (lat == LAT - 1) {
+            // Top cap — triangle fan to north pole
+            int ring = sphere_mesh.vertex_count;
+            float sp0 = sinf(phi0), cp0 = cosf(phi0);
+            for (int lon = 0; lon <= LON; lon++) {
+                float theta = 2.0f * M_PI * (float)lon / LON;
+                float st = sinf(theta), ct = cosf(theta);
+                float px = sp0 * st, py = cp0, pz = sp0 * ct;
+                mesh_add_vertex(&sphere_mesh, (MeshVertex){
+                    .position = {px, py, pz},
+                    .normal = {px, py, pz}, .uv = {0, 0}
+                });
+            }
+
+            int pole = sphere_mesh.vertex_count;
+            mesh_add_vertex(&sphere_mesh, (MeshVertex){
+                .position = {0, 1, 0},
+                .normal = {0, 1, 0}, .uv = {0, 0}
+            });
+
+            for (int lon = 0; lon < LON; lon++) {
+                mesh_add_triangle(&sphere_mesh,
+                    ring + lon, ring + lon + 1, pole);
+            }
+        } else {
+            // Middle band — quad strip between two latitude rings
+            int r0 = sphere_mesh.vertex_count;
+            float sp0 = sinf(phi0), cp0 = cosf(phi0);
+            for (int lon = 0; lon <= LON; lon++) {
+                float theta = 2.0f * M_PI * (float)lon / LON;
+                float st = sinf(theta), ct = cosf(theta);
+                float px = sp0 * st, py = cp0, pz = sp0 * ct;
+                mesh_add_vertex(&sphere_mesh, (MeshVertex){
+                    .position = {px, py, pz},
+                    .normal = {px, py, pz}, .uv = {0, 0}
+                });
+            }
+
+            int r1 = sphere_mesh.vertex_count;
+            float sp1 = sinf(phi1), cp1 = cosf(phi1);
+            for (int lon = 0; lon <= LON; lon++) {
+                float theta = 2.0f * M_PI * (float)lon / LON;
+                float st = sinf(theta), ct = cosf(theta);
+                float px = sp1 * st, py = cp1, pz = sp1 * ct;
+                mesh_add_vertex(&sphere_mesh, (MeshVertex){
+                    .position = {px, py, pz},
+                    .normal = {px, py, pz}, .uv = {0, 0}
+                });
+            }
+
+            for (int lon = 0; lon < LON; lon++) {
+                mesh_add_triangle(&sphere_mesh,
+                    r0 + lon, r0 + lon + 1, r1 + lon);
+                mesh_add_triangle(&sphere_mesh,
+                    r0 + lon + 1, r1 + lon + 1, r1 + lon);
+            }
+        }
+
+        mesh_end_group(&sphere_mesh);
+    }
+
+    mesh_compute_bounds(&sphere_mesh);
+}
+
 // --- Public API ---
 
 void mesh_defs_init(void) {
@@ -265,6 +377,7 @@ void mesh_defs_init(void) {
     build_pillar();
     build_platform();
     build_pyramid();
+    build_sphere();
     initialized = true;
 }
 
@@ -273,9 +386,11 @@ void mesh_defs_cleanup(void) {
     mesh_cleanup(&pillar_mesh);
     mesh_cleanup(&platform_mesh);
     mesh_cleanup(&pyramid_mesh);
+    mesh_cleanup(&sphere_mesh);
     initialized = false;
 }
 
 const Mesh *mesh_defs_get_pillar(void) { return &pillar_mesh; }
 const Mesh *mesh_defs_get_platform(void) { return &platform_mesh; }
 const Mesh *mesh_defs_get_pyramid(void) { return &pyramid_mesh; }
+const Mesh *mesh_defs_get_sphere(void) { return &sphere_mesh; }

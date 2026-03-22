@@ -8,13 +8,13 @@ Long-term vision: an action RPG engine supporting both souls-like combat and Fin
 
 ## Current State
 
-**21 stable source modules**, all verified on Ares emulator and Analogue 3D hardware (via SummerCart64). All 5 short-term features complete. V2 Features 6-7 (Particles, Fog & Atmosphere) complete.
+**22 stable source modules**, all verified on Ares emulator and Analogue 3D hardware (via SummerCart64). All 5 short-term features complete. V2 Features 6-7 (Particles, Fog & Atmosphere), Feature 9 (Physics), and Feature 10 (Action Mapping) complete.
 
 | System | Status | Notes |
 |--------|--------|-------|
 | 3D Rendering | Working | CPU software transforms + RDP rasterization, Z-buffered, textured |
 | Mesh System | Mature | Generic Mesh type, builder API, universal `mesh_draw()`, frustum culling |
-| Shape Library | Working | Factory functions for pillar, platform, pyramid (mesh_defs) |
+| Shape Library | Working | Factory functions for pillar, platform, pyramid, sphere (mesh_defs) |
 | Multi-Object Scene | Working | 8 objects with different meshes, positions, scales, colliders |
 | Object Manipulation | Working | Select, move, rotate, scale objects via controller (Z/A/B/analog) |
 | Camera | Mature | 3 modes (orbital, fixed, follow), frustum culling, 3-layer collision |
@@ -32,10 +32,11 @@ Long-term vision: an action RPG engine supporting both souls-like combat and Fin
 | Variable Timestep | Working | Logic runs once per frame at display rate (30 or 60 FPS) |
 | Texture Management | Working | 16 dynamic slots, per-frame TMEM upload |
 | Particle System | Mature | Pool-based emitters, burst/continuous, additive blend, direct RDP batch renderer |
+| Physics | Working | Semi-fixed timestep, gravity, bounce, impulse, ground detection, 3 body presets |
 
 ### What's Missing
 
-No model loading (geometry is hand-coded C), no animation, no dynamic physics, no data-driven asset pipeline, no sprite animation.
+No model loading (geometry is hand-coded C), no animation, no data-driven asset pipeline, no sprite animation.
 
 ---
 
@@ -172,36 +173,40 @@ src/render/anim_sprite.c/h  — AnimDef, AnimState, billboard animation extensio
 
 ---
 
-### Feature 9: Basic Physics
+### Feature 9: Basic Physics — COMPLETE
 
-**Problem:** The collision system is query-only — it detects overlaps but doesn't respond. No gravity, no velocity, no forces. Objects can't fall, jump, or get knocked back.
+Lightweight physics simulation layer on top of the existing collision system. Semi-fixed timestep for deterministic behavior, Euler integration, ground detection via collision raycasts, and bounce/impulse response. See [PHYSICS.md](PHYSICS.md).
 
-**Solution:** Lightweight physics layer on top of the existing collision system. `PhysicsBody` struct with velocity, acceleration, gravity, damping, and grounded flag. Ground detection via collision raycasts, basic impulse response for knockback.
-
-```
-src/physics/physics.c/h  — PhysicsBody, gravity, impulse, ground detection
-```
-
-**What it unlocks:** Gravity, jumping, knockback from hits, projectile arcs, falling objects. Essential for souls-like combat feel (dodge rolls, hit reactions).
-
-**N64 constraints:**
-- NOT a full rigid body solver — no stacking, friction matrices, or constraint solving
-- Just enough for movement, jumping, and hit reactions
-- One raycast per physics body per frame for ground detection (~64 rays max)
+**Delivered:**
+- `src/physics/physics.c/h` — PhysicsWorld, PhysicsBody, PhysicsBodyDef, semi-fixed timestep accumulator (1/60s, max 4 steps)
+- Euler integration: gravity → external forces → air damping → position integration
+- Ground detection via downward raycast through collision system (`COLLISION_LAYER_ENV`)
+- Bounce response: velocity decomposition into normal (reflected with restitution) and tangent (damped with friction)
+- Rest detection: stops micro-bouncing when velocity and impact speed fall below thresholds
+- Penetration resolution: pushes body above ground surface when below
+- 3 built-in body presets: Ball (bouncy, e=0.7), Heavy (low bounce, e=0.2), Floaty (low gravity, e=0.9)
+- Force and impulse APIs for knockback, jumping, and projectile launch
+- `mesh_defs_get_sphere()` — 6×6 UV sphere mesh with 6 latitude-band groups for per-group lighting
+- Demo: B button spawns red physics ball above platform, bounces under gravity, re-launch with upward impulse
+- Platform AABB collider for flat ground detection (separate from existing sphere collider)
+- `src/math/vec3.h` — 6 constants (VEC3_ZERO, VEC3_UP, etc.) and 8 utility functions (reflect, project, reject, mul, clamp_length, move_toward, abs, sign)
+- Verified in Ares emulator at 60 FPS
 
 ---
 
-### Feature 10: Input Action Mapping
+### Feature 10: Input Action Mapping — COMPLETE
 
-**Problem:** Controller buttons are hard-coded to specific behaviors (analog = camera orbit, C-buttons = zoom). No way to rebind or create context-dependent controls (menu vs combat vs exploration).
+Data-driven input abstraction that decouples game logic from physical button assignments. Remappable game actions, per-context bindings, and runtime rebinding via in-game Controls tab. See [ARCHITECTURE.md](ARCHITECTURE.md).
 
-**Solution:** Abstract controller buttons into named game actions (move, attack, dodge, interact, menu). Per-context action maps with pressed/held/released states and analog dead zones.
-
-```
-Refactor src/input/input.c/h  — ActionMap, InputContext, action states
-```
-
-**What it unlocks:** Rebindable controls, cleaner game logic, multi-context input (menu, combat, exploration each with different mappings). Required before building any game-specific input handling.
+**Delivered:**
+- `src/input/action.c/h` — ActionContext, PhysicalButton (13 buttons), GameAction (11 actions), pressed/held/released queries
+- Per-context analog deadzone and sensitivity configuration
+- Runtime remapping via Controls menu tab (option indices = PhysicalButton enum, item indices = GameAction enum)
+- Cancel reverts all bindings to pre-menu-open values via snapshot system
+- `action_init()` replaces `input_init()` — calls `joypad_init()` internally
+- Fixed inputs: Start (menu toggle), D-pad/A/B/L/R in menus stay as raw joypad reads
+- Tab rendering: single active tab with `< [Name] N/M >` indicator (scales to any tab count)
+- Verified on hardware (Analogue 3D) at 60 FPS
 
 ---
 

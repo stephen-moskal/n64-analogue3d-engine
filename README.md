@@ -11,7 +11,7 @@ A Nintendo 64 homebrew game engine built with [libdragon](https://github.com/Dra
 | Subsystem | Description | Docs |
 |-----------|-------------|------|
 | **Rendering** | Software 3D transforms + hardware RDP rasterization, Z-buffer | [RENDERING.md](docs/RENDERING.md) |
-| **Mesh System** | Generic mesh builder, shape library (cube, pillar, platform, pyramid) | [MESH_SYSTEM.md](docs/MESH_SYSTEM.md) |
+| **Mesh System** | Generic mesh builder, shape library (cube, pillar, platform, pyramid, sphere) | [MESH_SYSTEM.md](docs/MESH_SYSTEM.md) |
 | **Camera** | Orbital camera, perspective projection, collision, frustum culling | [CAMERA.md](docs/CAMERA.md) |
 | **Textures** | Sprite loading, TMEM management, per-frame stats | [TEXTURES.md](docs/TEXTURES.md) |
 | **Lighting** | Blinn-Phong with configurable sun, point lights, and shadow casting | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
@@ -19,6 +19,7 @@ A Nintendo 64 homebrew game engine built with [libdragon](https://github.com/Dra
 | **Billboards** | Camera-facing textured quads (spherical and cylindrical modes) | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | **Particles** | Emitter-based system with pool allocation, additive blend, direct RDP batch renderer | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | **Atmosphere** | Fog (hardware + CPU hybrid), sky gradients, 7 presets with linked lighting | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| **Physics** | Semi-fixed timestep, gravity, bounce, impulse, ground detection, body presets | [PHYSICS.md](docs/PHYSICS.md) |
 | **Audio** | BGM streaming, SFX playback, mixer with 16 channels | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | **Collision** | Sphere and AABB colliders, raycasting, camera pushout | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | **Scene** | Object management, update/draw callbacks, scene reset, multi-object scenes | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
@@ -44,6 +45,7 @@ A multi-object scene with lighting, atmosphere, shadows, and full camera control
 - Frustum and backface culling
 - Camera collision (raycast + sphere pushout + floor clamp)
 - Particle effects: fire/sparks and magic/energy bursts on pillar tops
+- Physics ball demo: press B to spawn a bouncing sphere on the platform (gravity, bounce, re-launch)
 - Remappable controls via action mapping system with in-game Controls tab
 - Tabbed start menu with settings, sound, lighting, environment, and controls tabs
 - Scene reset feature (soft reset without console restart)
@@ -87,7 +89,7 @@ All game controls are remappable via the in-game Controls menu tab. Defaults sho
 | Zoom In / Out | C-Up / C-Down | Camera distance (held) |
 | Shift View Up / Down | C-Right / C-Left | Camera target Y (held) |
 | Confirm | A | Interact / confirm |
-| Cancel / Burst | B | Burst particle effects |
+| Cancel / Ball | B | Spawn/re-launch physics ball |
 | Select Mode | Z | Toggle object selection |
 | Cycle Next / Prev | D-Right / D-Left | Cycle through objects |
 | Camera Mode | L / R | Cycle camera modes |
@@ -139,7 +141,7 @@ n64-dev-engine/
 │   │   ├── camera.c/h         # Orbital camera, collision, frustum culling
 │   │   ├── cube.c/h           # Cube geometry, MVP transform, rendering
 │   │   ├── mesh.c/h           # Generic mesh builder + universal renderer
-│   │   ├── mesh_defs.c/h      # Shape factory (pillar, platform, pyramid)
+│   │   ├── mesh_defs.c/h      # Shape factory (pillar, platform, pyramid, sphere)
 │   │   ├── floor.c/h          # Floor grid with Z-bias, point light illumination
 │   │   ├── billboard.c/h      # Camera-facing textured quads
 │   │   ├── lighting.c/h       # Blinn-Phong, point lights, configurable sun
@@ -152,6 +154,8 @@ n64-dev-engine/
 │   │   └── input.c/h          # Camera input adapter (reads from action API)
 │   ├── collision/
 │   │   └── collision.c/h      # Sphere/AABB colliders, raycasting
+│   ├── physics/
+│   │   └── physics.c/h        # Physics: gravity, bounce, impulse, ground detection
 │   ├── scene/
 │   │   └── scene.c/h          # Scene graph, object management, soft reset
 │   ├── scenes/
@@ -210,6 +214,7 @@ RDP: Triangle Rasterize → Texture Sample → Z-Buffer → Framebuffer
 - [Mesh System](docs/MESH_SYSTEM.md) — Mesh builder API, shape library, universal renderer
 - [Menu System](docs/MENU_SYSTEM.md) — API reference, data model, integration patterns
 - [Input System](docs/INPUT.md) — Controller layout, button mappings, analog handling
+- [Physics System](docs/PHYSICS.md) — Gravity, bounce, impulse, semi-fixed timestep, body presets
 - [Environment Setup](docs/SETUP.md) — Prerequisites, Docker, emulator, SummerCart64
 - [Development Workflow](docs/WORKFLOW.md) — Build cycle, debugging, asset pipeline
 
@@ -219,7 +224,6 @@ See [ROADMAP.md](docs/ROADMAP.md) for the full development roadmap with detailed
 
 **Next Engine Features:**
 - Sprite animation (frame-based billboard animation)
-- Basic physics (gravity, knockback, jumping)
 
 **Input System Roadmap:**
 - File-based control scheme definitions (load `ActionContext` from DFS text/binary files)

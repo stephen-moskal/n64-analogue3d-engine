@@ -13,5 +13,6 @@ void mesh_defs_cleanup(void);
 const Mesh *mesh_defs_get_pillar(void);
 const Mesh *mesh_defs_get_platform(void);
 const Mesh *mesh_defs_get_pyramid(void);
+const Mesh *mesh_defs_get_sphere(void);
 
 #endif
