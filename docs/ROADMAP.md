@@ -232,50 +232,168 @@ The current CPU-based software transform pipeline (mat4_mul_vec3 per vertex, per
 | Adding a new object | Write 180 lines of C | Export from Blender, load at runtime |
 | Objects per scene | ~20-30 (CPU limit) | 100+ (RSP accelerated) |
 | Lighting | CPU per-face | RSP per-vertex |
-| Animation | None | Skeletal with skinning |
 | Asset workflow | Hand-code vertices | Blender → Fast64 → GLTF → T3D |
 
-### Sub-Features
+### Architecture: Parallel Path (not Dual-Path Dispatch)
 
-1. **T3D integration** — Add T3D as a dependency, initialize RSP microcode alongside RDPQ
-2. **Model loader** — Load GLTF models exported from Blender via Fast64
-3. **Material system** — Map Fast64 materials to RDP combiner modes and textures
-4. **Mesh system migration** — The Mesh type from Feature 1 gains a T3D backend (CPU fallback stays for educational reference)
-5. **Animation playback** — Load and play skeletal animations from GLTF
+T3D models have a fundamentally different data hierarchy (chunk-based objects, materials, skeleton) and rendering flow (viewport-based, matrix stack) than the existing Mesh system. Rather than cramming T3D into `mesh_draw()`, the engine uses a **parallel path**:
+
+- T3D objects get their own `T3DObjectData` struct and `t3d_object_draw` callback, using `SceneObject.on_draw` polymorphism
+- The CPU pipeline (`mesh_draw()`, `mesh_defs`, floor, particles, billboards) stays untouched — zero regression risk
+- Bridge functions sync lighting (`LightConfig` → T3D lights) and fog (`FogConfig` → T3D fog) across both paths
+
+**CPU-rendered permanently:** Floor grid, particles, billboards, shadows, debug visualization, HUD.
 
 ### Blender → N64 Workflow
 
 ```
-Blender (modeling, rigging, animation)
-    ↓ Fast64 plugin (N64-optimized export)
-GLTF 2.0 file (standard interchange format)
-    ↓ T3D importer (build-time conversion)
-T3D model data (ROM asset)
-    ↓ t3d_model_load() (runtime)
-Rendered on screen via RSP
+Blender (modeling + Fast64 F3D materials)
+    ↓ Fast64 plugin (N64-optimized GLTF export)
+GLTF 2.0 file (.glb, standard interchange format)
+    ↓ T3D converter (build-time, in Makefile)
+T3D model data (.t3dm, ROM asset)
+    ↓ t3d_model_load() (runtime, from DFS)
+Rendered on screen via RSP at 60 FPS
 ```
+
+---
+
+### Feature 11: T3D Bootstrap — RSP Rendering Proof of Life
+
+**Problem:** No RSP-accelerated rendering. All vertex transforms and lighting run on CPU, limiting scene complexity to ~20-30 objects.
+
+**Solution:** Link T3D as a git submodule, initialize RSP microcode, render a single hardcoded quad via T3D alongside the existing CPU-rendered scene. Prove both paths coexist in one frame.
+
+```
+src/render/t3d_render.c/h  — T3D init, viewport, frame sync, lighting bridge
+```
+
+**What it unlocks:** Model loading (Feature 12) — T3D runtime, viewport, and frame synchronization are in place.
+
+---
+
+### Feature 12: GLTF Model Loading — First Blender Model on Screen
+
+**Problem:** All geometry is hand-coded in C (~180 lines per shape). No way to import from standard 3D tools like Blender.
+
+**Solution:** Export a simple model from Blender via Fast64, convert to `.t3dm` at build time, load from ROM at runtime, render via T3D. Prove the end-to-end asset pipeline. Document the Fast64 setup workflow.
+
+```
+src/render/t3d_model.c/h  — T3DModelWrapper, model load/draw/free API
+assets/models/test_crate.glb  — Simple crate from Blender + Fast64
+docs/BLENDER_SETUP.md  — Fast64 installation, F3D materials, export checklist
+```
+
+**What it unlocks:** Textured materials and fog (Feature 13) — base model loading pipeline is working.
+
+---
+
+### Feature 13: Textured Materials & Fog Bridge
+
+**Problem:** Feature 12 models are flat-colored only. Fog does not apply to T3D-rendered objects (they ignore the atmosphere system).
+
+**Solution:** T3D models with Fast64-authored textures rendered correctly. Fog bridge syncs `FogConfig` to T3D's native fog API (`t3d_fog_set_range()`, `t3d_fog_set_enabled()`). Document F3D material setup for N64 texture constraints.
+
+```
+assets/models/textured_crate.glb  — Crate with 32×32 RGBA16 texture
+docs/FAST64_MATERIALS.md  — Material setup guide, combiner modes, TMEM constraints
+```
+
+**What it unlocks:** Scene composition (Feature 14) — materials and fog are handled across both paths.
+
+---
+
+### Feature 14: Dual-Path Scene — Replace Shapes with Blender Exports
+
+**Problem:** Five shape factories in `mesh_defs.c` (320 lines of hand-coded geometry). Adding new objects still means writing C code.
+
+**Solution:** Recreate pillar, platform, and pyramid as Blender models rendered via T3D. Auto-generate collision from model AABB bounds. Create a new `t3d_demo_scene` demonstrating the full Blender workflow alongside CPU-rendered floor, particles, billboards, and HUD.
+
+```
+assets/models/pillar.glb, platform.glb, pyramid.glb  — Blender shape equivalents
+src/scenes/t3d_demo_scene.c/h  — New scene: T3D models + CPU floor/particles/billboards
+docs/ASSET_PIPELINE.md  — End-to-end pipeline documentation
+```
+
+**What it unlocks:** Developer tooling (Feature 15) — the full model pipeline is proven.
+
+---
+
+### Feature 15: Developer Tooling — Model Viewer & Debug Overlay
+
+**Problem:** No way to inspect T3D models at runtime. No visibility into RSP performance. No quick test workflow for Blender exports.
+
+**Solution:** Standalone model viewer scene (orbital camera, lighting presets, metrics). T3D debug overlay showing RSP triangle counts. Blender template project with Fast64 pre-configured.
+
+```
+src/scenes/model_viewer_scene.c/h  — Orbital camera, metrics, model display
+assets/blender/template_project.blend  — Pre-configured Fast64, F3D material template
+docs/T3D_INTEGRATION.md  — Complete T3D architecture, API reference, troubleshooting
+```
+
+**What it unlocks:** Pipeline polish (Feature 16) — developers have tools to iterate on content.
+
+---
+
+### Feature 16: Pipeline Polish — LOD Workflow & Collision from Models
+
+**Problem:** Complex Blender models may exceed N64 triangle budgets. No automatic collision geometry from models.
+
+**Solution:** LOD workflow documentation (Blender decimation, triangle budget targets per object type). Collision mesh extraction from T3D model bounds (AABB → sphere/box). Architecture documentation cleanup.
+
+```
+src/render/t3d_collision.c/h  — Extract collision shapes from T3D model bounds
+docs/LOD_WORKFLOW.md  — LOD strategy, decimation guide, triangle budgets
+```
+
+**N64 triangle budgets (design-time LOD, not runtime):**
+
+| Category | Target Triangles |
+|----------|-----------------|
+| Environment prop (crate, barrel) | 20–50 |
+| Architectural (pillar, wall) | 30–80 |
+| Character (humanoid) | 150–300 |
+| Boss / hero character | 300–500 |
+| Vehicle / large prop | 100–200 |
+
+**What it unlocks:** Milestone 2 (Animation & Character System) — the asset pipeline is complete.
 
 ---
 
 ## Milestone 2: Animation & Character System
 
-**The transition from "objects exist" to "objects live."**
+**The transition from "objects exist" to "objects live."** With Milestone 1 delivering the static model pipeline, Milestone 2 adds skeletal animation, character controllers, and the entity system needed for gameplay.
 
-### Skeletal Animation
+### Feature 17: Skeletal Animation — First Animated Character
 
-With T3D providing the runtime, this milestone focuses on the authoring workflow and game integration:
-- **Animation state machine** — States (idle, walk, attack, hit, death, dodge) with transition rules
-- **Blend transitions** — Smooth crossfade between animation clips
-- **Animation events** — Trigger SFX or game logic at specific keyframes (e.g., "deal damage" at frame 12 of attack animation)
+A rigged character model with idle and walk animations loaded from Blender, playing at runtime via T3D's skeleton system. An `AnimController` wrapper manages playback.
 
-### Entity/Actor Pattern
+```
+src/render/t3d_anim.c/h  — AnimController, T3D skeleton API wrapper
+assets/models/character.glb  — Low-poly humanoid (~200 tris, 10-15 bones, idle + walk)
+docs/ANIMATION.md  — Rigging guide for N64, bone limits, authoring tips
+```
 
-Evolve `SceneObject` into a proper entity system with composable behaviors:
+### Feature 18: Animation Blending & State Queries
+
+Crossfade between animation clips (idle → walk over 0.2s). Speed control, state queries (is_playing, current_time, duration). Double-buffered skeletons to prevent RSP DMA tearing.
+
+### Feature 19: Character Controller
+
+Movement driven by analog stick input. Character faces movement direction (lerped). Walk animation plays during movement, idle during rest. Physics integration for gravity/grounding.
+
+### Feature 20: Animation State Machine
+
+Named states (idle, walk, attack, hit, death, dodge) with data-driven transition rules. Trigger SFX or game logic at specific keyframes ("deal damage" at frame 12 of attack). Validates the animation and input systems end-to-end.
+
+### Feature 21: Entity/Actor Pattern
+
+Evolve `SceneObject` into a composable entity system:
 
 ```
 Entity
 ├── Transform      (position, rotation, scale)
-├── Renderable     (mesh/model reference, material)
+├── Renderable     (T3D model or CPU mesh, material)
 ├── Collidable     (collider shape, layer, callbacks)
 ├── Animated       (animation state machine, current clip)
 ├── Controller     (input-driven or AI-driven movement)
@@ -283,17 +401,7 @@ Entity
 └── GameData       (HP, stats, inventory — game-specific)
 ```
 
-This is NOT a full ECS (entity-component-system) — that's over-engineering for N64. It's a tagged-struct pattern where entities have optional capability pointers.
-
-### Souls-Like Combat Foundation
-
-For the action combat vision:
-- **Hitbox/hurtbox system** — Attack hitboxes active during specific animation frames, hurtboxes on character body
-- **Dodge with i-frames** — Invincibility window during dodge roll animation, physics-driven movement
-- **Attack windups & recovery** — Slow, committal attacks with telegraph, active, and recovery phases
-- **Stamina system** — Resource that gates attacks, dodges, and sprinting
-
-The test scene target is a souls-like combat demo: 1 player character + 1 enemy with a basic attack/dodge loop. This validates the animation and entity systems before building either FFT or souls-like game modes.
+This is NOT a full ECS — it's a tagged-struct pattern where entities have optional capability pointers. The test target: 1 player character + 1 enemy with a basic attack/dodge loop.
 
 ### Grid-Based Movement (FFT Track)
 
@@ -400,6 +508,8 @@ Each feature and milestone produces corresponding documentation:
 | Lighting & Shadows | `docs/ARCHITECTURE.md` (Lighting & Shadow sections) |
 | Particle System | `docs/PARTICLES.md` |
 | Physics | `docs/PHYSICS.md` |
-| T3D Integration | `docs/T3D_INTEGRATION.md`, updated `RENDERING.md` |
+| T3D Integration | `docs/T3D_INTEGRATION.md`, `docs/BLENDER_SETUP.md`, `docs/FAST64_MATERIALS.md` |
+| Asset Pipeline | `docs/ASSET_PIPELINE.md`, `docs/LOD_WORKFLOW.md` |
+| Animation | `docs/ANIMATION.md` |
 | Entity System | `docs/ENTITY_SYSTEM.md` |
 | Game Framework | `docs/GAME_FRAMEWORK.md` |
