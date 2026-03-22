@@ -1,6 +1,7 @@
 #include <libdragon.h>
 
 #include "input/input.h"
+#include "input/action.h"
 #include "ui/text.h"
 #include "ui/menu.h"
 #include "scene/scene.h"
@@ -59,6 +60,13 @@ static const char *fog_far_options[]    = {"400", "600", "800", "1000", "1200", 
 static const char *fog_color_options[]  = {"Grey", "Blue", "White", "Warm", "Purple", "Dark"};
 static const char *sky_toggle_options[] = {"Off", "On"};
 
+// Menu options — Controls tab (indices match PhysicalButton enum)
+static const char *btn_options[] = {
+    "A", "B", "Z", "L", "R",
+    "D-Up", "D-Down", "D-Left", "D-Right",
+    "C-Up", "C-Down", "C-Left", "C-Right"
+};
+
 int main(void) {
     // Initialize debug output
     debug_init_isviewer();
@@ -75,7 +83,7 @@ int main(void) {
     dfs_init(DFS_DEFAULT_LOCATION);
 
     // Initialize subsystems
-    input_init();
+    action_init();
     text_init();
 
     // Initialize menu (global overlay, persists across scenes)
@@ -117,6 +125,20 @@ int main(void) {
     menu_add_item(&start_menu, tab_e, "Fog Far",   fog_far_options, 6, 4);      // Default: 1200
     menu_add_item(&start_menu, tab_e, "Fog Color", fog_color_options, 6, 0);    // Default: Grey
     menu_add_item(&start_menu, tab_e, "Sky",       sky_toggle_options, 2, 0);   // Default: Off
+
+    // Tab 4: Controls (indices match GameAction enum; option indices match PhysicalButton enum)
+    int tab_c = menu_add_tab(&start_menu, "Controls");
+    menu_add_item(&start_menu, tab_c, "Confirm",    btn_options, 13, BTN_A);
+    menu_add_item(&start_menu, tab_c, "Cancel",     btn_options, 13, BTN_B);
+    menu_add_item(&start_menu, tab_c, "Select",     btn_options, 13, BTN_Z);
+    menu_add_item(&start_menu, tab_c, "Cam Next",   btn_options, 13, BTN_R);
+    menu_add_item(&start_menu, tab_c, "Cam Prev",   btn_options, 13, BTN_L);
+    menu_add_item(&start_menu, tab_c, "Cycle Next", btn_options, 13, BTN_D_RIGHT);
+    menu_add_item(&start_menu, tab_c, "Cycle Prev", btn_options, 13, BTN_D_LEFT);
+    menu_add_item(&start_menu, tab_c, "Zoom In",    btn_options, 13, BTN_C_UP);
+    menu_add_item(&start_menu, tab_c, "Zoom Out",   btn_options, 13, BTN_C_DOWN);
+    menu_add_item(&start_menu, tab_c, "Shift Up",   btn_options, 13, BTN_C_RIGHT);
+    menu_add_item(&start_menu, tab_c, "Shift Down", btn_options, 13, BTN_C_LEFT);
 
     // Initialize audio and atmosphere
     snd_init();

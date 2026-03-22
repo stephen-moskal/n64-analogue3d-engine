@@ -106,7 +106,8 @@ DMA buffers (used by RSP) must be uncached and 8-byte aligned.
 
 ```
 main.c
-├── input/input         [controller polling]
+├── input/action        [action mapping, joypad polling, context management]
+├── input/input         [camera input adapter, reads from action API]
 ├── ui/text             [font rendering]
 ├── ui/menu             [settings menu overlay]
 │   └── ui/text
@@ -148,7 +149,7 @@ debug_init_usblog();        // Debug output (USB)
 display_init(...);          // Framebuffers
 rdpq_init();                // RDP command queue
 dfs_init(...);              // ROM filesystem
-input_init();               // Joypad
+action_init();              // Joypad + action mapping (replaces input_init)
 text_init();                // Load fonts
 menu_init(&menu, title);    // Menu state
 snd_init();                 // Audio mixer
@@ -465,6 +466,103 @@ Each preset includes a `LightingHint` with `sun_intensity`, `ambient` color, and
 
 ENVIRON tab (tab 3) with 6 items: Preset (8 options), Fog On/Off, Fog Near, Fog Far, Fog Color, Sky On/Off. Named presets auto-enable fog+sky and sync menu toggles. Custom mode allows individual control.
 
+## Action Mapping System
+
+Data-driven input abstraction that decouples game logic from physical button assignments. Game code queries named actions instead of raw buttons, enabling runtime remapping and per-scene control schemes.
+
+### Architecture
+
+```
+joypad_poll()  →  action_update()  →  action_pressed/held/released()
+                      ↓                         ↑
+              PhysicalButton → GameAction    scene logic queries
+              (via ActionContext bindings)    actions, not buttons
+```
+
+### Key Types
+
+| Type | Purpose |
+|------|---------|
+| `PhysicalButton` | Enum of 13 N64 buttons (A, B, Z, L, R, D-pad×4, C-buttons×4) |
+| `GameAction` | Enum of 11 remappable actions (Confirm, Cancel, Select, Camera, Cycle, Zoom, Shift) |
+| `ActionContext` | Named binding set with per-context analog deadzone and sensitivity |
+
+### Design Rules
+
+- **Start button**: Always toggles menu — hardcoded, not remappable (system-level)
+- **Menu navigation**: D-pad, A/B, L/R in `menu.c` stay hardcoded (standard UI convention)
+- **Analog stick**: Sensitivity/deadzone configurable per context, but not remapped to buttons
+- **InputState preserved**: `input_update()` is a thin adapter reading from the action API — camera code unchanged
+
+### Contexts
+
+An `ActionContext` defines a complete set of button-to-action bindings:
+
+```c
+const ActionContext ACTION_CTX_EXPLORATION = {
+    .name = "Exploration",
+    .bindings = {
+        [ACTION_CONFIRM]       = BTN_A,
+        [ACTION_CANCEL]        = BTN_B,
+        [ACTION_SELECT_MODE]   = BTN_Z,
+        [ACTION_CAM_MODE_NEXT] = BTN_R,
+        [ACTION_CAM_MODE_PREV] = BTN_L,
+        [ACTION_CYCLE_NEXT]    = BTN_D_RIGHT,
+        [ACTION_CYCLE_PREV]    = BTN_D_LEFT,
+        [ACTION_ZOOM_IN]       = BTN_C_UP,
+        [ACTION_ZOOM_OUT]      = BTN_C_DOWN,
+        [ACTION_SHIFT_UP]      = BTN_C_RIGHT,
+        [ACTION_SHIFT_DOWN]    = BTN_C_LEFT,
+    },
+    .analog_deadzone = 8.0f,
+    .analog_sensitivity = 0.002f,
+};
+```
+
+Developers define new contexts as `static const` data arrays — no code changes needed. Call `action_set_context()` to switch on scene init.
+
+### Runtime Remapping
+
+The Controls menu tab (tab 4) lists all 11 game actions. Each action's option list contains all 13 physical buttons. Menu option indices match `PhysicalButton` enum order, so remapping is:
+
+```c
+for (int i = 0; i < ACTION_COUNT; i++) {
+    int btn_idx = menu_get_value(&start_menu, TAB_CONTROLS, i);
+    action_set_binding((GameAction)i, (PhysicalButton)btn_idx);
+}
+```
+
+Cancel (B button) reverts all bindings to pre-menu-open values via the menu snapshot system.
+
+### API
+
+```c
+// Lifecycle
+void action_init(void);                          // joypad_init + default context
+void action_update(void);                        // joypad_poll + map buttons→actions
+
+// Query (called by game logic instead of raw joypad)
+bool  action_pressed(GameAction action);          // Edge-triggered
+bool  action_held(GameAction action);             // Continuous
+bool  action_released(GameAction action);         // Edge-triggered
+
+// Analog stick
+float action_analog_x(void);                      // Filtered by deadzone/sensitivity
+float action_analog_y(void);
+bool  action_has_analog(void);
+
+// Context/remapping
+void action_set_context(const ActionContext *ctx);
+void action_set_binding(GameAction action, PhysicalButton button);
+PhysicalButton action_get_binding(GameAction action);
+```
+
+### Performance
+
+- O(ACTION_COUNT=11) per `action_update()` call — negligible
+- Zero heap allocation — all state is static arrays
+- No overhead when not remapped — default context matches previous hardcoded behavior
+
 ## Collision Detection
 
 See [COLLISION.md](COLLISION.md) for full documentation.
@@ -589,9 +687,10 @@ With Expansion Pak (8MB), an additional 4MB is available. Shared resources (fram
 | `src/collision/collision.c/h` | Collision detection, raycasting, overlap queries |
 | `src/scene/scene.c/h` | Scene lifecycle, manager, transitions, per-object callbacks, soft reset |
 | `src/scenes/demo_scene.c/h` | Demo scene: mesh objects, billboards, selection, HUD |
-| `src/input/input.c/h` | Controller input |
+| `src/input/action.c/h` | Action mapping: remappable bindings, contexts, pressed/held/released |
+| `src/input/input.c/h` | Camera input adapter (reads from action API) |
 | `src/ui/text.c/h` | Text rendering |
-| `src/ui/menu.c/h` | Tabbed menu system (4 tabs: Settings, Sound, Lighting, Environ), scrollable, disabled items |
+| `src/ui/menu.c/h` | Tabbed menu system (5 tabs: Settings, Sound, Lighting, Environ, Controls), scrollable, disabled items |
 | `src/audio/audio.c/h` | Audio mixer, SFX/BGM playback |
 | `src/audio/sound_bank.c/h` | Sound event definitions and path mapping |
 

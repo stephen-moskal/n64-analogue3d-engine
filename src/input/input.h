@@ -3,6 +3,7 @@
 
 #include <libdragon.h>
 #include <stdbool.h>
+#include "action.h"
 
 typedef struct {
     float orbit_azimuth;
@@ -12,7 +13,6 @@ typedef struct {
     bool has_input;
 } InputState;
 
-void input_init(void);
 void input_update(InputState *state);
 
 #endif

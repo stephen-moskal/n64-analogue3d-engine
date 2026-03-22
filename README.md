@@ -22,7 +22,7 @@ A Nintendo 64 homebrew game engine built with [libdragon](https://github.com/Dra
 | **Audio** | BGM streaming, SFX playback, mixer with 16 channels | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | **Collision** | Sphere and AABB colliders, raycasting, camera pushout | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | **Scene** | Object management, update/draw callbacks, scene reset, multi-object scenes | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| **Input** | Analog stick, D-pad, C-buttons, face buttons | [INPUT.md](docs/INPUT.md) |
+| **Input / Action Mapping** | Remappable game actions, per-context bindings, analog stick, runtime rebinding via menu | [INPUT.md](docs/INPUT.md) |
 | **Menu System** | Tabbed data-driven menus with cancel/revert, controller nav | [MENU_SYSTEM.md](docs/MENU_SYSTEM.md) |
 | **Text** | Font rendering with alignment, color, formatting | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 
@@ -43,8 +43,9 @@ A multi-object scene with lighting, atmosphere, shadows, and full camera control
 - Hardware Z-buffer depth testing with 16-bit precision
 - Frustum and backface culling
 - Camera collision (raycast + sphere pushout + floor clamp)
-- Particle effects: fire/sparks and magic/energy bursts on pillar tops (B button)
-- Tabbed start menu with settings, sound, lighting, and environment controls
+- Particle effects: fire/sparks and magic/energy bursts on pillar tops
+- Remappable controls via action mapping system with in-game Controls tab
+- Tabbed start menu with settings, sound, lighting, environment, and controls tabs
 - Scene reset feature (soft reset without console restart)
 - FPS counter and rendering stats overlay
 
@@ -76,17 +77,23 @@ sc64deployer upload hello_cube.z64
 
 ## Controls
 
-### Scene Mode
+All game controls are remappable via the in-game Controls menu tab. Defaults shown below.
 
-| Input | Action |
-|-------|--------|
-| Analog Stick | Orbit camera |
-| C-Up / C-Down | Zoom in / out |
-| C-Left / C-Right | Shift view up / down |
-| B | Burst particle effects |
-| Start | Open menu |
+### Scene Mode (Default Bindings)
 
-### Menu Mode
+| Action | Default Button | Description |
+|--------|---------------|-------------|
+| Orbit Camera | Analog Stick | Horizontal/vertical camera orbit |
+| Zoom In / Out | C-Up / C-Down | Camera distance (held) |
+| Shift View Up / Down | C-Right / C-Left | Camera target Y (held) |
+| Confirm | A | Interact / confirm |
+| Cancel / Burst | B | Burst particle effects |
+| Select Mode | Z | Toggle object selection |
+| Cycle Next / Prev | D-Right / D-Left | Cycle through objects |
+| Camera Mode | L / R | Cycle camera modes |
+| Open Menu | Start | Fixed (not remappable) |
+
+### Menu Mode (Fixed)
 
 | Input | Action |
 |-------|--------|
@@ -141,7 +148,8 @@ n64-dev-engine/
 │   │   ├── atmosphere.c/h     # Fog, sky gradient, 7 presets, linked lighting
 │   │   └── texture.c/h        # Sprite loading, TMEM upload, stats
 │   ├── input/
-│   │   └── input.c/h          # Controller polling, analog/button mapping
+│   │   ├── action.c/h         # Action mapping: remappable bindings, contexts
+│   │   └── input.c/h          # Camera input adapter (reads from action API)
 │   ├── collision/
 │   │   └── collision.c/h      # Sphere/AABB colliders, raycasting
 │   ├── scene/
@@ -212,7 +220,11 @@ See [ROADMAP.md](docs/ROADMAP.md) for the full development roadmap with detailed
 **Next Engine Features:**
 - Sprite animation (frame-based billboard animation)
 - Basic physics (gravity, knockback, jumping)
-- Input action mapping (abstract game actions)
+
+**Input System Roadmap:**
+- File-based control scheme definitions (load `ActionContext` from DFS text/binary files)
+- Multiple simultaneous contexts (e.g., Exploration + Combat + Tactics)
+- Multiplayer controller support (ports 2-4, per-player action contexts)
 
 **Milestones:**
 - External model loading via Tiny3D + GLTF pipeline

@@ -35,6 +35,7 @@ OBJS = $(BUILD_DIR)/main.o \
        $(BUILD_DIR)/render/particle.o \
        $(BUILD_DIR)/render/atmosphere.o \
        $(BUILD_DIR)/input/input.o \
+       $(BUILD_DIR)/input/action.o \
        $(BUILD_DIR)/ui/text.o \
        $(BUILD_DIR)/ui/menu.o \
        $(BUILD_DIR)/collision/collision.o \

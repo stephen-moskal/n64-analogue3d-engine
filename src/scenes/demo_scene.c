@@ -5,6 +5,7 @@
 #include "../render/floor.h"
 #include "../render/texture.h"
 #include "../input/input.h"
+#include "../input/action.h"
 #include "../ui/text.h"
 #include "../ui/menu.h"
 #include "../render/billboard.h"
@@ -267,6 +268,9 @@ static const TextBoxConfig pos_text = {
 #define ITEM_FOG_FAR       3
 #define ITEM_FOG_COLOR     4
 #define ITEM_SKY_TOGGLE    5
+
+// --- Controls tab indices (item order matches GameAction enum) ---
+#define TAB_CONTROLS       4
 
 // --- Lighting preset tables ---
 
@@ -639,8 +643,7 @@ static void demo_init(Scene *scene) {
 // Object manipulation
 // ============================================================
 
-static void handle_object_manipulation(Scene *scene, const InputState *input,
-                                        joypad_buttons_t pressed) {
+static void handle_object_manipulation(Scene *scene, const InputState *input) {
     SceneObject *obj = scene_get_object(scene, selected_object);
     if (!obj) return;
 
@@ -695,13 +698,14 @@ static void handle_object_manipulation(Scene *scene, const InputState *input,
 // ============================================================
 
 static void demo_update(Scene *scene, float dt) {
+    // Poll input through action mapping layer
+    action_update();
     InputState input_state;
     input_update(&input_state);
 
-    joypad_buttons_t pressed = joypad_get_buttons_pressed(JOYPAD_PORT_1);
-
-    // Menu input (START always toggles menu)
-    if (pressed.start) {
+    // Menu input (START is fixed — always toggles menu)
+    joypad_buttons_t raw_pressed = joypad_get_buttons_pressed(JOYPAD_PORT_1);
+    if (raw_pressed.start) {
         if (start_menu.is_open) {
             menu_close(&start_menu, true);
             snd_play_sfx(SFX_MENU_CLOSE);
@@ -724,15 +728,15 @@ static void demo_update(Scene *scene, float dt) {
     // --- Interaction mode handling ---
 
     if (!start_menu.is_open) {
-        // B button: burst particles (only in normal mode)
-        if (interaction_mode == MODE_NORMAL && pressed.b) {
+        // Cancel button: burst particles (only in normal mode)
+        if (interaction_mode == MODE_NORMAL && action_pressed(ACTION_CANCEL)) {
             particle_emitter_burst(emitter_fire);
             particle_emitter_burst(emitter_magic);
             snd_play_sfx(SFX_MODE_CHANGE);
         }
 
-        // Z trigger: toggle object select mode
-        if (pressed.z) {
+        // Select mode: toggle object select
+        if (action_pressed(ACTION_SELECT_MODE)) {
             if (interaction_mode == MODE_NORMAL) {
                 interaction_mode = MODE_OBJECT_SELECT;
                 if (selected_object < 0 && selectable_object_count > 0)
@@ -746,40 +750,40 @@ static void demo_update(Scene *scene, float dt) {
         }
 
         if (interaction_mode == MODE_OBJECT_SELECT) {
-            // D-pad L/R: cycle selected object
-            if (pressed.d_left && selectable_object_count > 0) {
+            // Cycle prev/next: cycle selected object
+            if (action_pressed(ACTION_CYCLE_PREV) && selectable_object_count > 0) {
                 selected_object--;
                 if (selected_object < 0) selected_object = selectable_object_count - 1;
                 snd_play_sfx(SFX_MENU_NAV);
             }
-            if (pressed.d_right && selectable_object_count > 0) {
+            if (action_pressed(ACTION_CYCLE_NEXT) && selectable_object_count > 0) {
                 selected_object = (selected_object + 1) % selectable_object_count;
                 snd_play_sfx(SFX_MENU_NAV);
             }
-            // A: enter transform mode
-            if (pressed.a) {
+            // Confirm: enter transform mode
+            if (action_pressed(ACTION_CONFIRM)) {
                 interaction_mode = MODE_OBJECT_TRANSFORM;
                 transform_mode = TRANSFORM_MOVE;
                 snd_play_sfx(SFX_MODE_CHANGE);
             }
-            // B: exit to normal
-            if (pressed.b) {
+            // Cancel: exit to normal
+            if (action_pressed(ACTION_CANCEL)) {
                 interaction_mode = MODE_NORMAL;
                 selected_object = -1;
             }
         } else if (interaction_mode == MODE_OBJECT_TRANSFORM) {
-            // A: cycle transform mode
-            if (pressed.a) {
+            // Confirm: cycle transform mode
+            if (action_pressed(ACTION_CONFIRM)) {
                 transform_mode = (transform_mode + 1) % 3;
                 snd_play_sfx(SFX_MODE_CHANGE);
             }
-            // B: back to select
-            if (pressed.b) {
+            // Cancel: back to select
+            if (action_pressed(ACTION_CANCEL)) {
                 interaction_mode = MODE_OBJECT_SELECT;
                 snd_play_sfx(SFX_OBJ_DESELECT);
             }
             // Manipulate object with analog/C-buttons
-            handle_object_manipulation(scene, &input_state, pressed);
+            handle_object_manipulation(scene, &input_state);
         }
     }
 
@@ -800,15 +804,15 @@ static void demo_update(Scene *scene, float dt) {
             snd_play_sfx(SFX_MENU_SELECT);
         }
     } else if (interaction_mode != MODE_OBJECT_TRANSFORM) {
-        // L/R shoulder buttons: cycle camera mode
-        if (pressed.l) {
+        // Camera mode cycling
+        if (action_pressed(ACTION_CAM_MODE_PREV)) {
             int mode = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_CAMERA_MODE);
             mode = (mode + 2) % 3;
             start_menu.tabs[TAB_SETTINGS].items[ITEM_CAMERA_MODE].selected = mode;
             apply_camera_mode(scene, mode);
             last_camera_mode = mode;
         }
-        if (pressed.r) {
+        if (action_pressed(ACTION_CAM_MODE_NEXT)) {
             int mode = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_CAMERA_MODE);
             mode = (mode + 1) % 3;
             start_menu.tabs[TAB_SETTINGS].items[ITEM_CAMERA_MODE].selected = mode;
@@ -1057,6 +1061,13 @@ static void demo_update(Scene *scene, float dt) {
         menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_COLOR, !pt_on);
         menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_INTENSITY, !pt_on);
         menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_RADIUS, !pt_on);
+    }
+
+    // --- Apply control rebindings from Controls tab ---
+    // Menu item indices match GameAction enum; option indices match PhysicalButton enum
+    for (int i = 0; i < ACTION_COUNT; i++) {
+        int btn_idx = menu_get_value(&start_menu, TAB_CONTROLS, i);
+        action_set_binding((GameAction)i, (PhysicalButton)btn_idx);
     }
 
     // Background color: atmosphere preset overrides Settings tab

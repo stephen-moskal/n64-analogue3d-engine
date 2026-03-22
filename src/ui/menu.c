@@ -231,22 +231,23 @@ void menu_draw(const Menu *menu) {
     };
     text_draw(&title_cfg, menu->title);
 
-    // Tab headers
-    int tab_width = (MENU_X1 - MENU_X0 - 2 * MENU_PAD) / menu->tab_count;
-    for (int t = 0; t < menu->tab_count; t++) {
-        bool is_active = (t == menu->active_tab);
+    // Tab header — show active tab name with position indicator
+    {
+        int content_width = MENU_X1 - MENU_X0 - 2 * MENU_PAD;
         TextBoxConfig tab_cfg = {
-            .x       = MENU_X0 + MENU_PAD + t * tab_width,
+            .x       = MENU_X0 + MENU_PAD,
             .y       = MENU_TAB_Y,
-            .width   = tab_width,
+            .width   = content_width,
             .font_id = FONT_DEBUG_MONO,
-            .color   = is_active ? COLOR_TAB_ACT : COLOR_TAB_IDLE,
+            .color   = COLOR_TAB_ACT,
             .align   = ALIGN_CENTER,
         };
-        if (is_active) {
-            text_draw_fmt(&tab_cfg, "[%s]", menu->tabs[t].label);
+        if (menu->tab_count > 1) {
+            text_draw_fmt(&tab_cfg, "< [%s] %d/%d >",
+                menu->tabs[menu->active_tab].label,
+                menu->active_tab + 1, menu->tab_count);
         } else {
-            text_draw(&tab_cfg, menu->tabs[t].label);
+            text_draw_fmt(&tab_cfg, "[%s]", menu->tabs[menu->active_tab].label);
         }
     }
 

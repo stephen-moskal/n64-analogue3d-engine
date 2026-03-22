@@ -6,7 +6,7 @@
 
 #define MENU_MAX_TABS        6
 #define MENU_MAX_ITEMS      12
-#define MENU_MAX_OPTIONS    12
+#define MENU_MAX_OPTIONS    16
 #define MENU_VISIBLE_ITEMS   7
 
 typedef struct {
