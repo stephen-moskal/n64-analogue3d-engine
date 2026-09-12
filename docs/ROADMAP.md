@@ -1,4 +1,7 @@
-# Development Roadmap
+# Development Roadmap (v1 — superseded)
+
+> **This document is superseded by [ROADMAP_v2.md](ROADMAP_v2.md)** (2026-09-12). It is kept as the detailed delivery record for Features 1–10 and the original Milestone 1–3 text; new work is planned and tracked in v2.
+
 
 A methodical, incremental plan for building a flexible N64 graphics engine. Each feature builds on the previous one — the goal is to make each layer solid before stacking the next.
 

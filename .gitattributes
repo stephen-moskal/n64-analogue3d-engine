@@ -1,0 +1,18 @@
+# Force LF line endings for all text files.
+# The libdragon CLI bind-mounts this working tree into a Linux Docker container,
+# where GNU make and bash read Makefile/n64.mk/*.sh directly. CRLF endings
+# (the Windows git default, core.autocrlf=true) break them.
+* text=auto eol=lf
+
+# Binary assets and build outputs
+*.png binary
+*.wav binary
+*.wav64 binary
+*.xm binary
+*.xm64 binary
+*.sprite binary
+*.z64 binary
+*.elf binary
+*.dfs binary
+*.pak binary
+*.bin binary

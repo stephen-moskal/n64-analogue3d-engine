@@ -1,221 +1,130 @@
 # Development Workflow
 
-This guide covers the daily development workflow for N64 homebrew.
+Daily loop for this engine on Windows 11 or macOS. Environment setup is in [SETUP.md](SETUP.md).
 
 ## Build Cycle
 
-### Basic Workflow
-
-```bash
-# 1. Edit code
-# 2. Build
+```powershell
+# 1. Edit code in src/
+# 2. Build (make runs inside the libdragon Docker container)
 libdragon make
 
-# 3. Test in emulator
-open -a ares hello_cube.z64
+# 3. Test in the emulator
+ares .\hello_cube.z64             # macOS: open -a ares hello_cube.z64
 
-# 4. (Optional) Test on hardware
-sc64deployer upload hello_cube.z64
+# 4. Test on hardware (Analogue 3D + SummerCart64 over USB)
+sc64deployer upload .\hello_cube.z64
+# then power on / reset the console — the cart is set to boot the ROM directly
 ```
 
-### VSCode Tasks
+`libdragon make clean` removes `build/`, the ROM and the generated `filesystem/*.sprite` / `filesystem/audio/**` outputs; the next `make` regenerates them from `assets/`. Do this whenever the libdragon submodule changes (asset formats are version-specific).
 
-Use VSCode tasks (Cmd+Shift+B) for integrated workflow:
+### VS Code tasks
 
-| Task | Shortcut | Action |
-|------|----------|--------|
-| Build ROM | Cmd+Shift+B | Compile and link |
-| Clean Build | - | Remove build artifacts |
-| Rebuild | - | Clean + Build |
-| Run in ares | - | Build then launch emulator |
-| Upload to SummerCart64 | - | Build then upload to cart |
+`Ctrl+Shift+B` (macOS `Cmd+Shift+B`) runs the default build task. Tasks have per-OS commands.
+
+| Task | Action |
+|------|--------|
+| Build ROM | `libdragon make` |
+| Clean Build | `libdragon make clean` |
+| Rebuild | Clean Build, then Build ROM (sequential) |
+| Run in ares | Build, then launch the emulator with the ROM |
+| Upload to SummerCart64 | Build, then upload to the cart |
+| Debug (USB Log) | `sc64deployer debug` in a dedicated terminal |
 
 ## Debugging
 
-### USB Logging
+### Log channels
 
-The main.c includes USB debug initialization:
+`src/main.c` enables both channels at startup:
+
 ```c
-debug_init_isviewer();
-debug_init_usblog();
+debug_init_isviewer();   // emulator: ares shows it (Homebrew Mode on)
+debug_init_usblog();     // hardware: sc64deployer debug shows it
 ```
 
-To view logs:
-```bash
-sc64deployer debug
-```
+Use `debugf()` anywhere:
 
-Use `debugf()` in your code for output:
 ```c
-debugf("Player position: %d, %d\n", x, y);
+debugf("Player position: %f, %f\n", x, y);
 ```
 
-### Emulator Debugging
+- **Hardware:** `sc64deployer debug` in a second terminal, before you reset the console. The ROM prints `SMozN64 Dev Engine` on boot, so a silent log means the ROM did not start or the debug tool is not attached.
+- **Emulator:** ares prints ISViewer output to its terminal/log window.
 
-ares has built-in debugging features:
-1. Open ares
-2. Tools > Tracer (for CPU traces)
-3. Tools > Memory (for memory inspection)
+### Crashes and assertions
 
-### Common Debug Patterns
+libdragon's inspector takes over the screen on an exception or `assertf()` failure and shows the message, the failed expression and a symbolized backtrace (the `.sym` file is embedded in the ROM by n64.mk). The same text goes to the debug log. Example seen on 2026-09-12: `wav64 rom:/audio/sfx/menu_open.wav64: invalid version` from `snd_init` — stale generated assets, fixed by a clean rebuild.
 
-**Crash on startup:**
-- Check memory allocations (use `malloc_uncached` for DMA buffers)
-- Verify display initialization parameters
+### RDP validation
 
-**Graphics issues:**
-- Check viewport setup
-- Verify matrix stack (push/pop balanced)
-- Ensure proper depth buffer attachment
+`rdpq_debug_start()` is available (commented out in `src/main.c`); enabling it validates every RDP command at runtime and reports mistakes that ares tolerates but real hardware does not (e.g. triangles in fill mode). It costs CPU time; the roadmap (ROADMAP_v2 Phase 1) makes it a debug-build default.
 
-**Input not working:**
-- Verify `joypad_init()` called
-- Check controller port (JOYPAD_PORT_1)
-- Test with different input (analog vs d-pad)
+### Emulator tools
 
-## Performance Profiling
+ares (Homebrew Mode on): Tools → Tracer (CPU trace), Tools → Memory. Remember that ares is lenient: an RDP misuse that works there can hang the console, so test on hardware before calling a feature done.
 
-### Frame Timing
+### Common patterns
 
-Add timing code:
+- **Crash on startup** — asset format mismatch (see above), a `sprite_load`/`wav64_open` path typo (paths are `rom:/...`), or a DMA buffer that is not uncached/8-byte aligned.
+- **Graphics wrong on hardware only** — RDP mode/format mismatch (fill mode with triangles, `TRIFMT_ZBUF_*` without an attached Z-buffer, combiner vs vertex format). Enable `rdpq_debug_start()`.
+- **RSP timeout in `display_get`** — RDP pipeline misconfiguration; same checks.
+- **Input not working** — `action_init()` (which calls `joypad_init()`) must run before polling; check the port.
+
+## Performance
+
+Today the HUD shows FPS (`display_get_fps()`), triangle count and TMEM uploads (`T:`/`U:`), object counts and collision stats. Ad-hoc timing uses the CPU tick counter, as in `main.c`:
+
 ```c
-#include <timer.h>
-
-uint32_t start = timer_ticks();
-// ... rendering code ...
-uint32_t elapsed = timer_ticks() - start;
-float ms = (float)elapsed / (TICKS_PER_SECOND / 1000.0f);
-debugf("Frame time: %.2f ms\n", ms);
+uint32_t t0 = TICKS_READ();
+// ... work ...
+float ms = TICKS_DISTANCE(t0, TICKS_READ()) / (float)(TICKS_PER_SECOND / 1000);
+debugf("update: %.2f ms\n", ms);
 ```
 
-### RDP Statistics
-
-Use t3d debug features:
-```c
-#include <t3d/t3ddebug.h>
-
-// After rdpq_detach_show()
-t3d_debug_print_stats();
-```
+Per-phase profiling, RDP busy time, memory stats, a benchmark scene and a CSV export are Phase 1 of [ROADMAP_v2.md](ROADMAP_v2.md).
 
 ## Asset Pipeline
 
-### ROM Filesystem
+Sources live in `assets/`; `make` converts them with the container's tools into `filesystem/`, which `mkdfs` bundles into the ROM.
 
-Place assets in `filesystem/` directory. They'll be packed into the ROM:
+| Source | Tool (Makefile rule) | Output | Loaded with |
+|--------|----------------------|--------|-------------|
+| `assets/*.png` (32×32) | `mksprite --format RGBA16` | `filesystem/*.sprite` | `sprite_load("rom:/name.sprite")` |
+| `assets/audio/sfx/*.wav` | `audioconv64` | `filesystem/audio/sfx/*.wav64` | `wav64_open("rom:/audio/sfx/name.wav64")` via `snd_*` |
+| `assets/audio/music/*.wav` / `*.xm` | `audioconv64` | `filesystem/audio/music/*.wav64` / `*.xm64` | `snd_play_bgm()` |
 
-```
-filesystem/
-├── models/
-│   └── player.t3dm
-├── textures/
-│   └── grass.sprite
-└── sounds/
-    └── jump.wav64
-```
+Generated outputs are ignored by git. Placeholder WAVs can be regenerated with `python tools/gen_placeholder_audio.py`. Models (`*.t3dm` via Tiny3D) arrive in ROADMAP_v2 Phase 4.
 
-Build with filesystem:
-```makefile
-# Makefile already includes:
-$(BUILD_DIR)/$(TARGET).dfs: $(wildcard filesystem/*) | $(BUILD_DIR)
-    $(N64_MKDFS) $@ filesystem/
-```
-
-### Loading Assets
-
-```c
-// In code:
-dfs_init(DFS_DEFAULT_LOCATION);
-int fp = dfs_open("/models/player.t3dm");
-// ... load data ...
-dfs_close(fp);
-```
+Adding a texture: drop `name.png` in `assets/`, rebuild, load it into a slot with `texture_load_slot()` (see [TEXTURES.md](TEXTURES.md)). Adding a sound: drop the WAV in `assets/audio/sfx/`, add a `SoundDef` in `src/audio/sound_bank.c`.
 
 ## Version Control
 
-### What to Commit
+Committed: `src/`, `assets/`, `docs/`, `Makefile`, `.vscode/`, `.libdragon/config.json`, `.gitattributes`, the `libdragon` submodule pointer.
+Ignored: `build/`, `*.z64/*.elf/*.dfs/*.sym`, generated `filesystem/*.sprite` and `filesystem/audio/`, `*.pak` (emulator saves), `*.log`.
 
-- `src/` - all source files
-- `filesystem/` - game assets
-- `Makefile` - build config
-- `.vscode/` - editor config
-- `docs/` - documentation
-
-### What to Ignore
-
-The libdragon submodule is initialized separately. Your `.gitignore` should include:
-
-```
-# Build artifacts
-build/
-*.z64
-*.elf
-*.dfs
-
-# Editor
-.vscode/c_cpp_properties.json
-
-# System
-.DS_Store
-```
-
-### Workflow with Git
+Line endings are forced to LF by `.gitattributes`; on Windows also set `core.autocrlf=false` in the repo and the submodule (SETUP.md step 6).
 
 ```bash
-# Start feature
-git checkout -b feature/player-movement
-
-# Work...
-libdragon make
-# Test...
-
-# Commit
-git add src/
-git commit -m "Add player movement"
-
-# Push
-git push -u origin feature/player-movement
+git checkout -b feature/thing
+libdragon make && ares hello_cube.z64      # iterate
+sc64deployer upload hello_cube.z64         # verify on hardware before merging
+git commit -am "Feature: thing"
 ```
 
 ## Real Hardware Testing
 
-### SummerCart64 Workflow
+1. Build: `libdragon make`
+2. Connect the cart (USB); the console may be off during upload.
+3. Upload: `sc64deployer upload hello_cube.z64` (sets boot mode to "Bootloader → ROM").
+4. Start `sc64deployer debug` in another terminal, then power on / reset the console.
+5. Check the HUD FPS and exercise the feature; note anything that differs from ares.
 
-1. **Build ROM:**
-   ```bash
-   libdragon make
-   ```
+| Aspect | ares | Analogue 3D (FPGA N64) |
+|--------|------|------------------------|
+| Speed / timing | close, not exact | real |
+| RDP strictness | lenient (fill-mode triangles "work") | strict (hangs / RSP timeout) |
+| Debug output | ISViewer (Homebrew Mode) | USB log via sc64deployer |
+| Inspector / backtrace | yes | yes (also over USB) |
 
-2. **Connect cart:**
-   - Power on N64 (or use USB power)
-   - Connect USB cable
-
-3. **Upload:**
-   ```bash
-   sc64deployer upload hello_cube.z64
-   ```
-
-4. **Debug (optional):**
-   ```bash
-   # In separate terminal
-   sc64deployer debug
-   ```
-
-### Hardware vs Emulator Differences
-
-| Aspect | Emulator | Hardware |
-|--------|----------|----------|
-| Speed | May be faster/slower | Real timing |
-| Accuracy | ~99% (ares) | 100% |
-| Input | Keyboard/gamepad | Real controller |
-| Debug | Full access | USB log only |
-
-Always test on hardware before considering a feature complete.
-
-## Continuous Development Tips
-
-1. **Build frequently** - Catch errors early
-2. **Test in emulator first** - Faster iteration
-3. **Use debug logging** - Essential for hardware testing
-4. **Profile regularly** - N64 is performance-constrained
-5. **Commit working states** - Easy rollback if needed
+A feature is not done until it runs on the console. See ROADMAP_v2 §11 for the verification checklist.

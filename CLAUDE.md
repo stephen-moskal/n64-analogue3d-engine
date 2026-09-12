@@ -1,40 +1,61 @@
 # CLAUDE.md - N64 Dev Engine
 
 ## Project Overview
-Nintendo 64 homebrew game engine built with libdragon (unstable branch). Long-term goal: Final Fantasy Tactics-style strategy game. Current state: proof-of-concept rotating cube verified on real hardware (Analogue 3D via SummerCart64).
+Nintendo 64 homebrew game engine built on libdragon (`preview` branch, vendored as the `libdragon/` git submodule pinned at `10f3bd43e`, 2026-02-27). Verified on real hardware (Analogue 3D via SummerCart64) and in the ares emulator. Long-term goal: an action-RPG engine supporting souls-like combat and Final Fantasy Tactics-style battles, general enough for other genres.
+
+Current state (2026-09-12): 22 source modules (~7.6k LOC) — mesh system, multi-object scenes, camera, collision, physics, lighting + shadows, billboards, particles, fog/atmosphere, audio, action-mapped input, tabbed menu, text. Features 1–7, 9, 10 of `docs/ROADMAP.md` are complete. Planning now lives in `docs/ROADMAP_v2.md`: Phase 0 (Windows environment) is done; Phase 1 (profiler, stats, benchmark scene, debug/release builds, CI) is next, then engine hardening, CPU-path graphics features, and Tiny3D.
 
 ## Build & Deploy
+Development happens on Windows 11 (PowerShell) and macOS. The `libdragon` npm CLI runs `make` inside the Docker container `ghcr.io/dragonminded/libdragon:latest` (config in `.libdragon/config.json`, vendor strategy = submodule). Full setup: `docs/SETUP.md`.
 
-```bash
-# Build ROM (uses Docker container internally)
-libdragon make
+```powershell
+libdragon make                    # build -> hello_cube.z64 (~5 s warm)
+libdragon make clean              # also deletes generated filesystem/ assets; next make regenerates them
+libdragon install                 # rebuild libdragon into the container after touching the submodule
 
-# Clean build
-libdragon make clean
-
-# Test in emulator
-open -a ares hello_cube.z64
-
-# Deploy to SummerCart64 (N64 must be ON, SC64 connected via USB)
-"/Users/smoskal/Downloads/sc64deployer" upload hello_cube.z64
-# Then reset the console to boot
+ares .\hello_cube.z64             # emulator (macOS: open -a ares hello_cube.z64); Homebrew Mode on
+sc64deployer upload .\hello_cube.z64   # cart over USB, then power on / reset the console
+sc64deployer debug                # second terminal: debugf()/usblog output from the ROM
 ```
+
+VS Code tasks (`.vscode/tasks.json`) wrap the same commands with per-OS variants; `Ctrl+Shift+B` builds.
+
+## Repository Gotchas
+- **Line endings must be LF.** The container reads `Makefile`/`n64.mk`/`build.sh` from the bind mount. `.gitattributes` forces LF; on Windows the repo and the `libdragon/` submodule also need `core.autocrlf=false` + `core.eol=lf` (SETUP.md step 6).
+- **Generated assets are not committed.** `filesystem/*.sprite` and `filesystem/audio/**` are built from `assets/` by `mksprite`/`audioconv64`; their format depends on the libdragon version (a stale `.wav64` asserts `invalid version` at boot). Run `libdragon make clean` after changing the submodule.
+- `libdragon make` does not rebuild libdragon; `libdragon install` does.
+- The Makefile lists `OBJS` by hand (add new `.c` files there) and does not include the generated `.d` dependency files, so header edits need `libdragon make clean` until ROADMAP_v2 P1.1 lands.
+- `debug_init_isviewer()` + `debug_init_usblog()` are on; `rdpq_debug_start()` is commented out in `src/main.c`.
 
 ## Architecture
 
-### Source Files
-- `src/main.c` — Entry point, display init (320x240, 16-bit, triple-buffered), game loop
-- `src/cube.c/h` — 3D cube geometry, rotation matrices, perspective projection, face rendering
-- `src/lighting.c/h` — Blinn-Phong lighting (ambient + diffuse + specular), `LightConfig` struct
-- `src/input.c/h` — Joypad polling (analog stick + D-pad), `InputState` struct
+### Source Layout
+```
+src/main.c                 entry point: debug init, display (320x240 16-bit, triple-buffered), rdpq, DFS,
+                           menu construction (5 tabs), audio, Z-buffer, scene manager, variable-timestep loop
+src/math/vec3.h            vec3 math (header-only)
+src/render/                camera (orbital/fixed/follow, frustum, collision), mesh (builder + mesh_draw()),
+                           mesh_defs (pillar/platform/pyramid/sphere), cube, lighting (Blinn-Phong, sun,
+                           4 point lights), shadow (blob + projected), billboard, particle (128 pool, direct
+                           RDP batch), atmosphere (fog, sky, 7 presets), floor (10x10 grid), texture (16 slots)
+src/input/                 action (remappable ActionContext), input (camera adapter)
+src/collision/             sphere/AABB colliders, raycasts, layers (64 max)
+src/physics/               semi-fixed timestep bodies, gravity, bounce, ground raycast
+src/scene/                 Scene/SceneObject lifecycle, SceneManager, transitions, soft reset
+src/scenes/demo_scene.c    the demo (objects, menu semantics, HUD) — 1,325 lines, the largest file
+src/audio/                 snd_* mixer wrapper (BGM ch0, SFX ch2-7), sound_bank table
+src/ui/                    text (rdpq_text, builtin fonts), menu (tabbed, snapshot/revert)
+assets/                    source PNGs and WAVs; filesystem/ holds the generated outputs (ignored)
+tools/gen_placeholder_audio.py   regenerates the placeholder WAVs
+```
 
 ### Rendering Pipeline
-Software 3D transform + hardware RDP rasterization:
-1. CPU: rotation matrix, perspective projection, backface culling, depth sort (painter's algorithm), lighting
-2. RDP: triangle rasterization via `rdpq_triangle()`, rectangle fills via `rdpq_fill_rectangle()`
+CPU software transform + hardware RDP rasterization, hardware 16-bit Z-buffer (no painter's sort):
+1. CPU (`mesh_draw()`): bounding-sphere frustum cull, MVP transform per vertex, per-face-group Blinn-Phong lighting and backface cull, near-plane/guard-band clipping, viewport map.
+2. RDP: `rdpq_triangle()` with `TRIFMT_ZBUF_TEX` / `TRIFMT_ZBUF_SHADE(_TEX)` (fog uses shade alpha), per-frame TMEM uploads (32x32 RGBA16 sprites), fill rectangles for the sky gradient and UI panels.
 
 ### Critical Hardware Rules
-- **Fill mode is ONLY for rectangles.** Triangles MUST use 1-cycle mode or they crash on real hardware:
+- **Fill mode is ONLY for rectangles.** Triangles MUST use 1-cycle (standard) mode or they crash on real hardware:
   ```c
   // CORRECT for triangles:
   rdpq_set_mode_standard();
@@ -50,15 +71,19 @@ Software 3D transform + hardware RDP rasterization:
   rdpq_set_mode_fill(color);
   rdpq_triangle(...);
   ```
-- Ares emulator is lenient — always verify on hardware/FPGA
-- RSP timeout in `display_get` usually means RDP pipeline misconfiguration
+- `TRIFMT_ZBUF_*` formats need a Z-buffer attached (`rdpq_attach(fb, &zbuf)`); particles and shadows use Z-read on / Z-write off.
+- Ares emulator is lenient — always verify on hardware/FPGA. `rdpq_debug_start()` catches many of these mistakes at runtime.
+- RSP timeout in `display_get` usually means RDP pipeline misconfiguration.
+- 4 MB RDRAM, 4 KB TMEM (a 32x32 RGBA16 texture is 2 KB), DMA buffers uncached and 8-byte aligned.
 
 ## Conventions
-- All source in `src/`, headers alongside their `.c` files
-- Makefile uses libdragon's `n64.mk` include system
-- ROM assets go in `filesystem/` (bundled into `.dfs`)
-- IDE will show clang errors for libdragon headers — this is expected (cross-compilation toolchain)
+- All source in `src/`, headers alongside their `.c` files; one subsystem per directory; each subsystem gets a `docs/*.md`.
+- Makefile uses libdragon's `n64.mk` include system; assets convert at build time into `filesystem/` (bundled into the `.dfs`).
+- Work is incremental and measurable: every feature in ROADMAP_v2 has a test plan (ares + hardware) and a benchmark metric; a feature is done only when it runs on the Analogue 3D.
+- IDE will show clang errors for libdragon headers — expected (cross-compilation toolchain).
 
 ## Reference Documentation
-- Project docs: `docs/SETUP.md`, `docs/WORKFLOW.md`, `docs/ARCHITECTURE.md`
-- N64 development reference: `../awesome-n64-development/`
+- Planning: `docs/ROADMAP_v2.md` (current), `docs/ROADMAP.md` (v1 record of Features 1–10)
+- Environment/workflow: `docs/SETUP.md`, `docs/WORKFLOW.md`
+- Systems: `docs/ARCHITECTURE.md`, `docs/RENDERING.md`, `docs/MESH_SYSTEM.md`, `docs/CAMERA.md`, `docs/TEXTURES.md`, `docs/COLLISION.md`, `docs/PHYSICS.md`, `docs/SCENE_SYSTEM.md`, `docs/INPUT.md`, `docs/MENU_SYSTEM.md`
+- External: libdragon sources in `libdragon/` (submodule); optional N64 reference collection `../awesome-n64-development/` if checked out beside this repo

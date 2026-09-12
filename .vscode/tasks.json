@@ -34,26 +34,18 @@
         },
         {
             "label": "Rebuild",
-            "type": "shell",
-            "command": "libdragon make clean && libdragon make",
+            "dependsOrder": "sequential",
+            "dependsOn": ["Clean Build", "Build ROM"],
             "group": "build",
-            "problemMatcher": {
-                "owner": "c",
-                "fileLocation": ["relative", "${workspaceFolder}"],
-                "pattern": {
-                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
-                    "file": 1,
-                    "line": 2,
-                    "column": 3,
-                    "severity": 4,
-                    "message": 5
-                }
-            }
+            "problemMatcher": []
         },
         {
             "label": "Run in ares",
             "type": "shell",
-            "command": "open -a ares ${workspaceFolder}/hello_cube.z64",
+            "command": "open -a ares \"${workspaceFolder}/hello_cube.z64\"",
+            "windows": {
+                "command": "ares \"${workspaceFolder}/hello_cube.z64\""
+            },
             "dependsOn": "Build ROM",
             "problemMatcher": [],
             "presentation": {
@@ -63,7 +55,10 @@
         {
             "label": "Upload to SummerCart64",
             "type": "shell",
-            "command": "sc64deployer upload ${workspaceFolder}/hello_cube.z64",
+            "command": "sc64deployer upload \"${workspaceFolder}/hello_cube.z64\"",
+            "windows": {
+                "command": "sc64deployer upload \"${workspaceFolder}/hello_cube.z64\""
+            },
             "dependsOn": "Build ROM",
             "problemMatcher": [],
             "presentation": {

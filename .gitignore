@@ -5,8 +5,17 @@ build/
 *.dfs
 *.o
 *.d
+*.sym
+*.map
+*.stripped
 
-# libdragon submodule (initialized separately)
+# Generated assets — rebuilt by `make` from assets/ with the container's
+# mksprite/audioconv64. Their binary format is tied to the libdragon version,
+# so committing them causes "invalid version" asserts on other machines.
+filesystem/*.sprite
+filesystem/audio/
+
+# libdragon submodule working tree (the gitlink itself stays tracked)
 libdragon/
 
 # Editor
@@ -17,5 +26,6 @@ libdragon/
 .DS_Store
 Thumbs.db
 
-# Debug
+# Emulator saves, debug logs
+*.pak
 *.log

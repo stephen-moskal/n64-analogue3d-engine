@@ -1,0 +1,634 @@
+# Development Roadmap v2
+
+*Supersedes [ROADMAP.md](ROADMAP.md) (2026-09-12). v1 remains the delivery record for Features 1–10; this document plans everything from here.*
+
+The engine's purpose: a **flexible, modular N64 engine that is efficient for developers to build different games on**, with **extensive debugging and benchmarking tooling**, and **as many modern graphics-engine features as the hardware honestly allows** — a "state of the art" N64 engine. Every step is **incremental and testable**, verified on the Analogue 3D through the SummerCart64, and measured.
+
+## 0. How to read this document
+
+- **Feature IDs.** Numbers from v1 are kept (Feature 8, Features 11–21). New work is `P<phase>.<n>`, e.g. `P1.3`.
+- **Status vocabulary** (in every feature header): `planned → built → verified-host → verified-ares → verified-hw`. Only `verified-hw` (Analogue 3D via SummerCart64) counts as done for anything that touches the RDP, VI, audio, timing or memory. Pure-logic modules may stop at `verified-ares` plus host tests.
+- **Template.** Every Phase 0–3 feature uses Appendix A: Problem / Solution / Files / Dependencies / Test plan / Benchmark metric & acceptance / Docs / Definition of Done. Phases 4–6 carry the v1 text plus a test plan and one metric each.
+- **Phases are sequential by default**, but items inside a phase are ordered by dependency and can be picked up individually. Each phase ends with a benchmark row, so regressions are visible per phase.
+
+## 1. Vision and guiding principles
+
+Long-term vision (unchanged from v1): an action-RPG engine supporting souls-like combat and Final Fantasy Tactics-style battles, general enough for other genres. The first playable is a 1v1 arena; the tactics battle is the second track on the same foundation.
+
+1. **Make each layer boring before building the next.**
+2. **Verify on real hardware early and often.** ares is lenient; the Analogue 3D via SummerCart64 is the source of truth.
+3. **Document as you build.** Every system gets a `docs/*.md` with architecture, API and the why.
+4. **Respect the hardware.** 4 MB RDRAM, 4 KB TMEM, 16-bit Z. Design around the constraints.
+5. **Prefer libdragon's built-in systems.** Build custom only when libdragon lacks it or the educational value justifies it.
+6. **Measure before and after.** *(new)* No feature merges without a row in `docs/BENCHMARKS.md` showing what it cost or saved.
+7. **Debug builds are strict, release builds are lean.** *(new)* Validators, asserts and the profiler are on in `BUILD=debug` and compiled out in `BUILD=release`; both variants build in CI.
+
+## 2. Current state (2026-09-12)
+
+**Delivered (v1 Features 1–7, 9, 10):** mesh system + shape library, multi-object scenes with selection/manipulation, audio (BGM + SFX, 16-channel mixer), billboards, configurable sun + 4 point lights + blob/projected shadows, 128-particle system with direct RDP batching, fog/atmosphere with 7 presets and sky gradient, semi-fixed-timestep physics, remappable action mapping with a Controls tab, tabbed menu, text. 22 modules, 7,651 lines under `src/`. Details in [ROADMAP.md](ROADMAP.md).
+
+**Not started from v1:** Feature 8 (sprite animation), Milestone 1 (Tiny3D + GLTF), Milestones 2–3.
+
+**Phase 0 result (this document's first delivery):** the engine builds and runs on Windows 11 through the Docker-based `libdragon` CLI, boots on the Analogue 3D, and prints its USB log. Numbers:
+
+| Measurement | Value |
+|---|---|
+| Toolchain | libdragon submodule `10f3bd43e` (preview, 2026-02-27) compiled by GCC 16.2.0 in `ghcr.io/dragonminded/libdragon:latest` |
+| `libdragon init` (build libdragon into the container) | ~50 s (16 cores) |
+| `libdragon make` (project, 22 modules) | ~5 s warm, 6 s after `clean` |
+| ROM | `hello_cube.z64` 344,064 bytes |
+| ELF | text 285,720 · data 82,360 · bss 34,400 (total 402,480) |
+| DFS | 66,832 bytes (9 sprites + 9 wav64) |
+| Upload (sc64deployer 2.20.2, SC64 firmware v2.20.2) | 0.2 s |
+| Emulator | ares v148 |
+| Hardware boot | Analogue 3D: scene runs, USB log shows all asset loads + `SMozN64 Dev Engine` |
+
+FPS / triangle / TMEM numbers from the HUD are captured in P0.2.
+
+**Known-defect register** (found in the 2026-09 assessment; fixed in Phase 2 unless noted):
+
+| # | Defect | Where |
+|---|---|---|
+| D1 | Texture leak on Reset Scene: `texture_init()` re-loads slots 0–5 without freeing; `demo_cleanup` never calls `texture_cleanup()` (~12 KB per reset) | `src/render/texture.c:17-27`, `src/scenes/demo_scene.c:1278` |
+| D2 | Flat-color materials are drawn with `TRIFMT_ZBUF_TEX` instead of `TRIFMT_ZBUF` | `src/render/mesh.c:286-292` |
+| D3 | Lighting and backface culling use one normal per face group and the object-centre view direction: spheres shade wrong, near/large meshes cull wrong faces | `src/render/mesh.c:163-170, 240-262` |
+| D4 | Texture upload happens before the group cull, so culled groups still pay a TMEM load and the `U:` HUD stat over-reports | `src/render/mesh.c:233` vs `:258` |
+| D5 | `rdpq_mode_alphacompare(1)` is never cleared; state leaks to later draws | `src/render/mesh.c:225-227` |
+| D6 | `camera.dirty = true` every frame defeats the dirty-flag optimisation (6 `sqrtf` + trig per frame) | `src/scenes/demo_scene.c:995` |
+| D7 | HUD raycast and visible-object scan run even when the HUD is hidden | `src/scenes/demo_scene.c:1205-1216` |
+| D8 | Every `Mesh` mallocs full capacity (16,384 + 2,048 bytes) regardless of size: ~108 KB for ~6 KB of data | `src/render/mesh.c:45-62` |
+| D9 | Screen size and guard-band constants duplicated across 8 files | `mesh.c`, `floor.c`, `shadow.c`, `particle.c`, `scene.c`, `atmosphere.c`, `main.c` |
+| D10 | Menu option strings live in `main.c`, their meanings in `demo_scene.c`, coupled by raw index with no bounds checks; `MENU_MAX_ITEMS 12` vs Controls tab = `ACTION_COUNT` 11 | `src/main.c:25-68`, `src/scenes/demo_scene.c:248-334` |
+| D11 | `PhysicsWorld` is a demo static; `SceneObject.collider_handle` unused (demo keeps `obj_colliders[]`); fade transitions and per-scene texture manager are untested code | `src/scenes/demo_scene.c:85,159`, `src/scene/scene.c` |
+| D12 | Three input paths: action layer, raw joypad in `menu.c`, raw START poll | `src/ui/menu.c:108,160`, `src/scenes/demo_scene.c:735` |
+| D13 | `ParticleBlendMode` is declared and set but the renderer hardcodes additive; `PARTICLE_SPAWN_POINT` unhandled | `src/render/particle.c:344,152` |
+| D14 | Projected shadows transform every vertex twice with no culling; particle→emitter lookup is O(particles × emitters); sky repaints the cleared framebuffer; collision queries scan all 64 slots | `shadow.c:150,160`, `particle.c:249-258`, `atmosphere.c:319-345`, `collision.c:472-536` |
+| D15 | Makefile: no `all:` target, generated `.d` files are not included (header edits do not rebuild), `OBJS` hand-listed | `Makefile` |
+| D16 | Physics (Feature 9) was only verified in ares | — (verified on hardware in P0.2 / P2.10) |
+| D17 | *Fixed in Phase 0:* generated `filesystem/*.sprite` and `*.wav64` were committed; a version-2 `.wav64` from the macOS toolchain asserted `invalid version` at boot with the current libdragon. Outputs are now git-ignored and regenerated by `make`. | `.gitignore` |
+
+## 3. Phase overview
+
+| Phase | Name | Exit criterion |
+|---|---|---|
+| 0 | Environment re-establishment & baseline (Windows 11) | ROM builds via Docker on Windows, boots in ares and on the Analogue 3D, `debugf` visible on both channels, baseline recorded, `docs/SETUP.md` reproducible from a clean machine |
+| 1 | Developer tooling & benchmarking foundation | Overlay pages (stats, profiler, memory, frame time, RSP), benchmark scene + CSV + baseline table, debug/release variants, CI green, DEBUGGING / PROFILING / BENCHMARKS / HARDWARE docs |
+| 2 | Engine hardening | Defect register closed, 0 B heap growth over 10 resets, demo frame time −15 % vs baseline, heap −90 KB, `demo_scene.c` no longer owns menu semantics, physics verified-hw |
+| 3 | Graphics features independent of Tiny3D | Vertex cache, Gouraud, sprite animation, CI4/TMEM residency, fonts, VI options, decals, skybox, sorted transparency — each with a BENCHMARKS row |
+| 4 | Milestone 1: libdragon upgrade + Tiny3D + GLTF (F11–16) | Blender → ROM pipeline; ≥ 64 pillars at 60 FPS on hardware; both render paths measured by the Phase 1 tools |
+| 5 | Milestone 2: animation & characters (F17–21) | Stick-controlled animated character, entity pattern, FFT grid track |
+| 6 | Milestone 3: game framework | Souls-like 1v1 arena, FFT battle loop, save/load, AI |
+
+**Why this order.** Phase 0 isolates environment faults by building with the unchanged Makefile. Phase 1 comes before engine or graphics work because every later phase is judged by numbers (Tiny3D's value is "objects per frame at 60 FPS", hardening's value is "ms saved and KB freed") and because the RDP validator in debug builds turns "works in ares, hangs on hardware" from a mystery into a log line. Phase 2 removes debt before it is copied into a second render path. Phase 3 takes the features that are valuable on the layers that stay CPU-rendered under Tiny3D (floor, particles, billboards, shadows, HUD) and that raise the demo's visual bar now. Phase 4 adds P4.0 (submodule upgrade, Tiny3D vendored and built in the container and in CI, fresh baseline) before the v1 Features 11–16. Phases 5–6 carry Milestones 2–3 with the template applied lightly.
+
+---
+
+## 4. Phase 0 — Environment re-establishment & baseline
+
+### P0.1 Windows 11 toolchain & first build — status: verified-hw
+
+**Problem.** Development moved from macOS to a Windows 11 machine with nothing installed; the docs were macOS-only; the working tree was CRLF (Git for Windows `core.autocrlf=true`), which breaks `make`/`bash` inside the Linux build container; the SummerCart64 had no USB driver.
+
+**Solution (as executed).** WSL2 (`wsl --install --no-distribution`, reboot) → Docker Desktop → Node 24 + `npm i -g libdragon` → ares via winget (Homebrew Mode) → sc64deployer to `C:\tools\sc64deployer` → FTDI CDM driver via `pnputil` (cart appears as `serial://COM3`) → `.gitattributes` (`* text=auto eol=lf`) plus `core.autocrlf=false`/`core.eol=lf` in the repo and the submodule, re-checkout → `libdragon init` → `libdragon make`. The stale committed `.wav64` files (D17) asserted at boot; `make clean` + rebuild regenerated them, and they are no longer tracked.
+
+**Files.** `.gitattributes`, `.gitignore`, `.vscode/tasks.json` (per-OS commands), `docs/SETUP.md`, `docs/WORKFLOW.md`, `README.md`, `CLAUDE.md`.
+
+**Test plan.** ares: scene, menu, `SMozN64 Dev Engine` in the log. Hardware: `sc64deployer upload` + reset, scene runs, `sc64deployer debug` shows the asset-load lines and the banner. ✔ both on 2026-09-12.
+
+**Benchmark metric.** Build times, ROM/ELF sizes (table in §2).
+
+**Definition of Done.** ✔ Clean-machine walkthrough of SETUP.md reproduces the build; both log channels work; generated assets rebuild from `assets/`; `git ls-files --eol` shows `w/lf`.
+
+### P0.2 Baseline capture — status: built (numbers partially recorded)
+
+**Problem.** No recorded reference numbers; the RAM figure in v1 is an estimate; physics was never seen on hardware.
+
+**Solution.** Record into `docs/BENCHMARKS.md` (created in P1.8; until then in §2): ROM/ELF/DFS sizes (done), build/upload times (done), HUD FPS + `T:`/`U:`/`OBJ`/`VIS` on ares and hardware in five canonical camera views with point lights and fog on/off, the physics ball on hardware, ares version, SC64 firmware. Re-shoot the five `docs/images/*.png` views.
+
+**Test plan.** Hardware checklist §11.2 items 1–6 against the unchanged ROM.
+
+**Definition of Done.** Dated, commit-tagged table; Feature 9 hardware result recorded; screenshots archived under `docs/images/verification/baseline/`.
+
+### P0.3 Documentation refresh — status: built
+
+Cross-platform SETUP.md (Windows 11 primary), WORKFLOW.md without the aspirational Tiny3D snippets, CLAUDE.md with the real layout and gotchas, README prerequisites/quick start, v1 roadmap banner. Remaining stale docs (MENU_SYSTEM.md details, RENDERING.md source table, missing AUDIO/PARTICLES/HARDWARE docs) are scheduled in §12.
+
+### P0.4 Repo hygiene — status: built
+
+Generated outputs and the ares `.pak` save untracked and ignored (D17); `.gitattributes` committed. Left for P2.11: the orphan `assets/grass_tex.png`, ROM rename.
+
+---
+
+## 5. Phase 1 — Developer tooling & benchmarking foundation
+
+Goal: answer "where does the frame go, and did this change make it better or worse?" on both ares and hardware, cheaply, every day.
+
+### 5.1 Module layout
+
+```
+src/debug/engine_debug.h        build switches: ENGINE_DEBUG / ENGINE_PROFILE / ENGINE_STATS; ENGINE_ASSERT, ENGINE_LOG
+src/debug/profiler.c/h          named CPU scope timers (TICKS_READ), moving averages, peaks, CSV dump, RSP/RDP bridge
+src/debug/stats.c/h             unified per-frame counters (replaces TextureStats)
+src/debug/memstats.c/h          heap (sys_get_heap_stats / mallinfo), stack watermark, FB/Z sizes, RDRAM size
+src/debug/frametime.c/h         256-frame ring: avg / min / max / p99 / 1 %-low, histogram
+src/debug/overlay.c/h           on-screen pages: Stats, Profiler, Memory, FrameTime, RSP
+src/debug/rdp_debug.c/h         rdpq_debug_start() gating, one-frame RDP log capture, TMEM dump
+src/scenes/benchmark_scene.c/h  deterministic stress harness with CSV output
+tests/host/                     host (gcc) unit tests for pure-C modules + a small libdragon.h shim
+tools/bench_compare.py          baseline.csv vs new.csv with a regression threshold
+tools/rdp_log_to_hex.py         rdpq_debug_log text -> hex for `rdpvalidate`
+tools/rom_budget.py             parses the .map, enforces ROM/BSS caps
+.github/workflows/build.yml     CI: both variants + host tests in the libdragon image
+```
+
+### 5.2 Build switches — `engine_debug.h`
+
+```c
+#ifndef ENGINE_DEBUG
+#define ENGINE_DEBUG   1          // Makefile passes -DENGINE_DEBUG=0 for BUILD=release
+#endif
+#ifndef ENGINE_PROFILE
+#define ENGINE_PROFILE ENGINE_DEBUG
+#endif
+#ifndef ENGINE_STATS
+#define ENGINE_STATS   1          // counters are cheap; kept in release unless overridden
+#endif
+#if ENGINE_DEBUG
+  #define ENGINE_ASSERT(cond, ...)  assertf(cond, __VA_ARGS__)
+  #define ENGINE_LOG(...)           debugf(__VA_ARGS__)
+#else
+  #define ENGINE_ASSERT(cond, ...)  ((void)0)
+  #define ENGINE_LOG(...)           ((void)0)
+#endif
+```
+
+libdragon already compiles `debugf`/`assertf`/`debug_init_*` to no-ops under `-DNDEBUG`, and its `PROFILE_START/STOP` macros vanish with `-DLIBDRAGON_PROFILE=0`, so a release build carries no logging or profiling code.
+
+### 5.3 Profiler — `profiler.h`
+
+The engine owns its scope timers (two `TICKS_READ()` per scope) because libdragon's `profile.h` exposes per-slot data only through `profile_dump()`; the HUD, histogram and CSV need the values every frame. An optional `-DENGINE_PROFILE_LIBDRAGON=1` mirrors each scope into `PROFILE_START/STOP` so `profile_dump()` and emulator profilers see the same slots.
+
+```c
+typedef enum {
+    PROF_FRAME,            // display_get() return -> rdpq_detach_show() return (+ audio)
+    PROF_WAIT_DISPLAY,     // time blocked in display_get()
+    PROF_INPUT, PROF_UPDATE, PROF_PHYSICS, PROF_PARTICLE_UPDATE,
+    PROF_SKY, PROF_FLOOR, PROF_CULL, PROF_TRANSFORM, PROF_LIGHTING, PROF_SUBMIT,
+    PROF_SHADOWS, PROF_PARTICLE_DRAW, PROF_HUD, PROF_OVERLAY, PROF_AUDIO,
+    PROF_SLOT_COUNT
+} ProfSlot;
+
+typedef struct {
+    uint32_t last_ticks[PROF_SLOT_COUNT];   // completed frame
+    uint16_t calls[PROF_SLOT_COUNT];
+    float    avg_us[PROF_SLOT_COUNT];       // 64-frame moving average
+    float    peak_us[PROF_SLOT_COUNT];      // since profiler_reset_peaks()
+    uint32_t frame_index;
+} ProfilerFrame;
+
+void  profiler_init(void);
+void  profiler_frame_begin(void);
+void  profiler_frame_end(void);             // rolls counters, frametime_record(), rspq_profile_next_frame()
+const ProfilerFrame *profiler_get(void);
+const char *profiler_slot_name(ProfSlot s);
+void  profiler_reset_peaks(void);
+void  profiler_dump_csv(void);              // debugf("PROF,<frame>,<slot0_us>,...\n")
+static inline void profiler_record(ProfSlot s, uint32_t ticks);
+
+#if ENGINE_PROFILE
+  #define PROF_BEGIN(slot)  uint32_t __prof_t0_##slot = TICKS_READ()
+  #define PROF_END(slot)    profiler_record(slot, TICKS_DISTANCE(__prof_t0_##slot, TICKS_READ()))
+#else
+  #define PROF_BEGIN(slot)  ((void)0)
+  #define PROF_END(slot)    ((void)0)
+#endif
+
+// RSP/RDP bridge — valid only when the installed libdragon was built with RSPQ_PROFILE=1
+typedef struct {
+    bool  available;
+    float rdp_busy_pct;
+    float rsp_overlay_pct[RSPQ_PROFILE_SLOT_COUNT];
+    const char *overlay_name[RSPQ_PROFILE_SLOT_COUNT];
+} RspProfile;
+bool profiler_rsp_get(RspProfile *out);     // rspq_profile_get_data() under #if RSPQ_PROFILE, else available=false
+```
+
+**RSP/RDP numbers need an instrumented libdragon.** `RSPQ_PROFILE` is a hard `#define RSPQ_PROFILE 0` in `libdragon/include/rspq_constants.h`, not overridable from project CFLAGS. P1.7 documents the procedure: flip it to 1 in the submodule (kept as `tools/patches/rspq_profile.patch`), `libdragon install`, and the engine detects it with `#if RSPQ_PROFILE`. Normal builds show "RSP profile not available" on the RSP page.
+
+### 5.4 Unified stats — `stats.h`
+
+```c
+typedef struct {
+    uint16_t objects_total, objects_drawn, objects_culled_frustum;
+    uint16_t groups_drawn, groups_culled_backface;
+    uint32_t tris_submitted, tris_rejected_near, tris_rejected_guard;
+    uint32_t draw_calls, fill_rects, mode_changes;
+    uint16_t tex_uploads, tex_uploads_skipped; uint32_t tex_upload_bytes;
+    uint16_t particles_alive, particles_drawn, emitters_active, billboards_drawn, shadows_drawn;
+    uint16_t colliders, collision_pairs, raycasts, physics_bodies, physics_steps;
+    uint16_t sfx_playing;
+} EngineStats;
+
+extern EngineStats g_stats_cur;             // written during the frame
+void stats_frame_begin(void);               // cur -> last, zero cur
+const EngineStats *stats_get(void);         // last completed frame
+void stats_dump_csv_header(void);
+void stats_dump_csv_row(void);
+#if ENGINE_STATS
+  #define STATS_ADD(field, n) (g_stats_cur.field += (n))
+#else
+  #define STATS_ADD(field, n) ((void)0)
+#endif
+#define STATS_INC(field) STATS_ADD(field, 1)
+```
+
+Migration: `texture_stats_*` become thin wrappers for one phase, then go; `texture_upload()` counts only when a load is actually issued (and, after P3.3, `tex_uploads_skipped` on residency hits); `mesh.c` moves the upload after the group cull (D4); `demo_post_draw` reads `stats_get()`.
+
+### 5.5 Memory stats — `memstats.h`
+
+```c
+typedef struct {
+    int  rdram_total; bool expansion_pak;                       // get_memory_size(), is_memory_expanded()
+    int  heap_total, heap_used, heap_free, heap_largest_free;   // sys_get_heap_stats() + mallinfo()
+    int  fb_bytes, zbuf_bytes;                                  // 3 x 153,600 and 153,600 at 320x240x16
+    int  stack_painted, stack_watermark;                        // paint-and-scan
+} MemStats;
+void memstats_init(void);       // paint the stack region below SP with a pattern
+void memstats_update(void);     // every 60 frames: heap stats + scan for the high-water mark
+const MemStats *memstats_get(void);
+void memstats_dump(void);       // debugf("MEM,heap_used,heap_free,largest,stack_wm\n")
+```
+
+Leak protocol: the Memory page shows `heap_used`; "Reset Scene" ×10 must return to the same value. The tooling should demonstrate D1 (~12 KB per reset) before Phase 2 fixes it.
+
+### 5.6 Frame-time history — `frametime.h`
+
+```c
+#define FRAMETIME_WINDOW  256
+#define FRAMETIME_BUCKETS 24            // 1.5 ms buckets, 0-36 ms, last bucket = overflow
+typedef struct { float fps, avg_ms, min_ms, max_ms, p99_ms, low1_fps; uint16_t over_budget; } FrameTimeStats;
+void frametime_record(uint32_t frame_ticks);   // from profiler_frame_end()
+void frametime_get(FrameTimeStats *out);       // low1_fps = 1000 / mean of the slowest 1 % of frames
+const uint16_t *frametime_histogram(int *count, float *bucket_ms);
+void frametime_reset(void);
+```
+
+Budget line = 16.67 ms (60 FPS) or 33.3 ms (30 FPS) from the target frame rate.
+
+### 5.7 Overlay pages — `overlay.h`
+
+```c
+typedef enum { OVERLAY_OFF, OVERLAY_STATS, OVERLAY_PROFILER, OVERLAY_MEMORY,
+               OVERLAY_FRAMETIME, OVERLAY_RSP, OVERLAY_PAGE_COUNT } OverlayPage;
+void overlay_init(void);
+void overlay_set_page(OverlayPage p);
+OverlayPage overlay_get_page(void);
+void overlay_draw(void);                   // after scene post_draw, before menu_draw
+void overlay_request_csv_dump(void);       // next frame: profiler + stats + memstats CSV rows over debugf
+```
+
+- Selection through two Settings-tab menu items, **Debug Page** (Off/Stats/Prof/Mem/Frame/RSP) and a self-resetting **Dump CSV** — no new input path (D12 is fixed in P2.8, which adds a chord shortcut).
+- Rendering: dark panel via `rdpq_set_mode_fill` + `rdpq_fill_rectangle` (rectangles only — hardware-safe), labels via `text_draw_fmt`, bars via fill rectangles at 10 px/ms with a budget marker, green/yellow/red at < 60 % / < 90 % / ≥ 90 % of budget.
+- `PROF_OVERLAY` measures the overlay itself (expect < 0.3 ms with a page on, 0 when off).
+
+### 5.8 Main-loop instrumentation (`src/main.c`, later `src/engine/engine.c` in P2.5)
+
+```c
+profiler_init(); memstats_init(); overlay_init();
+#if ENGINE_DEBUG
+rdpq_debug_start();                         // right after rdpq_init()
+#endif
+while (1) {
+    PROF_BEGIN(PROF_WAIT_DISPLAY); surface_t *fb = display_get(); PROF_END(PROF_WAIT_DISPLAY);
+    profiler_frame_begin(); stats_frame_begin();
+    PROF_BEGIN(PROF_FRAME);
+      /* dt as today */
+      PROF_BEGIN(PROF_UPDATE); scene_manager_update(&mgr, dt); PROF_END(PROF_UPDATE);
+      rdpq_attach(fb, &zbuf);
+      scene_manager_draw(&mgr);             // sky/floor/objects/shadows/particles/HUD bracketed inside their modules
+      overlay_draw();
+      rdpq_detach_show();
+      PROF_BEGIN(PROF_AUDIO); snd_update(); PROF_END(PROF_AUDIO);
+    PROF_END(PROF_FRAME);
+    memstats_update(); profiler_frame_end();
+}
+```
+
+`mesh_draw()` brackets `PROF_CULL`, `PROF_TRANSFORM`, `PROF_LIGHTING`, `PROF_SUBMIT`; `demo_update` brackets `PROF_INPUT`, `PROF_PHYSICS`, `PROF_PARTICLE_UPDATE`; `sky_draw`, `floor_draw`, `shadow_*`, `particle_draw` and the HUD bracket their own slots. Nested scopes accumulate independently, so `PROF_FRAME` is wall time and the sub-slots explain it.
+
+### 5.9 Build variants — Makefile (P1.1)
+
+```make
+BUILD     ?= debug                          # debug | release
+BUILD_DIR  = build/$(BUILD)
+SOURCE_DIR = src
+include $(N64_INST)/include/n64.mk
+ROM_NAME   = engine$(if $(filter release,$(BUILD)),,-debug)
+N64_ROM_TITLE = "SMozN64 Engine"
+CFLAGS += -I$(SOURCE_DIR)
+ifeq ($(BUILD),release)
+  N64_CFLAGS += -DNDEBUG -DLIBDRAGON_PROFILE=0 -DENGINE_DEBUG=0 -DENGINE_PROFILE=0
+else
+  N64_CFLAGS += -DENGINE_DEBUG=1 -DENGINE_PROFILE=1
+endif
+SRCS := $(wildcard $(SOURCE_DIR)/*.c $(SOURCE_DIR)/*/*.c)
+OBJS := $(SRCS:$(SOURCE_DIR)/%.c=$(BUILD_DIR)/%.o)
+all: $(ROM_NAME).z64
+$(ROM_NAME).z64: $(BUILD_DIR)/$(ROM_NAME).dfs
+$(BUILD_DIR)/$(ROM_NAME).elf: $(OBJS)
+-include $(wildcard $(BUILD_DIR)/*.d $(BUILD_DIR)/*/*.d)
+.PHONY: all clean
+```
+
+Separate `build/<variant>` directories prevent stale objects; `-include` of the `.d` files fixes D15; the ROM is renamed from `hello_cube` to `engine` (docs, tasks and the deployer command follow). The cost of `rdpq_debug_start()` is measured once and recorded, so BENCHMARKS rows always state the variant.
+
+### 5.10 Benchmark scene (P1.8)
+
+```c
+typedef enum { BENCH_OBJECTS, BENCH_PARTICLES, BENCH_LIGHTS, BENCH_TEXTURES,
+               BENCH_SHADOWS, BENCH_FILLRATE, BENCH_ALL } BenchKind;
+typedef struct { BenchKind kind; int frames_per_step; bool loop; } BenchConfig;   // default 300 frames/step
+Scene *benchmark_scene_get(void);
+void   benchmark_scene_configure(const BenchConfig *cfg);
+```
+
+Deterministic: fixed orbital camera at 0.2 rad/s, seeded RNG, no menu. Steps:
+
+| Bench | Ramp | What it finds |
+|---|---|---|
+| OBJECTS | 8, 16, 24, 32, 48, 64 pillars (32 tris each) on a grid | the CPU-path ceiling v1 estimated at 20–30 objects |
+| PARTICLES | 32, 64, 96, 128 alive | particle update/draw cost |
+| LIGHTS | 0, 1, 2, 4 point lights over OBJECTS(16) | lighting cost per light |
+| TEXTURES | 1, 2, 4, 8 distinct textures over OBJECTS(16) | TMEM upload cost (motivates P3.3) |
+| SHADOWS | off, blob ×16, projected ×16 | shadow cost |
+| FILLRATE | 1, 2, 4, 8 full-screen textured layers | RDP-bound fill rate (Mpix/s) |
+
+One CSV line per step over `debugf`: `BENCH,<kind>,<step>,<param>,<frames>,<avg_ms>,<p99_ms>,<low1_fps>,<tris>,<uploads>,<heap_used>,<rdp_busy_pct|-1>`, then `BENCH,END`. Selected by a Settings item **Scene** (Demo/Benchmark) or `-DENGINE_BOOT_SCENE=benchmark` for unattended runs. Capture: hardware `sc64deployer debug | Tee-Object docs/benchmarks/<date>-<commit>-hw.csv`; ares terminal for `-ares.csv`. `tools/bench_compare.py baseline.csv new.csv --threshold 0.05` prints a table and exits 1 on regression.
+
+### 5.11 CI and host tests (P1.9)
+
+`.github/workflows/build.yml`: job `rom` runs in `ghcr.io/dragonminded/libdragon:latest` (same tag as `.libdragon/config.json`), checks out with submodules, `make -C libdragon install` (cached by submodule SHA), `make BUILD=debug` and `make BUILD=release`, `tools/rom_budget.py`, uploads `*.z64`, `.sym`, `.map`. Job `host-tests` builds `tests/host` with the host gcc and runs it.
+
+Host tests cover the pure-C modules: `test_vec3.c`, `test_collision.c` (sphere/sphere, sphere/AABB, ray/sphere, layer masks, nearest hit), `test_physics.c` (free fall matches ½gt² within 1 %, restitution, rest detection, max-steps clamp), `test_action.c`, `test_camera_math.c` (`mat4_*`, `camera_sphere_visible`), `test_frametime.c`. `tests/host/shim/libdragon.h` provides `color_t`/`RGBA32`, `joypad_*` stubs backed by a test-settable state, and `fm_*` → libm. `collision.c`, `physics.c` and `vec3.h` use no libdragon symbols; `action.c` uses only the joypad calls. Phase 2 moves `#include <libdragon.h>` out of `action.h`/`camera.h`/`lighting.h` into the `.c` files so the shim stays small.
+
+### 5.12 Crash diagnostics and RDP validation (P1.10)
+
+- The `.sym` file is already embedded in the ROM by n64.mk, so the on-console inspector shows a symbolized backtrace and also writes it to `debugf` (visible over `sc64deployer debug`). CI keeps `.sym`/`.map` as artifacts.
+- `docs/DEBUGGING.md` covers: log channels, inspector pages, `assertf`, `debug_backtrace()`, `rdpq_debug_start()` messages and what the common ones mean here (fill-mode triangles, `TRIFMT_ZBUF_*` without Z attached, combiner/format mismatches, TMEM overflow), one-frame RDP capture (`rdp_debug_capture_next_frame()` around `rdpq_debug_log(true/false)`), `tools/rdp_log_to_hex.py` → `libdragon exec rdpvalidate` offline, and `rdpq_debug_get_tmem()` dumps.
+
+### 5.13 Phase 1 features
+
+| ID | Feature | Problem → Solution | Files | Deps | Test (ares / hw / host) | Metric & acceptance | Docs |
+|---|---|---|---|---|---|---|---|
+| P1.1 | Build variants & Makefile restructure | D15; no debug/release split → §5.9 | `Makefile`, `src/debug/engine_debug.h`, `.vscode/tasks.json` (debug/release tasks), docs/CLAUDE.md (ROM name) | P0.1 | both ROMs boot on ares + hw; a header edit triggers a rebuild; a deliberate fill-mode triangle in a scratch scene is reported by the validator in debug only | release ROM ≤ debug ROM size; build times recorded | WORKFLOW.md, CLAUDE.md |
+| P1.2 | Unified stats | scattered counters, D4 → §5.4 | `src/debug/stats.c/h`, `texture.c`, `mesh.c`, `particle.c`, `collision.c`, `physics.c`, `shadow.c`, `billboard.c`, `demo_scene.c` | P1.1 | Stats page matches hand counts for the demo (≈345 tris steady / 455 in a burst; 8 uploads with all faces visible, fewer when culled) | uploads/frame in the demo drop from ≥ 8 to ≤ 6 after cull-before-upload; overhead ≤ 0.05 ms | PROFILING.md (glossary) |
+| P1.3 | CPU profiler + overlay bars | no per-phase timing → §5.3, §5.8 | `src/debug/profiler.c/h`, `main.c`, `mesh.c`, `demo_scene.c`, `floor.c`, `shadow.c`, `particle.c`, `atmosphere.c` | P1.1 | slot sum ≈ `PROF_FRAME` ± 5 % on ares and hw; CSV parses; peaks reset | profiler overhead ≤ 0.1 ms/frame (toggle `ENGINE_PROFILE`); first per-phase table for the demo | PROFILING.md |
+| P1.4 | Memory stats | no heap/stack visibility → §5.5 | `src/debug/memstats.c/h` | P1.1 | hw: Expansion-Pak/RDRAM value recorded for the Analogue 3D; Reset ×10 shows D1 | heap_used baseline row; stack watermark < 50 % of the painted region | HARDWARE.md, BENCHMARKS.md |
+| P1.5 | Frame-time history / histogram / 1 % lows | only a 2 Hz smoothed FPS → §5.6 | `src/debug/frametime.c/h`, `tests/host/test_frametime.c` | P1.3 | host: p99 / 1 %-low math; ares: single-bucket histogram at a steady 60 | — | PROFILING.md |
+| P1.6 | Debug overlay pages | ad-hoc HUD → §5.7 | `src/debug/overlay.c/h`, `main.c` (menu items), `demo_scene.c` (menu enums) | P1.2–1.5 | each page renders with zero validator messages; Off costs 0 | `PROF_OVERLAY` ≤ 0.3 ms with a page on | DEBUGGING.md |
+| P1.7 | RSP/RDP profiling (instrumented libdragon) | RDP/RSP time invisible → §5.3 note | `src/debug/profiler.c`, `tools/patches/rspq_profile.patch`, `docs/PROFILING.md` | P1.3 | RSP page shows the mixer overlay time and `rdp_busy_pct` on ares + hw; a normal build shows "not available" | first RDP-busy number for the demo | PROFILING.md |
+| P1.8 | Benchmark scene + CSV + compare tool | no stress harness → §5.10 | `src/scenes/benchmark_scene.c/h`, `tools/bench_compare.py`, `docs/BENCHMARKS.md`, `docs/benchmarks/*.csv` | P1.2–1.6 | full run on ares + hw (~10 min); CSV parses; compare tool exit codes | baseline rows for all six benches, hw + ares, debug + release | BENCHMARKS.md |
+| P1.9 | CI + host tests | no CI / tests → §5.11 | `.github/workflows/build.yml`, `tests/host/**`, `tools/rom_budget.py` | P1.1 | CI green on push; a deliberately broken collision test fails CI | CI wall time ≤ 10 min | WORKFLOW.md |
+| P1.10 | Crash diagnostics & RDP validation workflow | undocumented → §5.12 | `src/debug/rdp_debug.c/h`, `tools/rdp_log_to_hex.py`, `docs/DEBUGGING.md`, `docs/HARDWARE.md` | P1.1 | hw: a forced `assertf` shows the inspector and the USB backtrace; a one-frame capture validates clean offline | — | DEBUGGING.md, HARDWARE.md |
+
+Definition of Done for every row: builds in both variants, CI green, BENCHMARKS row committed, docs updated, status `verified-hw`.
+
+---
+
+## 6. Phase 2 — Engine hardening
+
+Close the defect register and remove the structural debt that would otherwise be copied into the Tiny3D path. Each item must show up in the profiler or memory page.
+
+| ID | Feature | Problem | Solution | Test / acceptance |
+|---|---|---|---|---|
+| P2.1 | Resource lifecycle on reset | D1; `Scene.texture_paths` manager unused | `texture_init()` becomes idempotent (frees before loading); `demo_cleanup` frees every slot; the demo loads textures through `Scene.texture_paths` (Tiny3D scenes will need per-scene assets too) | Memory page: Reset ×10 → heap delta exactly 0 B |
+| P2.2 | Renderer correctness | D2, D3, D4, D5 | flat → `TRIFMT_ZBUF` + `RDPQ_COMBINER_FLAT`; alpha-compare set per material with an explicit reset; per-triangle backface cull by screen-space winding (2-D cross product of the projected vertices — exact and cheaper than a normalized dot); upload after cull | sphere shades correctly; `groups_culled_backface` → `tris_culled_backface`; `PROF_SUBMIT` down on flat-material scenes; validator clean |
+| P2.3 | CPU hot paths | D6, D7, D14 | dirty flag only from menu-change branches; HUD work gated on `show_debug`; projected shadows cache transformed vertices and frustum-test the caster; `emitter_index` stored in `Particle`; clear only the rows the sky does not paint; collision queries bounded by `collider_count`; squared-distance compares, one `1/sqrtf` per normal | `PROF_UPDATE`, `PROF_SHADOWS`, `PROF_PARTICLE_UPDATE`, `PROF_SKY` each ≤ pre-fix −20 % (before/after rows) |
+| P2.4 | Mesh memory right-sizing | D8 | `mesh_finalize(Mesh*)` reallocs to exact size after building (or `mesh_reserve(nverts, nidx)` when sizes are known); `MESH_MAX_*` become build-time caps | Memory page: heap_used −90 KB after demo init |
+| P2.5 | Engine core & shared config | D9; loop lives in `main.c`; busy-wait limiter | `src/engine/engine_config.h` (`ENGINE_SCREEN_W/H`, `ENGINE_FB_COUNT`, guard bands, `ENGINE_MAX_FRAME_DT`), `src/engine/engine.c/h` (`engine_init(const EngineConfig*)`, `engine_run_frame(SceneManager*)`, `engine_set_target_fps()` → `display_set_fps_limit()`); `main.c` shrinks to menu construction + `engine_run` | hw: 30 FPS mode holds 30 without spinning (`PROF_WAIT_DISPLAY` shows the wait) |
+| P2.6 | Scene owns physics & colliders | D11 | `Scene.physics` initialised in `scene_init`; `scene_object_set_collider()` / `scene_sync_colliders()` replace `obj_colliders[]`; fade transition exercised by switching Demo ↔ Benchmark | ares + hw: fade works; host: `test_scene.c` for add/remove/collider sync |
+| P2.7 | Settings module | D10 | `src/ui/settings.c/h` owns tab/item enums, option tables and `settings_apply_*()`; `_Static_assert(ARRAY_LEN(opts) == ENUM_COUNT)` per table; bounds-checked `menu_get_value`; `_Static_assert(MENU_MAX_ITEMS >= ACTION_COUNT)`; `demo_scene.c` loses ~300 lines | host: table sizes; ares: every menu item still applies |
+| P2.8 | Input path unification | D12 | `ACTION_CTX_MENU` context with fixed actions (toggle, up/down/left/right, confirm, cancel, tab next/prev); Controls tab lists only the remappable subset; `action_chord_pressed(a, b)` for the debug overlay | host: `test_action.c` contexts/chords; hw: menu unchanged |
+| P2.9 | Particle system completeness | D13 | alpha blend mode via `RDPQ_BLENDER_MULTIPLY` + shade alpha in the sorted pass (P3.8) or per-emitter batches keyed by blend mode; point spawn = radius 0 | ares + hw: a smoke effect with alpha; `particles_drawn` stat |
+| P2.10 | Physics hardware verification & timing | D16 | physics ball + `test_physics.c`; real-`dt` behaviour with the 0.1 s cap at 60 and 30 FPS | hw: ball rests within 5 s, no tunnelling at either rate |
+| P2.11 | Build & repo hygiene | orphan `assets/grass_tex.png`; ROM name | remove or use the orphan; rename to `engine.z64` (with P1.1); document the asset policy | CI builds from a clean checkout |
+
+**Phase 2 exit row ("post-hardening"):** demo `PROF_FRAME` avg ≤ baseline −15 %; heap_used ≤ baseline −90 KB; OBJECTS bench ceiling at 60 FPS ≥ baseline +25 %.
+
+---
+
+## 7. Phase 3 — Graphics features independent of Tiny3D
+
+### 7.1 Candidate list with honest feasibility
+
+Ratings: **High** = known technique, fits TMEM/RAM/RDP with today's data; **Medium** = feasible with a measurable cost or constraint; **Experimental** = needs a spike before committing. "CPU path" = the current `mesh_draw()` layers, which stay CPU-rendered under Tiny3D for floor, particles, billboards, shadows, HUD.
+
+| Feature | Feasibility | Needs T3D? | When | Cost / constraint |
+|---|---|---|---|---|
+| Post-transform vertex cache (each mesh vertex transformed once, not per triangle corner) | High | No | P3.1 | demo does ≈1,365 `mat4_mul_vec3`/frame for ≈300–400 unique vertices → expect −40–50 % `PROF_TRANSFORM`; prerequisite for Gouraud |
+| Per-vertex Gouraud lighting (`TRIFMT_ZBUF_SHADE(_TEX)`, `RDPQ_COMBINER_SHADE`/`TEX_SHADE`) | High | No | P3.2 | `MeshVertex` already stores a normal; +1 normal transform + Blinn-Phong per unique vertex (≈1 ms for 500 verts with 4 lights); smooth normals needed in `mesh_defs` |
+| Sprite animation (Feature 8) | High | No | F8 | sheets: 64×32 RGBA16 = 4 KB fills TMEM → use CI4 (128×32 = 2 KB + 32 B TLUT) or `rdpq_tex_upload_sub` per frame |
+| TMEM residency manager + CI4 textures | High | No | P3.3 | 32×32 CI4 = 512 B + palette: all six cube faces, both billboards and a sprite sheet fit in 4 KB at once → zero per-frame uploads in the demo; `mksprite --format CI4`, `rdpq_tex_multi_begin/end` |
+| Texture atlas for billboards/particles | High | No | in P3.3 | same TMEM math; UV sub-rects |
+| TTF fonts via `mkfont` (`rdpq_font_load`) | High | No | P3.6 | `text.c` already uses `rdpq_text`; +20–60 KB ROM per font size |
+| VI options: `FILTERS_RESAMPLE_ANTIALIAS(_DEDITHER)`, `GAMMA_CORRECT(_DITHER)`, `rdpq_mode_dithering` | High | No | P3.5 | menu items + a measured table; AA/dedither cost RDRAM bandwidth, visible in `PROF_WAIT_DISPLAY` / RDP busy |
+| Decals & Z modes (`ZMODE_DECAL`, `rdpq_mode_zoverride`) | High | No | P3.4 | replaces manual Z-bias tricks for shadows; trivial RDP cost |
+| Skybox: yaw-scrolled 2-D panorama via `rdpq_tex_blit` | High | No | P3.7 | replaces 60 fill rectangles; a 256×64 CI4 panorama is 8 KB in ROM; textured 3-D dome is Medium (more tris, fog interaction) |
+| Sorted transparency pass (back-to-front translucent objects + alpha particles) | High | No | P3.8 | insertion sort over ≤ 32 objects per frame; Z-write off for translucents |
+| Dynamic / animated point lights + radius culling | High | No | P3.13 | animation is free; per-vertex lighting makes it look right |
+| UV scroll / water | High | No | P3.9 | per-frame UV offset; a second layer needs a second tile resident (fine with CI4) |
+| 2-cycle combiner effects: detail/multi-texture, fake specular map, sphere-map environment (view-space normal → UV on the CPU) | Medium | No | P3.9 (after P3.2) | two tiles resident; 2-cycle halves fill rate on those triangles — measure with FILLRATE |
+| Mipmapping (`mksprite --mipmap`, `rdpq_mode_mipmap`, `tex_mipmaps`) | Medium | No | P3.10 | 32×32 RGBA16 chain = 2.7 KB; needs 2-cycle and correct LOD (W is already computed); fixes floor shimmer |
+| LOD switching (distance-based mesh swap) | High | No | P3.12 | `MeshLOD { const Mesh *lod[3]; float dist[3]; }` on the object |
+| Full-screen fade / colour grade (blended full-screen rectangle) | High | No | P3.11 | ≈0.5–1 ms RDP; transitions already draw such a rectangle |
+| Cheap bloom / motion blur via framebuffer-as-texture (chunked `rdpq_tex_blit`, downsample, additive) | Experimental | No | P3.11 spike | ≈40 TMEM-sized blits per full-screen pass → 2–4 ms RDP; previous-frame reads need the triple-buffer index; likely 30 FPS only |
+| 640×480 interlaced / 512×240; anamorphic widescreen via `vi_set_xscale` | Medium (widescreen: High) | No | option | 640×480×16-bit ×3 = 1.8 MB FB + 614 KB Z → needs the Expansion Pak (record the Analogue 3D's RDRAM size in P1.4) and halves the CPU raster budget; widescreen via VI scaling is free |
+| Render-to-texture shadow maps projected in 2-cycle | Medium / Experimental | No (works on both) | after T3D | second pass of casters into a 32×32 surface; affordable once T&L is on the RSP; no stencil → no shadow volumes |
+| Occlusion / portal culling | Medium | No | after T3D | only pays off with large authored scenes (Fast64 custom properties) |
+| Terrain heightmap | Medium (CPU) / High (T3D) | prefer T3D | after T3D | CPU path limited to ≈16×16 visible chunks |
+| Instancing | T3D-only | Yes | after T3D | matrix stack + shared vertex buffers |
+
+### 7.2 Committed Phase 3 features
+
+Order: P3.1 → P3.2 → P3.3 → F8 → P3.8 → P3.4 → P3.6 → P3.5 → P3.7 → P3.12 → P3.13 → P3.9 → P3.10 → P3.11.
+
+| ID | Feature | Files | Deps | Test (ares / hw / host) | Metric & acceptance | Docs |
+|---|---|---|---|---|---|---|
+| P3.1 | **Post-transform vertex cache.** `mesh_draw` transforms `mesh->vertices[]` once into a static scratch array `MeshVertexOut { float sx, sy, sz, inv_w; uint8_t r, g, b, a; float s, t; uint8_t flags; }` (sized `MESH_MAX_VERTICES`), then assembles triangles from indices; near-plane/guard-band rejection becomes per-vertex flags | `mesh.c/h`, `shadow.c` (reuses the cache), `billboard.c` | P2.2, P2.5 | pixel-identical output (screenshot pair) | `PROF_TRANSFORM` −40 % or better on OBJECTS(32); tris/frame unchanged | RENDERING.md, MESH_SYSTEM.md |
+| P3.2 | **Gouraud shading.** `Material.shading = SHADING_FLAT | SHADING_SMOOTH`; smooth transforms normals per vertex and calls a specular-free `lighting_calculate_fast()` per vertex, shade RGB (A = fog) lands in the cache, `TRIFMT_ZBUF_SHADE(_TEX)`; flat path unchanged; `mesh_defs` sphere and pillar sides get averaged normals; floor gets per-vertex fog | `mesh.c/h`, `lighting.c/h`, `mesh_defs.c`, `floor.c` | P3.1 | sphere shows smooth shading; validator clean; host `test_lighting.c` | `PROF_LIGHTING` ≤ 1.5 ms on OBJECTS(32) with 4 lights; demo holds 60 | RENDERING.md, ARCHITECTURE.md |
+| F8 | **Sprite animation.** `src/render/anim_sprite.c/h`: `AnimDef { sheet slot, frame_w/h, frame_count, fps, loop }`, `AnimState { def, time, frame }`, `anim_update(AnimState*, dt)`, `anim_uv(const AnimState*, float uv[4][2])`; billboard materials gain an `AnimState*`; particles an optional `AnimDef*` (frame by life fraction) | `anim_sprite.c/h`, `billboard.c/h`, `particle.c/h`, `Makefile` (CI4 sheets), `assets/sheets/` | P3.3 (or `rdpq_tex_upload_sub`) | fire billboard animates at the authored rate; host `test_anim.c` (timing, loop/one-shot) | uploads/frame unchanged vs a static billboard | PARTICLES.md, ARCHITECTURE.md (Billboards) |
+| P3.3 | **TMEM residency manager + CI4.** `texture_upload` tracks `{slot, tmem_addr, tile}` and skips redundant loads; `texture_pack_begin/end()` places several small textures with `rdpq_tex_multi_begin/end`; `mksprite --format CI4` for 32×32 assets; `scene_draw` sorts objects by texture slot | `texture.c/h`, `mesh.c`, `scene.c`, `Makefile`, `assets/*.png` | P2.2 | no visual change; Stats page `tex_uploads` ≈ 0 steady-state in the demo | TEXTURES bench at 8 distinct textures: ≤ 8 → target 0 uploads/frame; `PROF_SUBMIT` −10 % | TEXTURES.md |
+| P3.4 | **Decals & Z modes.** Shadows use `ZMODE_DECAL` / `rdpq_mode_zoverride`; `Material.decal` flag | `shadow.c`, `mesh.c`, `floor.c` | P2.2 | hw: no Z-fighting on shadows at grazing angles | — | RENDERING.md |
+| P3.5 | **VI / display options.** Settings items AA (Off/Resample/AA/AA+Dedither), Gamma (Off/On/Dither), Dither (`rdpq_mode_dithering` presets); needs a `display_close()`/`display_init()` re-init path in the engine | `engine.c`, `settings.c`, `main.c` | P2.5, P2.7 | hw: each mode stable for 60 s; screenshots | table of `PROF_WAIT_DISPLAY` / RDP busy per mode | HARDWARE.md, RENDERING.md |
+| P3.6 | **TTF fonts.** `mkfont` rule `filesystem/fonts/%.font64: assets/fonts/%.ttf`; `FONT_UI` id; builtin fallback | `text.c/h`, `Makefile`, `assets/fonts/` | P1.1 | HUD readable on ares + hw; ROM delta recorded | text draw ≤ +0.2 ms | ARCHITECTURE.md (Text) |
+| P3.7 | **Skybox panorama.** `sky_draw()` blits a yaw-scrolled CI4 strip; gradient mode kept as fallback | `atmosphere.c/h`, `assets/sky/`, `Makefile` | P3.3 | hw: seamless wrap; fog band still matches `bg_color` | `PROF_SKY` ≤ previous 60-rectangle cost | ARCHITECTURE.md (Atmosphere) |
+| P3.8 | **Sorted transparency.** `SceneObject.translucent`; `scene_draw` = opaque pass → translucent pass back-to-front (Z-write off) → particles by blend mode | `scene.c/h`, `particle.c`, `mesh.c` | P2.6, P2.9 | overlapping translucent quads correct from all angles | sort ≤ 0.1 ms at 32 objects | RENDERING.md |
+| P3.9 | **UV scroll + 2-cycle effects.** `Material.uv_scroll`, `Material.detail_slot`; water tile, detail texture, sphere-map demo object | `mesh.c/h`, `mesh_defs.c` | P3.2, P3.3 | hw: validator clean in 2-cycle; FILLRATE with 2-cycle layers | 2-cycle cost table | RENDERING.md |
+| P3.10 | **Mipmapping** for the floor and large textures | `Makefile` (`--mipmap BOX`), `texture.c`, `mesh.c` (`tex_mipmaps`) | P3.3 | hw: no shimmer at distance | RDP busy delta recorded | TEXTURES.md |
+| P3.11 | **Post-processing.** Fade/colour-grade rectangle (`engine_post_fx_set(color, alpha)`); bloom/motion-blur as a documented spike with a go/no-go number | `engine.c`, RENDERING.md (spike results) | P2.5, P1.7 | hw: fade clean | fade ≤ 1 ms RDP; spike: go if a pass costs ≤ 3 ms | RENDERING.md |
+| P3.12 | **LOD switching** | `scene.c`, `demo_scene.c`, `mesh_defs.c` (low-poly variants) | P3.1 | pop distance tunable | OBJECTS(64) with LOD holds 60 where no-LOD does not | MESH_SYSTEM.md |
+| P3.13 | **Animated point lights + radius culling** (torch flicker, moving lights) | `lighting.c/h`, `demo_scene.c` | P3.2 | hw: flicker visible | `PROF_LIGHTING` unchanged ± 5 % | ARCHITECTURE.md |
+
+---
+
+## 8. Phase 4 — Milestone 1: libdragon upgrade, Tiny3D, GLTF pipeline
+
+The v1 rationale stands: the CPU transform path tops out around 20–30 objects; [Tiny3D](https://github.com/HailToDodongo/tiny3d) moves transform and lighting to the RSP, loads GLTF exported from Blender with Fast64, and brings skeletal animation. The Phase 1 tools exist precisely so that this transition is measured rather than assumed. The **parallel-path** architecture from v1 is kept: Tiny3D objects get their own `T3DObjectData` and draw callback through `SceneObject.on_draw`; the CPU pipeline (`mesh_draw()`, floor, particles, billboards, shadows, HUD) stays untouched; bridge functions sync `LightConfig` and `FogConfig` to Tiny3D.
+
+### P4.0 libdragon upgrade + Tiny3D integration (Docker / Windows / CI) — status: planned
+
+**Problem.** The submodule is ~460 commits behind `origin/preview`; Tiny3D requires `preview`; Tiny3D must be built inside the container and reproducibly in CI; `.libdragon/config.json` (`:latest`) and `.devcontainer` (`:preview`) disagree.
+
+**Solution.**
+1. `git -C libdragon fetch && git -C libdragon checkout <preview SHA that Tiny3D targets>`; `libdragon install`; fix API drift in project code (expected: `rdpq_font`/`rdpq_text` parameters, `display_init`/`vi.h`, joypad, `mksprite`/`audioconv64` flags, sprite accessors, `rspq_profile` struct); `libdragon make clean` (asset formats change); full benchmark run → "post-upgrade" rows = the fresh CPU baseline.
+2. One-day bake-off: libdragon's own `model64`/OpenGL RSP path vs Tiny3D on the same crate model — RSP overlay time (P1.7) and CPU time — decision recorded in `docs/T3D_INTEGRATION.md`.
+3. Vendor Tiny3D as `external/tiny3d` (submodule); build with `libdragon exec bash -c "cd external/tiny3d && ./build.sh"`; Makefile `include external/tiny3d/t3d.mk`; GLTF rule `filesystem/models/%.t3dm: assets/models/%.glb` using `$(T3D_GLTF_TO_3D)`; CI caches the Tiny3D build by submodule SHA.
+4. Align `.libdragon/config.json` and `.devcontainer` on `ghcr.io/dragonminded/libdragon:preview`.
+
+**Test.** Both ROM variants build in CI; the demo is unchanged on hardware; `rspq_profile` shows the Tiny3D overlay once Feature 11 lands.
+**Metric.** The upgrade must not regress the demo's `PROF_FRAME` by more than 5 % (investigate before proceeding).
+**Docs.** SETUP.md (Tiny3D section), WORKFLOW.md, T3D_INTEGRATION.md (new), CLAUDE.md.
+
+### Features 11–16 (v1 text applies, with these deltas)
+
+| Feature | v1 scope | Delta in v2 |
+|---|---|---|
+| F11 Tiny3D bootstrap | RSP proof of life: one quad drawn by Tiny3D beside the CPU scene | `PROF_T3D_SUBMIT` slot; RSP page shows the Tiny3D overlay; metric = RSP + CPU time for a 1-quad frame |
+| F12 GLTF model loading | first Blender model on screen; `docs/BLENDER_SETUP.md` | metric = DFS load time and heap delta per model (memstats) |
+| F13 Textured materials & fog bridge | Fast64 textures; `FogConfig` → Tiny3D fog; `docs/FAST64_MATERIALS.md` | tested in all 7 atmosphere presets; validator clean |
+| F14 Dual-path scene | pillar/platform/pyramid as Blender models; `t3d_demo_scene`; `docs/ASSET_PIPELINE.md` | `BENCH_OBJECTS_T3D` variant; acceptance ≥ 64 pillars at 60 FPS on hardware vs the CPU-path ceiling from Phase 1 |
+| F15 Developer tooling | model viewer scene, Tiny3D debug overlay, Blender template; `docs/T3D_INTEGRATION.md` | the viewer reuses the overlay pages; Tiny3D stats feed `stats.c` |
+| F16 Pipeline polish | LOD workflow, collision from model bounds; `docs/LOD_WORKFLOW.md` | collision-from-bounds gets host tests; v1's triangle budget table stays |
+
+N64 triangle budgets (design-time LOD, from v1): environment prop 20–50, architectural 30–80, humanoid character 150–300, boss/hero 300–500, vehicle/large prop 100–200.
+
+---
+
+## 9. Phase 5 — Milestone 2: animation & character system
+
+v1 Features 17–21 as written, each with a test plan (ares + hardware checklist) and one metric:
+
+| Feature | Metric |
+|---|---|
+| F17 Skeletal animation (rigged character, idle + walk, `AnimController`) | CPU skeleton update ≤ 1 ms per character; bones vs RSP time recorded |
+| F18 Animation blending & state queries (crossfade, speed, double-buffered skeletons) | blend cost per character recorded; no RSP DMA tearing on hardware |
+| F19 Character controller (stick movement, facing lerp, physics grounding) | input → animation state latency ≤ 1 frame |
+| F20 Animation state machine (named states, transition rules, keyframe events) | host tests for transitions and events |
+| F21 Entity/actor pattern (Transform / Renderable / Collidable / Animated / Controller / Combat / GameData capability pointers; 1 player + 1 enemy attack/dodge loop) | per-entity update cost recorded; 60 FPS with 2 animated characters + particles + shadows |
+| Grid-based movement (FFT track: tile grid, snapping, A*, tile-to-tile lerp) | A* on a 32×32 grid ≤ 1 ms (host test) |
+
+## 10. Phase 6 — Milestone 3: game framework
+
+v1 text applies: game state machine (Title → World Map → Battle Setup → Battle → Victory/Defeat → Save), souls-like combat test scene (1v1 arena, light/heavy attacks, dodge with i-frames and stamina, hit reactions, health/stamina HUD), turn-based battle system (initiative queue, Move/Attack/Ability/Item/Wait, tile targeting, damage model), save/load (SRAM or Controller Pak; set `N64_ROM_SAVETYPE` so `sc64deployer upload` configures the save), AI foundation (decision trees, A*, threat assessment). Metrics: save/load round-trip on ares and the SummerCart64; the combat loop at 60 FPS with two animated characters, particles and shadows; battle turn resolution ≤ 2 ms.
+
+---
+
+## 11. Testing & verification strategy
+
+### 11.1 Definitions
+
+- **built** — compiles in both variants; CI green.
+- **verified-host** — host unit tests pass (pure-C modules).
+- **verified-ares** — runs in ares (Homebrew Mode) with `rdpq_debug_start()` on and zero validator errors or warnings during ≥ 2 minutes of interaction covering the feature.
+- **verified-hw** — the same ROM on the Analogue 3D via SummerCart64 passes the checklist below. Hardware is the source of truth; ares never substitutes for it on anything touching the RDP, VI, audio, timing or memory.
+
+### 11.2 Hardware verification checklist
+
+1. Boots from `sc64deployer upload` + reset; no inspector screen for ≥ 5 minutes idle and ≥ 2 minutes of interaction.
+2. `sc64deployer debug` log: no `assert`, no validator messages (debug build), the expected startup lines present.
+3. FPS overlay at target (60, or 30 in 30-FPS mode) in the demo's five canonical views.
+4. Reset Scene ×10 → Memory page heap delta 0 B.
+5. Every menu item the feature touches: Apply and Cancel both behave.
+6. Visual parity vs ares screenshots (allowing VI filter differences); the pair archived under `docs/images/verification/<feature-id>/`.
+7. Benchmark run captured to `docs/benchmarks/<date>-<commit>-hw.csv` (debug and release).
+8. Feature-specific checks (audio underruns, save round-trip, 30-FPS timing, …).
+9. SC64 firmware and Analogue 3D firmware versions recorded in the BENCHMARKS row.
+
+### 11.3 `docs/BENCHMARKS.md` format
+
+Header: how to run (menu item / boot define), how to capture (PowerShell `Tee-Object`, ares terminal), definitions (avg, p99, 1 % low = 1000 / mean of the slowest 1 % of a 256-frame window).
+
+Columns: `Date | Commit | Build | Platform (ares x / A3D fw + SC64 fw) | Bench | Step | Frames | Avg ms | P99 ms | 1% low FPS | Tris/frame | Tex uploads/frame | RDP busy % (or n/a) | Heap used KB | Notes`.
+
+Sections: Environment (build times, ROM size, ELF text/data/bss), Baseline (pre-tooling), per-phase rows (post-P1, post-P2, post-P3.x, post-upgrade, post-T3D), per-feature before/after pairs.
+
+### 11.4 Catching regressions
+
+- CI builds both variants, runs host tests, checks ROM/BSS budgets, and validates the schema of any committed `docs/benchmarks/*.csv`.
+- Hardware cannot run in CI, so `tools/bench_compare.py <baseline>.csv <new>.csv --threshold 0.05` must pass before a feature's status becomes `verified-hw`; its output goes into the commit message.
+- Any regression > 5 % average frame time, or any benchmark step that drops below 60 FPS where the baseline held 60, blocks the feature until it is explained in its BENCHMARKS notes.
+
+---
+
+## 12. Documentation plan
+
+| Phase | Create | Update |
+|---|---|---|
+| 0 | `ROADMAP_v2.md`, `.gitattributes` | `SETUP.md` (cross-platform), `WORKFLOW.md`, `CLAUDE.md`, `README.md`, `.vscode/tasks.json`, `.gitignore`, `ROADMAP.md` (superseded banner) ✔ |
+| 1 | `DEBUGGING.md` (log channels, inspector/backtrace, assertf, RDP validator, one-frame capture + rdpvalidate, TMEM dump), `PROFILING.md` (slots, stats glossary, memory page, frame-time definitions, instrumented-libdragon procedure), `BENCHMARKS.md`, `HARDWARE.md` (Analogue 3D specifics: FPGA, measured RDRAM, SC64 upload/debug/save types, USB driver; consolidated RDP rules; ares-vs-hardware differences) | WORKFLOW.md (variants, CI, benchmark capture), README.md, CLAUDE.md |
+| 2 | `AUDIO.md` (mixer init 22050 Hz / 4 DMA buffers, channel policy, `snd_*` API, sound bank, placeholder generator), `PARTICLES.md` (pool, emitters, defs, renderer, blend modes, CPU fog, animation hooks), `ENGINE.md` (engine core, config header, frame loop, settings module) | `MENU_SYSTEM.md` (MAX_OPTIONS 16, `menu_item_set_disabled`, single-tab header, `menu_add_item` signature, settings module), `SCENE_SYSTEM.md` (physics/collider ownership, transitions), `INPUT.md` (menu context, chords), `PHYSICS.md` (hardware verification), `RENDERING.md` (source table, culling), `ARCHITECTURE.md` (Billboard section, dependency graph, memory budget from memstats) |
+| 3 | — | `RENDERING.md` (vertex cache, Gouraud, transparency, 2-cycle, post-fx spike), `TEXTURES.md` (CI4, residency, mipmaps), `MESH_SYSTEM.md` (shading flag, LOD), `ARCHITECTURE.md` (fonts, skybox), `HARDWARE.md` (VI modes table) |
+| 4 | `T3D_INTEGRATION.md`, `BLENDER_SETUP.md`, `FAST64_MATERIALS.md`, `ASSET_PIPELINE.md`, `LOD_WORKFLOW.md` | `SETUP.md` (Tiny3D in the container), `WORKFLOW.md`, `BENCHMARKS.md` |
+| 5–6 | `ANIMATION.md`, `ENTITY_SYSTEM.md`, `GAME_FRAMEWORK.md` | — |
+
+---
+
+## 13. Reference
+
+### Hardware budget (corrected)
+
+| Resource | Total | Used / measured | Notes |
+|---|---|---|---|
+| RDRAM | 4 MB (8 MB with Expansion Pak; the Analogue 3D's value is recorded in P1.4) | framebuffers 3 × 153,600 B + Z 153,600 B = 614,400 B; ELF data + bss 116,760 B; heap measured in P1.4 | design for 4 MB regardless |
+| TMEM | 4 KB | 2 KB per 32×32 RGBA16; the demo re-uploads up to 8 textures per frame | CI4 (P3.3): 512 B each, all resident |
+| CPU per frame | 16.67 ms @ 60 / 33.3 ms @ 30 | per-phase table from P1.3 replaces v1's "~3–5 ms" estimate | |
+| RSP per frame | 16.67 ms | the audio mixer already runs on the RSP (v1's "future" wording was wrong); T&L after Phase 4 | measured via P1.7 |
+| RDP per frame | 16.67 ms | unknown until P1.7 | full-screen passes ≈ 0.5–1 ms each |
+| ROM | 64 MB (SC64) | 344,064 B (resolves v1's 337 vs 327 KB) | |
+
+### External tools
+
+| Tool | Purpose | When |
+|---|---|---|
+| Docker Desktop + [libdragon CLI](https://github.com/anacierdem/libdragon-docker) | build container (`ghcr.io/dragonminded/libdragon`) | now |
+| [ares](https://ares-emu.net/) (Homebrew Mode) | emulator with ISViewer output, tracer, memory viewer | now |
+| [sc64deployer](https://github.com/Polprzewodnikowy/SummerCart64) + FTDI VCP driver | upload, USB debug log, save types | now |
+| [Tiny3D](https://github.com/HailToDodongo/tiny3d) | RSP rendering, GLTF, skeletal animation | Phase 4 |
+| [Fast64](https://github.com/Fast-64/fast64) + [Blender](https://www.blender.org/) | N64-oriented modelling, materials, export | Phase 4 |
+| libdragon `model64`/`mkmodel` | alternative RSP model path (bake-off in P4.0) | Phase 4 |
+| [MilkyTracker](https://milkytracker.org/), [Audacity](https://www.audacityteam.org/) | XM music, WAV editing | audio content |
+
+### Documentation index
+
+Existing: ARCHITECTURE, CAMERA, COLLISION, INPUT, MENU_SYSTEM, MESH_SYSTEM, PHYSICS, RENDERING, ROADMAP (v1), ROADMAP_v2, SCENE_SYSTEM, SETUP, TEXTURES, WORKFLOW. Planned (phase): DEBUGGING, PROFILING, BENCHMARKS, HARDWARE (1); AUDIO, PARTICLES, ENGINE (2); T3D_INTEGRATION, BLENDER_SETUP, FAST64_MATERIALS, ASSET_PIPELINE, LOD_WORKFLOW (4); ANIMATION, ENTITY_SYSTEM, GAME_FRAMEWORK (5–6).
+
+---
+
+## Appendix A — Feature template
+
+```
+### <ID> <Name> — status: planned | built | verified-host | verified-ares | verified-hw
+**Problem** — what is wrong or missing today, with file:line where applicable.
+**Solution** — the design, detailed enough to implement without re-deciding.
+**Files** — new/modified paths.
+**Dependencies** — feature IDs that must land first; libdragon APIs used.
+**Test plan**
+  - ares: what to run, what to look for, expected log lines.
+  - hardware: applicable items from §11.2 plus feature-specific checks.
+  - host: unit tests to add under tests/host (pure-C modules only).
+**Benchmark metric & acceptance** — the BENCHMARKS.md row(s) this feature produces, the metric, the threshold.
+**Docs** — docs to create or update.
+**Definition of Done** — builds in both variants; CI green; benchmark row committed; docs updated; status reached.
+```
+
+## Appendix B — Benchmark CSV schema
+
+```
+PROF,<frame_index>,<slot_0_us>,...,<slot_N_us>           one row per profiler dump
+STATS,<objects_drawn>,<tris_submitted>,<tex_uploads>,... one row per stats dump (header row emitted first)
+MEM,<heap_used>,<heap_free>,<largest_free>,<stack_watermark>
+BENCH,<kind>,<step>,<param>,<frames>,<avg_ms>,<p99_ms>,<low1_fps>,<tris>,<uploads>,<heap_used>,<rdp_busy_pct|-1>
+BENCH,END
+```
+
+All rows go through `debugf()`, so the same capture works over `sc64deployer debug` (hardware) and the ares terminal (emulator).

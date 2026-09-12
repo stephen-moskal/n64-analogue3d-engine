@@ -2,7 +2,7 @@
 
 A Nintendo 64 homebrew game engine built with [libdragon](https://github.com/DragonMinded/libdragon). Provides modular building blocks for N64 game development — pick the subsystems you need and build on top of them.
 
-**Verified on real hardware** (Analogue 3D via SummerCart64) and the Ares emulator.
+**Verified on real hardware** (Analogue 3D via SummerCart64) and the Ares emulator. Developed on Windows 11 and macOS.
 
 ![Demo scene with textured cube, pillars, pyramid, billboard trees, and shadow casting](docs/images/INITIAL%20SCENE%20FRONT.png)
 
@@ -21,8 +21,8 @@ A Nintendo 64 homebrew game engine built with [libdragon](https://github.com/Dra
 | **Atmosphere** | Fog (hardware + CPU hybrid), sky gradients, 7 presets with linked lighting | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | **Physics** | Semi-fixed timestep, gravity, bounce, impulse, ground detection, body presets | [PHYSICS.md](docs/PHYSICS.md) |
 | **Audio** | BGM streaming, SFX playback, mixer with 16 channels | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| **Collision** | Sphere and AABB colliders, raycasting, camera pushout | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| **Scene** | Object management, update/draw callbacks, scene reset, multi-object scenes | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| **Collision** | Sphere and AABB colliders, raycasting, camera pushout | [COLLISION.md](docs/COLLISION.md) |
+| **Scene** | Object management, update/draw callbacks, scene reset, multi-object scenes | [SCENE_SYSTEM.md](docs/SCENE_SYSTEM.md) |
 | **Input / Action Mapping** | Remappable game actions, per-context bindings, analog stick, runtime rebinding via menu | [INPUT.md](docs/INPUT.md) |
 | **Menu System** | Tabbed data-driven menus with cancel/revert, controller nav | [MENU_SYSTEM.md](docs/MENU_SYSTEM.md) |
 | **Text** | Font rendering with alignment, color, formatting | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
@@ -53,28 +53,30 @@ A multi-object scene with lighting, atmosphere, shadows, and full camera control
 
 ## Quick Start
 
+Full instructions, including the Windows USB driver and line-ending steps, are in [docs/SETUP.md](docs/SETUP.md).
+
 ### Prerequisites
 
-1. **Docker Desktop** — `brew install --cask docker`
-2. **ares emulator** — `brew install --cask ares`
-3. **libdragon CLI** — `npm install -g libdragon`
-4. **sc64deployer** (optional, for SummerCart64) — [download](https://github.com/Polprzewodnikowy/SummerCart64/releases)
+| | Windows 11 | macOS |
+|---|---|---|
+| Docker Desktop (WSL2 backend on Windows) | `wsl --install --no-distribution`, reboot, `winget install -e --id Docker.DockerDesktop` | `brew install --cask docker` |
+| Node.js ≥ 24 + libdragon CLI | `winget install -e --id OpenJS.NodeJS.LTS` then `npm install -g libdragon` | `brew install node` then `npm install -g libdragon` |
+| ares emulator (enable Homebrew Mode) | `winget install -e --id ares-emulator.ares` | `brew install --cask ares` |
+| sc64deployer (SummerCart64) | zip from the [releases](https://github.com/Polprzewodnikowy/SummerCart64/releases) → `C:\tools\sc64deployer` on PATH, plus the FTDI VCP driver | tgz from the releases → `/usr/local/bin` |
 
 ### Build & Run
 
-```bash
-# Initialize libdragon (first time only — downloads Docker image)
-libdragon init
+```powershell
+git clone --recurse-submodules <repo-url>
+cd n64-analogue3d-engine
+# Windows only: set core.autocrlf=false / core.eol=lf in the repo and libdragon/ (SETUP.md step 6)
 
-# Build ROM
-libdragon make
+libdragon init                       # first time: create the container and build libdragon into it
+libdragon make                       # -> hello_cube.z64
 
-# Test in emulator
-open -a ares hello_cube.z64
-
-# Deploy to SummerCart64 (N64 must be ON, cart connected via USB)
-sc64deployer upload hello_cube.z64
-# Then reset the console to boot
+ares .\hello_cube.z64                # emulator      (macOS: open -a ares hello_cube.z64)
+sc64deployer upload .\hello_cube.z64 # cart, then power on / reset the console
+sc64deployer debug                   # optional: live debugf() log from the console
 ```
 
 ## Controls
@@ -132,7 +134,7 @@ Configure atmosphere presets, fog, and sky from the Environ tab — shown here w
 ## Project Structure
 
 ```
-n64-dev-engine/
+n64-analogue3d-engine/
 ├── src/
 │   ├── main.c                 # Entry point, game loop, menu integration
 │   ├── math/
@@ -166,19 +168,29 @@ n64-dev-engine/
 │   └── ui/
 │       ├── text.c/h           # Font rendering, formatted text
 │       └── menu.c/h           # Tabbed data-driven menu system
-├── assets/                    # Source PNGs (converted at build time)
-├── filesystem/                # Built sprite/audio assets (bundled into ROM)
+├── assets/                    # Source PNGs and WAVs (converted at build time)
+├── filesystem/                # Generated .sprite/.wav64 outputs (git-ignored), bundled into the ROM
+├── libdragon/                 # libdragon submodule (preview branch, pinned)
+├── tools/                     # gen_placeholder_audio.py
 ├── docs/                      # Engine documentation
 │   ├── images/                # Screenshots and visual references
+│   ├── ROADMAP_v2.md          # Current development roadmap (phases, tooling, T3D)
+│   ├── ROADMAP.md             # v1 roadmap: delivery record for Features 1–10
+│   ├── ARCHITECTURE.md        # N64 hardware, libdragon stack, subsystems
 │   ├── RENDERING.md           # 3D pipeline, RDP modes, Z-buffer
+│   ├── MESH_SYSTEM.md         # Mesh architecture, shape library
 │   ├── CAMERA.md              # Camera system, coordinate spaces, math
 │   ├── TEXTURES.md            # Texture pipeline, TMEM, asset workflow
-│   ├── MESH_SYSTEM.md         # Mesh architecture, shape library
+│   ├── COLLISION.md           # Colliders, raycasts, layers
+│   ├── PHYSICS.md             # Physics bodies, timestep, presets
+│   ├── SCENE_SYSTEM.md        # Scene lifecycle, transitions, reset
+│   ├── INPUT.md               # Controller mappings, action contexts
 │   ├── MENU_SYSTEM.md         # Menu API, usage patterns, integration
-│   ├── INPUT.md               # Controller mappings, input flow
-│   ├── ARCHITECTURE.md        # N64 hardware, libdragon stack, subsystems
-│   ├── SETUP.md               # Environment setup guide
-│   └── WORKFLOW.md            # Development workflow
+│   ├── SETUP.md               # Environment setup (Windows 11 + macOS)
+│   └── WORKFLOW.md            # Build/test/debug workflow
+├── .libdragon/config.json     # libdragon CLI: Docker image + submodule vendoring
+├── .vscode/tasks.json         # Build / run / upload / debug tasks (per-OS)
+├── .gitattributes             # LF line endings (required by the Linux build container)
 ├── Makefile
 └── CLAUDE.md                  # AI assistant project context
 ```
@@ -199,6 +211,7 @@ RDP: Triangle Rasterize → Texture Sample → Z-Buffer → Framebuffer
 - **Textures**: 32x32 RGBA16 sprites, bilinear filtered, perspective-correct
 - **Lighting**: CPU-side Blinn-Phong per face with configurable sun, point lights, and shadow casting
 - **Atmosphere**: Hybrid fog (hardware RDP + CPU), sky gradients, 7 presets with linked lighting hints
+- **Footprint** (2026-09-12 build): ROM 344,064 bytes; ELF text 285,720 / data 82,360 / bss 34,400 bytes
 
 ### Critical Hardware Rule
 
@@ -206,35 +219,34 @@ RDP: Triangle Rasterize → Texture Sample → Z-Buffer → Framebuffer
 
 ## Documentation
 
-- [Development Roadmap](docs/ROADMAP.md) — Feature progress, v2 roadmap, milestones
-- [Architecture](docs/ARCHITECTURE.md) — N64 hardware overview, libdragon stack, lighting, shadows
+- [Development Roadmap v2](docs/ROADMAP_v2.md) — Phased plan: tooling & benchmarking, engine hardening, graphics features, Tiny3D, animation, game framework
+- [Roadmap v1](docs/ROADMAP.md) — Delivery record for Features 1–10
+- [Architecture](docs/ARCHITECTURE.md) — N64 hardware overview, libdragon stack, lighting, shadows, particles, fog
 - [Rendering Pipeline](docs/RENDERING.md) — RDP modes, Z-buffer, triangle formats, frame structure
+- [Mesh System](docs/MESH_SYSTEM.md) — Mesh builder API, shape library, universal renderer
 - [Camera System](docs/CAMERA.md) — Orbital camera, coordinate system, math library, frustum culling
 - [Texture System](docs/TEXTURES.md) — Asset pipeline, TMEM constraints, sprite slots
-- [Mesh System](docs/MESH_SYSTEM.md) — Mesh builder API, shape library, universal renderer
-- [Menu System](docs/MENU_SYSTEM.md) — API reference, data model, integration patterns
-- [Input System](docs/INPUT.md) — Controller layout, button mappings, analog handling
+- [Collision System](docs/COLLISION.md) — Colliders, raycasting, layers, overlap queries
 - [Physics System](docs/PHYSICS.md) — Gravity, bounce, impulse, semi-fixed timestep, body presets
-- [Environment Setup](docs/SETUP.md) — Prerequisites, Docker, emulator, SummerCart64
-- [Development Workflow](docs/WORKFLOW.md) — Build cycle, debugging, asset pipeline
+- [Scene System](docs/SCENE_SYSTEM.md) — Lifecycle, scene manager, transitions, soft reset
+- [Input System](docs/INPUT.md) — Controller layout, action mapping, analog handling
+- [Menu System](docs/MENU_SYSTEM.md) — API reference, data model, integration patterns
+- [Environment Setup](docs/SETUP.md) — Windows 11 and macOS: Docker, libdragon CLI, ares, SummerCart64 + driver
+- [Development Workflow](docs/WORKFLOW.md) — Build cycle, debugging, asset pipeline, hardware testing
 
-## Future Plans
+## Roadmap at a Glance
 
-See [ROADMAP.md](docs/ROADMAP.md) for the full development roadmap with detailed feature descriptions.
+See [ROADMAP_v2.md](docs/ROADMAP_v2.md) for the full plan with per-feature test plans and benchmark targets.
 
-**Next Engine Features:**
-- Sprite animation (frame-based billboard animation)
-
-**Input System Roadmap:**
-- File-based control scheme definitions (load `ActionContext` from DFS text/binary files)
-- Multiple simultaneous contexts (e.g., Exploration + Combat + Tactics)
-- Multiplayer controller support (ports 2-4, per-player action contexts)
-
-**Milestones:**
-- External model loading via Tiny3D + GLTF pipeline
-- Skeletal animation and character system
-- Souls-like combat test scene (1v1 arena)
-- Turn-based tactics battle system
+| Phase | Goal |
+|-------|------|
+| 0 — Environment & baseline | Windows 11 workflow reproducible, ROM verified on ares + Analogue 3D (done 2026-09-12) |
+| 1 — Tooling & benchmarking | Per-phase profiler, unified stats, memory/frame-time overlays, RDP validator in debug builds, benchmark scene + CSV, CI |
+| 2 — Engine hardening | Fix known defects (resource leaks on reset, renderer state, hot paths, mesh memory), settings/input cleanup |
+| 3 — Graphics features (CPU path) | Vertex cache, Gouraud lighting, sprite animation, CI4/TMEM residency, fonts, VI options, decals, skybox, sorted transparency |
+| 4 — Milestone 1: Tiny3D | libdragon upgrade, RSP rendering, Blender/Fast64 → GLTF → ROM pipeline, 64+ objects at 60 FPS |
+| 5 — Milestone 2: Animation | Skeletal animation, character controller, state machine, entity pattern, FFT grid track |
+| 6 — Milestone 3: Game framework | Souls-like arena, turn-based battle system, save/load, AI |
 
 ## License
 
