@@ -83,3 +83,18 @@ Frame-time window (256 frames), columns `FT`:
 Notes:
 - The bimodal loop time at a steady 60 FPS is triple-buffer pacing: the loop waits for a free framebuffer, not for vsync, so iterations alternate short and long. Use `fps` and CPU time to judge load; the jitter itself is tracked as defect D19 because `dt` inherits it.
 - `over_budget` counts frames whose CPU work exceeds the budget by 10 % (changed after this run; the first run counted wall time and flagged 102 of 256 healthy frames).
+
+## Debug overlay cost (2026-09-23, P1.6, debug build, Analogue 3D)
+
+Overlay pages drawn over the demo in a quiet view (demo HUD also on). `overlay` = PROF_OVERLAY average.
+
+| Implementation | Profiler page | Stats | Memory | Frame | RSP (4 lines) | Off |
+|---|---|---|---|---|---|---|
+| One `text_draw` per line | 5.4–5.9 ms | 4.3 | 4.5 | 4.3 | — | 0.0 |
+| One multi-line paragraph per page (`^xx` styles) | 4.5 | 4.6 | 4.0–4.2 | 4.1–4.4 | 2.9 | 0.02 |
+| Paragraph built at 4 Hz, rendered every frame | 4.1 | 4.2 | 3.7–3.9 | 3.0–3.8 | 2.3–2.9 | 0.04 |
+
+Findings:
+- Text costs roughly 15–20 µs per glyph on the A3D with the builtin outlined debug font, and **most of it is not layout**: caching the built paragraph saved only ~0.4 ms. The cost is in issuing the glyphs (texture-rectangle commands and atlas loads), so the CPU is probably stalling on a full RSP command queue while the RDP draws. P1.7 (RSP/RDP profiling) is needed to separate CPU from RDP time.
+- The same cost explains the demo HUD (1.1 ms for 6 lines) and the menu (D18). Candidate Phase 2 fixes: a non-outlined font for dense debug text, fewer glyphs, drawing the overlay at a lower rate into a cached surface, or blitting pre-rendered static labels.
+- With a page up the demo still holds 60 FPS (CPU 10–11 ms); Overlay Off costs nothing.

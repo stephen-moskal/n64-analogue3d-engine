@@ -20,6 +20,12 @@ void text_init(void) {
     });
 }
 
+void text_set_style(uint8_t font_id, uint8_t style_id, color_t color) {
+    rdpq_font_t *font = (font_id == FONT_DEBUG_MONO) ? font_mono : font_var;
+    if (!font) return;
+    rdpq_font_style(font, style_id, &(rdpq_fontstyle_t){ .color = color });
+}
+
 void text_draw(const TextBoxConfig *config, const char *str) {
     rdpq_font_t *font = (config->font_id == FONT_DEBUG_MONO) ? font_mono : font_var;
     if (!font) return;

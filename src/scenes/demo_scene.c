@@ -1217,23 +1217,23 @@ static void demo_post_draw(Scene *scene) {
     PROF_END(PROF_PARTICLE_DRAW);
 
     PROF_BEGIN(PROF_HUD);
-    // Count visible objects (for HUD)
-    int visible_count = 0;
-    for (int i = 0; i < scene->object_count; i++) {
-        if (scene->objects[i].visible) visible_count++;
-    }
-
-    // Raycast from camera
-    Ray cam_ray;
-    cam_ray.origin = scene->camera.position;
-    cam_ray.direction = scene->camera.view_dir;
-    cam_ray.max_distance = 1000.0f;
-    ray_hit = collision_raycast(&scene->collision, &cam_ray,
-                                COLLISION_LAYER_ALL, &ray_result);
-
-    // Debug text overlay
+    // Debug text overlay (HUD work only runs when the HUD is shown; defect D7)
     bool show_debug = (menu_get_value(&start_menu, TAB_SETTINGS, ITEM_DEBUG_TEXT) == 0);
     if (show_debug) {
+        // Count visible objects
+        int visible_count = 0;
+        for (int i = 0; i < scene->object_count; i++) {
+            if (scene->objects[i].visible) visible_count++;
+        }
+
+        // Raycast from camera
+        Ray cam_ray;
+        cam_ray.origin = scene->camera.position;
+        cam_ray.direction = scene->camera.view_dir;
+        cam_ray.max_distance = 1000.0f;
+        ray_hit = collision_raycast(&scene->collision, &cam_ray,
+                                    COLLISION_LAYER_ALL, &ray_result);
+
         text_draw(&title_text, "SMozN64 Dev Engine [" ENGINE_BUILD_NAME "]");
 
         // Left side: object stats

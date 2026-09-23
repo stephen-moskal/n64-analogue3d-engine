@@ -14,6 +14,7 @@
 #include "debug/profiler.h"
 #include "debug/memstats.h"
 #include "debug/frametime.h"
+#include "debug/overlay.h"
 
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
@@ -227,6 +228,11 @@ int main(void) {
         PROF_BEGIN(PROF_DRAW);
         scene_manager_draw(&scene_mgr);
         PROF_END(PROF_DRAW);
+
+        // Debug overlay page (hidden while the menu is open)
+        if (!start_menu.is_open) {
+            overlay_draw((engine_target_fps == 30) ? 33.33f : 16.67f);
+        }
         rdpq_detach_show();
 
         // Feed audio mixer

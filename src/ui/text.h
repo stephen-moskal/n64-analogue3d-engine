@@ -20,6 +20,11 @@ typedef struct {
 
 void text_init(void);
 void text_draw(const TextBoxConfig *config, const char *str);
+
+// Register a fixed color as a style of a font, for inline "^xx" style switches
+// in a single multi-line text call (much cheaper than one call per line).
+// Style 0 is white and style 1 is rewritten by every text_draw() call.
+void text_set_style(uint8_t font_id, uint8_t style_id, color_t color);
 void text_draw_fmt(const TextBoxConfig *config, const char *fmt, ...);
 void text_cleanup(void);
 
