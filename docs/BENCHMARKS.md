@@ -147,6 +147,7 @@ The tests run with fog and sky off (restored afterwards) on the benchmark scene'
 | textures | 1, 2, 4, 8 | 16 boxes cycling through N distinct 32×32 RGBA16 textures |
 | shadows | 0, 1, 2 | 16 pillars with shadows off / blob / projected |
 | fillrate | 1, 2, 4, 8 | N full-screen blended rectangles (RDP read-modify-write) |
+| layout | 32, 64 × variants 0–5 | data-placement check (D26): the shared pillar (0), copies at D-cache colours 0/2/4/6 KB (1–4), a reversed-winding copy (5); param = variant × 1000 + pillars. Debug only, not in All |
 | overload | 0, 10, 14, 17, 20, 25 | floor + 16 pillars + N ms of CPU busy-wait per frame: deliberate overruns, for the D18 flicker (not in All) |
 
 ### Baseline (2026-09-23, debug build, Analogue 3D, `docs/benchmarks/2026-09-23-baseline-debug-a3d.csv`)
@@ -306,3 +307,31 @@ What made the difference:
 Demo dump (`...-p2-s3-demo-dump-...`, taken with D-Down after boot): `update` 0.22 ms (input 0.05, physics 0.02, particles 0.04, scene_sys 0.04). The view at that moment drew 174 triangles instead of the usual 252 (the camera had moved), so its draw times are not compared with the baseline.
 
 **D26 (data layout), not resolved.** `BENCH_LAYOUT` rows: in the first S3 build the pillar's vertex and index arrays (`0x8016FAF0`, `0x80173AF8`) shared D-cache sets with the render stack (`0x807FFCF8` and below); in the final build (`0x8016EAA0`, `0x80172AA8`) they did not. The two builds' Objects results differ by at most 3 %, so stack/vertex aliasing does not explain the 9 % seen in the S2 Mesh A/B.
+
+## Phase 2 · S4 mesh right-sizing (2026-09-23, debug build, Analogue 3D)
+
+Every mesh used to reserve 512 vertices + 1024 indices (18 KB) on its first vertex (D8). Build arrays now grow as needed and `mesh_finalize()` packs each mesh into one exact-size, 16-byte aligned block.
+
+| Check | Result |
+|---|---|
+| Demo heap (Reset Soak `heap_before`, same measurement as S1) | 946,992 → 843,336 B: **−101 KB** (target −90 KB) |
+| Benchmark scene heap (`heap_kb` column) | 1,049 → 828 KB (**−221 KB**: its 8 texture boxes too) |
+| Reset Soak ×10 | delta **0 B** |
+| Full benchmark vs S3 (`bench_compare.py`) | **0 regressions**, every step within ±5 % (objects −0.3 to +1.2 %) |
+
+`docs/benchmarks/2026-09-23-p2-s4-all-debug-a3d.csv` is the comparison point for the next stage.
+
+**D26, data placement (Bench = Layout, `...-p2-s4-layout-...`).** Same code, same pillar data, placed at chosen D-cache colours (address modulo the 8 KB direct-mapped D-cache). CPU ms:
+
+| Variant | Geometry sets | `Mesh` struct sets | 32 pillars | 64 pillars |
+|---|---|---|---|---|
+| 1: copy at 0 KB | 0x0000–0x0700 | 0x0C88–0x0FD8 | 16.75 | 33.76 |
+| 2: copy at 2 KB | 0x0800–0x0F00 | 0x0FA4–0x12F4 | **16.12** | **33.15** |
+| 3: copy at 4 KB | 0x1000–0x1700 | 0x12C0–0x1610 | 16.64 | 33.49 |
+| 4: copy at 6 KB | 0x1800–0x1F00 | 0x15DC–0x192C | 17.39 | 34.88 |
+| 5: reversed winding at 0 KB | 0x0000–0x0700 | 0x18F8–0x1C48 | 17.69 | 35.34 |
+| 0: the shared pillar | 0x15B0–0x1CB0 | 0x17D0–0x1B20 | **18.04** | **35.96** |
+
+The render stack sits just below `0x807FFCF0` (`bench_draw` frame 280 B, `mesh_draw` 688 B, `rdpq_triangle` 48 B), on D-cache sets **≈0x1880–0x1CF0**. Every slow variant has its geometry or its `Mesh` struct (face groups, read per group) on those sets; the three copies that avoid them are the fastest. Aliasing between hot mesh data and the render stack costs **4–8.5 %** on object-heavy frames; the shared pillar, which aliases with both, is the worst case (and is what the Objects bench measures). The winding effect cannot be separated from variant 5's struct placement. Mitigation belongs with the vertex cache (P3.1): the triangle loop would read one static transformed-vertex buffer at a known colour instead of mesh data, and placement can be checked with this bench.
+
+**RSP crash (D28).** After the Reset Soak, with the menu open, the console stopped with `rspq_highpri_sync ... wait loop timed out` (status 0x3403). The dump shows the RSP asleep at its idle `break` with HIGHPRI_RUNNING still set after the high-priority epilogue ran: a race between the audio mixer's high-priority work and a low-priority buffer switch in the pinned libdragon. Fixed upstream in `7c57c409d` (2026-08-23, "rspq: make lowpri buffer handoff atomic"), which depends on the April rspq rework `cd9d88c64`; the libdragon upgrade is scheduled as its own stage (S4b).

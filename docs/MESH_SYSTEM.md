@@ -104,10 +104,14 @@ The core type.
 #define MESH_MAX_GROUPS      16
 
 typedef struct {
-    MeshVertex *vertices;       // Heap-allocated vertex array
-    uint16_t *indices;          // Heap-allocated index array (triangles)
+    MeshVertex *vertices;       // Vertex array (heap)
+    uint16_t *indices;          // Index array, 3 per triangle (heap)
     int vertex_count;
     int index_count;
+    int vertex_capacity;        // Allocated entries while building
+    int index_capacity;
+    void *block;                // After mesh_finalize(): the one allocation holding both arrays
+    bool finalized;             // No more vertices or triangles can be added
 
     Material materials[MESH_MAX_MATERIALS];
     int material_count;
@@ -123,11 +127,11 @@ typedef struct {
 
 | Field | Description |
 |-------|-------------|
-| `vertices` | Heap-allocated. Lazy-allocated on first `mesh_add_vertex()`. |
-| `indices` | Heap-allocated. Lazy-allocated on first `mesh_add_triangle()`. |
+| `vertices`, `indices` | While building: separate arrays that start at 16 vertices / 48 indices and double as needed. After `mesh_finalize()`: one exact-size, 16-byte aligned block (vertices, then indices) owned by `block` (roadmap D8; every mesh used to reserve 512 vertices + 1024 indices, about 18 KB). |
+| `finalized` | Set by `mesh_finalize()`; `mesh_add_vertex()` / `mesh_add_triangle()` then fail (assert in debug builds). |
 | `materials[]` | Fixed-size array (max 8). Inline to avoid extra allocation. |
 | `groups[]` | Fixed-size array (max 16). Each group references a material and a range of indices. |
-| `bound_center/radius` | Computed by `mesh_compute_bounds()`. Used for frustum culling. |
+| `bound_center/radius` | Computed by `mesh_finalize()` (through `mesh_compute_bounds()`). Used for frustum culling. |
 | `backface_cull` | Default true. Disable for double-sided surfaces (e.g., foliage, thin walls). |
 
 ## API
@@ -139,7 +143,7 @@ void mesh_init(Mesh *mesh);
 void mesh_cleanup(Mesh *mesh);
 ```
 
-`mesh_init` zeroes the struct and sets defaults (`backface_cull = true`). `mesh_cleanup` frees the heap-allocated vertex and index arrays.
+`mesh_init` zeroes the struct and sets defaults (`backface_cull = true`). `mesh_cleanup` frees the geometry (the finalized block, or the build arrays) and resets the mesh so it can be built again.
 
 ### Building
 
@@ -151,6 +155,7 @@ int  mesh_add_vertex(Mesh *mesh, MeshVertex vert);
 void mesh_add_triangle(Mesh *mesh, uint16_t i0, uint16_t i1, uint16_t i2);
 int  mesh_begin_group(Mesh *mesh, int material_index);
 void mesh_end_group(Mesh *mesh);
+void mesh_finalize(Mesh *mesh);         // last step: bounds + group analysis + exact-size geometry block
 void mesh_compute_bounds(Mesh *mesh);   // bounding sphere + mesh_analyze_group() for every group
 void mesh_analyze_group(const Mesh *mesh, MeshFaceGroup *group);
 ```
@@ -175,17 +180,18 @@ mesh_add_vertex(...)             // Add vertices (returns index)
 mesh_add_triangle(i0, i1, i2)   // Add triangles (auto-tracked by group)
 mesh_end_group()                 // Close the group
     ↓ (repeat for each group)
-mesh_compute_bounds(&mesh)       // Compute bounding sphere
+mesh_finalize(&mesh)             // Bounds, group analysis, exact-size geometry block
 ```
 
 | Function | Returns | Notes |
 |----------|---------|-------|
 | `mesh_add_material` | Material index (0-7) or -1 | Must be added before groups reference it |
-| `mesh_add_vertex` | Vertex index (0-511) or -1 | Lazy-allocates vertex array on first call |
+| `mesh_add_vertex` | Vertex index (0-511) or -1 | Grows the build array as needed; -1 after `mesh_finalize()` |
 | `mesh_add_triangle` | void | Adds 3 indices; auto-updates current group's count |
 | `mesh_begin_group` | Group index (0-15) or -1 | Sets index_start to current index count |
 | `mesh_end_group` | void | No-op (group count tracked automatically) |
-| `mesh_compute_bounds` | void | Computes centroid + max-distance bounding sphere |
+| `mesh_finalize` | void | Calls `mesh_compute_bounds()`, then packs vertices and indices into one exact-size, 16-byte aligned block. Every builder ends with it |
+| `mesh_compute_bounds` | void | Computes centroid + max-distance bounding sphere and analyses every group |
 
 ### Rendering
 
@@ -237,7 +243,7 @@ void cube_init(void) {
         mesh_add_triangle(&cube_mesh, base+0, base+2, base+3);
         mesh_end_group(&cube_mesh);
     }
-    mesh_compute_bounds(&cube_mesh);
+    mesh_finalize(&cube_mesh);
 }
 
 const Mesh *cube_get_mesh(void) { return &cube_mesh; }
@@ -299,7 +305,7 @@ static void object_draw(SceneObject *obj, const Camera *cam, const LightConfig *
 | Max materials per mesh | 8 | One material = one RDP mode + one texture. |
 | Max groups per mesh | 16 | Grouping triangles by material minimizes RDP state changes. |
 | TMEM | 4 KB | Only one texture tile loaded at a time. Groups upload their texture once. |
-| Vertex memory | ~16 KB for 512 verts | MeshVertex is 32 bytes. Heap-allocated in RDRAM. |
+| Vertex memory | 32 B per vertex, 2 B per index | Exact size after `mesh_finalize()` (the pillar: 50 vertices + 96 indices = 1.8 KB). Where that block and the `Mesh` struct land in the 8 KB D-cache relative to the render stack can cost up to ~8 % CPU (D26; measure with Bench = Layout). |
 
 ## Performance Notes & Optimization Lessons
 

@@ -108,7 +108,7 @@ All three use a white tint. Both textures are declared in the demo's `Scene.text
 - Lit like a flat face turned toward the camera, so the brightness changes as the camera moves relative to the sun; point lights affect it too.
 - No shadows and no animation (animated billboards are part of Feature 8, ROADMAP_v2 §7.2).
 - Every billboard costs a mode set and a texture upload per frame; nothing is batched.
-- The shared quad allocates the full mesh capacity, about 18 KB, for four vertices (defect D8).
+- The shared quad is finalized to its exact size: four vertices and six indices (208 B).
 
 ## Source files
 

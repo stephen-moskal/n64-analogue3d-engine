@@ -113,7 +113,7 @@ FT_HDR / FT,<frame>,count,fps,...        frame-time window + histogram (frametim
 MEM_HDR / MEM,<frame>,rdram,...          memory (memstats.c)
 BENCH_META / BENCH_HDR / BENCH,...       benchmark run and steps (benchmark_scene.c, BENCHMARKS.md)
 BENCH_PROF_HDR / BENCH_PROF,...          per-step CPU breakdown (profiler on)
-BENCH_LAYOUT,...                         data addresses, once per run (D26)
+BENCH_LAYOUT,...                         data addresses, once per run: render stack, pillar geometry and Mesh struct, plus one row per Layout copy (D26)
 BENCH,END / BENCH,ABORTED                end of a benchmark run
 SOAK,... / SWEEP,...                     Reset Soak and Menu Sweep (testbed.c, DEBUGGING.md)
 RDPLOG_BEGIN ... RDPLOG_END              RDP command capture (rdp_debug.c, DEBUGGING.md)

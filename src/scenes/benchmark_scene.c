@@ -1,6 +1,7 @@
 #include "benchmark_scene.h"
 #include <libdragon.h>
 #include <string.h>
+#include <malloc.h>
 #include "../render/mesh.h"
 #include "../render/mesh_defs.h"
 #include "../render/texture.h"
@@ -35,7 +36,7 @@ typedef struct {
 } BenchStep;
 
 static const char *kind_names[BENCH_KIND_COUNT] = {
-    "all", "objects", "particles", "lights", "textures", "shadows", "fillrate", "overload",
+    "all", "objects", "particles", "lights", "textures", "shadows", "fillrate", "overload", "layout",
 };
 
 // One-line description shown under the status line (param is substituted)
@@ -48,6 +49,7 @@ static const char *kind_desc[BENCH_KIND_COUNT] = {
     "16 pillars, shadow mode %d:off/blob/proj",
     "%d full-screen blended layers",
     "+%d ms CPU burn, floor + 16 pillars",
+    "%d: variant*1000+pillars (0 shared, 1-4 at 0/2/4/6 KB, 5 reversed)",
 };
 
 static BenchKind  configured_kind = BENCH_ALL;
@@ -74,6 +76,18 @@ static int        burn_ms;             // OVERLOAD: extra CPU time per frame
 static bool       draw_floor;
 static void      *draw_frame;          // stack frame of bench_draw (data-layout row, D26)
 static bool       layout_logged;
+
+// LAYOUT (D26): copies of the pillar whose geometry sits at chosen D-cache
+// "colours" (address modulo the 8 KB direct-mapped D-cache), plus one with
+// reversed winding, drawn in interleaved steps. Variant 0 is the shared
+// pillar; variants 1-5 use layout_copy[0..4]. The pool owns the copies' data,
+// so they are never passed to mesh_cleanup().
+#define LAYOUT_COPIES 5
+static const int  layout_offset[LAYOUT_COPIES]  = {0x0000, 0x0800, 0x1000, 0x1800, 0x2000};
+static const bool layout_reverse[LAYOUT_COPIES] = {false, false, false, false, true};
+static Mesh       layout_copy[LAYOUT_COPIES];
+static void      *layout_pool;         // 16 KB, 8 KB aligned
+static int        layout_variant;
 
 // ------------------------------------------------------------------------
 // Helpers
@@ -128,6 +142,12 @@ static void build_steps(BenchKind which) {
         static const int n[] = {0, 10, 14, 17, 20, 25};
         for (unsigned i = 0; i < sizeof(n) / sizeof(n[0]); i++) add_step(BENCH_OVERLOAD, n[i]);
     }
+    if (which == BENCH_LAYOUT) {
+        // Interleaved so drift (heat, background load) hits every variant alike
+        static const int n[] = {32, 64};
+        for (unsigned i = 0; i < sizeof(n) / sizeof(n[0]); i++)
+            for (int v = 0; v <= LAYOUT_COPIES; v++) add_step(BENCH_LAYOUT, v * 1000 + n[i]);
+    }
 }
 
 // Lay out n instances on a square grid centred on the origin
@@ -173,7 +193,7 @@ static void build_tex_box(Mesh *m, int slot) {
         mesh_add_triangle(m, base, base + 2, base + 3);
         mesh_end_group(m);
     }
-    mesh_compute_bounds(m);
+    mesh_finalize(m);
 }
 
 static const ParticleEmitterDef bench_particles = {
@@ -267,6 +287,10 @@ static void setup_step(Scene *scene) {
         draw_floor = true;
         burn_ms = st->param;
         break;
+    case BENCH_LAYOUT:
+        layout_grid(st->param % 1000);
+        layout_variant = (layout_pool != NULL) ? st->param / 1000 : 0;
+        break;
     default:
         break;   // BENCH_ALL step 0: empty reference scene
     }
@@ -284,9 +308,47 @@ static void log_layout(void) {
     layout_logged = true;
     const Mesh *pillar = mesh_defs_get_pillar();
     (void)pillar;   // debugf is compiled out in release
-    debugf("BENCH_LAYOUT,draw_frame=%p,pillar_vtx=%p,pillar_vtx_bytes=%d,pillar_idx=%p,pillar_idx_bytes=%d\n",
+    debugf("BENCH_LAYOUT,draw_frame=%p,pillar_vtx=%p,pillar_vtx_bytes=%d,pillar_idx=%p,pillar_idx_bytes=%d,pillar_mesh=%p\n",
            draw_frame, (void *)pillar->vertices, (int)(pillar->vertex_count * sizeof(MeshVertex)),
-           (void *)pillar->indices, (int)(pillar->index_count * sizeof(uint16_t)));
+           (void *)pillar->indices, (int)(pillar->index_count * sizeof(uint16_t)), (void *)pillar);
+    if (layout_pool) {
+        for (int c = 0; c < LAYOUT_COPIES; c++) {
+            debugf("BENCH_LAYOUT,variant=%d,vtx=%p,idx=%p,mesh=%p,reversed=%d\n", c + 1,
+                   (void *)layout_copy[c].vertices, (void *)layout_copy[c].indices,
+                   (void *)&layout_copy[c], (int)layout_reverse[c]);
+        }
+    }
+}
+
+static void build_layout_copies(void) {
+    const Mesh *src = mesh_defs_get_pillar();
+    size_t vbytes = sizeof(MeshVertex) * (size_t)src->vertex_count;
+    size_t ibytes = sizeof(uint16_t) * (size_t)src->index_count;
+    if (vbytes + ibytes > 0x800) return;           // each copy must fit its 2 KB slot
+    layout_pool = memalign(0x2000, 0x4000);
+    if (!layout_pool) return;
+    for (int c = 0; c < LAYOUT_COPIES; c++) {
+        Mesh *m = &layout_copy[c];
+        *m = *src;                                  // materials, groups, bounds, flags
+        char *data = (char *)layout_pool + layout_offset[c];
+        memcpy(data, src->vertices, vbytes);
+        uint16_t *idx = (uint16_t *)(data + vbytes);
+        for (int i = 0; i < src->index_count; i += 3) {
+            idx[i]     = src->indices[i];
+            idx[i + 1] = src->indices[i + (layout_reverse[c] ? 2 : 1)];
+            idx[i + 2] = src->indices[i + (layout_reverse[c] ? 1 : 2)];
+        }
+        m->vertices = (MeshVertex *)data;
+        m->indices = idx;
+        m->block = NULL;
+    }
+}
+
+static void free_layout_copies(void) {
+    free(layout_pool);
+    layout_pool = NULL;
+    memset(layout_copy, 0, sizeof(layout_copy));
+    layout_variant = 0;
 }
 
 static void finish_step(void) {
@@ -336,6 +398,7 @@ static void bench_init(Scene *scene) {
     texture_load_slot(7, "rom:/tree.sprite");
     for (int i = 0; i < NUM_TEX_BOXES; i++) build_tex_box(&tex_boxes[i], i);
     mesh_defs_init();
+    if (configured_kind == BENCH_LAYOUT) build_layout_copies();
     particle_init();
 
     // Fog and sky off for comparable numbers; restored on exit
@@ -456,7 +519,9 @@ static void bench_draw(Scene *scene) {
             mesh_draw(m, &model, cam, L);
         } else {
             mat4_from_srt(&model, &pillar_scale, 0, 0, 0, &instance_pos[i]);
-            mesh_draw(pillar, &model, cam, L);
+            const Mesh *m = (st->kind == BENCH_LAYOUT && layout_variant > 0)
+                ? &layout_copy[layout_variant - 1] : pillar;
+            mesh_draw(m, &model, cam, L);
         }
     }
     PROF_END(PROF_OBJECTS);
@@ -505,6 +570,7 @@ static void bench_cleanup(Scene *scene) {
     destroy_emitters();
     particle_cleanup();
     for (int i = 0; i < NUM_TEX_BOXES; i++) mesh_cleanup(&tex_boxes[i]);
+    free_layout_copies();
     mesh_defs_cleanup();
     texture_cleanup();
     atmosphere_set_fog_enabled(saved_fog);

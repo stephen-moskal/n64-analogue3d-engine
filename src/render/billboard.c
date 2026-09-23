@@ -56,7 +56,7 @@ void billboard_init(void) {
     mesh_add_triangle(&bb_mesh, 0, 2, 3);
 
     mesh_end_group(&bb_mesh);
-    mesh_compute_bounds(&bb_mesh);
+    mesh_finalize(&bb_mesh);
 
     bb_ready = true;
 }

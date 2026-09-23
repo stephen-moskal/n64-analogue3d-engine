@@ -6,28 +6,52 @@
 // Mesh building and bounds. No rendering dependencies, so this file is also
 // compiled into the host unit tests (tests/host).
 
+// Build arrays start at these sizes and double as needed (roadmap D8: every
+// mesh used to allocate MESH_MAX_* entries, 18 KB, whatever its size).
+#define MESH_INITIAL_VERTICES  16
+#define MESH_INITIAL_INDICES   48
+
 // --- Lifecycle ---
 
 void mesh_init(Mesh *mesh) {
     memset(mesh, 0, sizeof(Mesh));
     mesh->vertices = NULL;
     mesh->indices = NULL;
+    mesh->block = NULL;
     mesh->backface_cull = true;
 }
 
 void mesh_cleanup(Mesh *mesh) {
-    if (mesh->vertices) {
+    if (mesh->block) {
+        free(mesh->block);              // finalized: one allocation holds both arrays
+    } else {
         free(mesh->vertices);
-        mesh->vertices = NULL;
-    }
-    if (mesh->indices) {
         free(mesh->indices);
-        mesh->indices = NULL;
     }
-    mesh->vertex_count = 0;
-    mesh->index_count = 0;
+    mesh->block = NULL;
+    mesh->vertices = NULL;
+    mesh->indices = NULL;
+    mesh->vertex_count = mesh->vertex_capacity = 0;
+    mesh->index_count = mesh->index_capacity = 0;
     mesh->material_count = 0;
     mesh->group_count = 0;
+    mesh->finalized = false;
+}
+
+// Grow a build array to hold at least `needed` entries (doubling, capped at
+// `max`). Returns false when `needed` exceeds `max` or memory runs out.
+static bool grow_array(void **array, int *capacity, int needed, int initial,
+                       int max, size_t elem_size) {
+    if (needed <= *capacity) return true;
+    if (needed > max) return false;
+    int cap = *capacity > 0 ? *capacity : initial;
+    while (cap < needed) cap *= 2;
+    if (cap > max) cap = max;
+    void *p = realloc(*array, (size_t)cap * elem_size);
+    if (!p) return false;
+    *array = p;
+    *capacity = cap;
+    return true;
 }
 
 // --- Building ---
@@ -40,13 +64,11 @@ int mesh_add_material(Mesh *mesh, Material mat) {
 }
 
 int mesh_add_vertex(Mesh *mesh, MeshVertex vert) {
-    if (mesh->vertex_count >= MESH_MAX_VERTICES) return -1;
-
-    // Lazy allocation: allocate full capacity on first vertex
-    if (!mesh->vertices) {
-        mesh->vertices = malloc(sizeof(MeshVertex) * MESH_MAX_VERTICES);
-        if (!mesh->vertices) return -1;
-    }
+    assertf(!mesh->finalized, "mesh_add_vertex() after mesh_finalize()");
+    if (mesh->finalized) return -1;
+    if (!grow_array((void **)&mesh->vertices, &mesh->vertex_capacity,
+                    mesh->vertex_count + 1, MESH_INITIAL_VERTICES,
+                    MESH_MAX_VERTICES, sizeof(MeshVertex))) return -1;
 
     int idx = mesh->vertex_count++;
     mesh->vertices[idx] = vert;
@@ -54,13 +76,11 @@ int mesh_add_vertex(Mesh *mesh, MeshVertex vert) {
 }
 
 void mesh_add_triangle(Mesh *mesh, uint16_t i0, uint16_t i1, uint16_t i2) {
-    if (mesh->index_count + 3 > MESH_MAX_INDICES) return;
-
-    // Lazy allocation
-    if (!mesh->indices) {
-        mesh->indices = malloc(sizeof(uint16_t) * MESH_MAX_INDICES);
-        if (!mesh->indices) return;
-    }
+    assertf(!mesh->finalized, "mesh_add_triangle() after mesh_finalize()");
+    if (mesh->finalized) return;
+    if (!grow_array((void **)&mesh->indices, &mesh->index_capacity,
+                    mesh->index_count + 3, MESH_INITIAL_INDICES,
+                    MESH_MAX_INDICES, sizeof(uint16_t))) return;
 
     mesh->indices[mesh->index_count++] = i0;
     mesh->indices[mesh->index_count++] = i1;
@@ -170,4 +190,33 @@ void mesh_analyze_group(const Mesh *mesh, MeshFaceGroup *group) {
     if (planar) {
         group->normal[0] = n0[0]; group->normal[1] = n0[1]; group->normal[2] = n0[2];
     }
+}
+
+// --- Finalize ---
+
+void mesh_finalize(Mesh *mesh) {
+    if (mesh->finalized) return;
+    mesh_compute_bounds(mesh);
+
+    // One allocation for both arrays, aligned to the 16-byte D-cache line: a
+    // 32-byte vertex then spans exactly two lines, and a mesh's vertex and
+    // index data sit together. The build arrays (grown by doubling) are freed.
+    size_t vbytes = sizeof(MeshVertex) * (size_t)mesh->vertex_count;
+    size_t ibytes = sizeof(uint16_t) * (size_t)mesh->index_count;
+    if (vbytes + ibytes > 0) {
+        char *raw = malloc(vbytes + ibytes + 15);
+        if (raw) {      // out of memory: keep the (valid) build arrays
+            char *data = (char *)(((uintptr_t)raw + 15) & ~(uintptr_t)15);
+            if (vbytes) memcpy(data, mesh->vertices, vbytes);
+            if (ibytes) memcpy(data + vbytes, mesh->indices, ibytes);
+            free(mesh->vertices);
+            free(mesh->indices);
+            mesh->block = raw;
+            mesh->vertices = vbytes ? (MeshVertex *)data : NULL;
+            mesh->indices = ibytes ? (uint16_t *)(data + vbytes) : NULL;
+            mesh->vertex_capacity = mesh->vertex_count;
+            mesh->index_capacity = mesh->index_count;
+        }
+    }
+    mesh->finalized = true;
 }

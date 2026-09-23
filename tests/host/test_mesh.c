@@ -1,6 +1,8 @@
 #include "test.h"
 #include "render/mesh_defs.h"
 #include <math.h>
+#include <stdint.h>
+#include <string.h>
 
 // Built-in meshes: consistent winding (the per-triangle cull depends on it)
 // and group planarity (decides which cull path mesh_draw takes). D3 / D24.
@@ -111,7 +113,59 @@ static void test_sphere_visible_all_sides(void) {
     mesh_defs_cleanup();
 }
 
+// D8: build arrays grow as needed and mesh_finalize() packs them into one
+// exact-size, 16-byte aligned block without changing the geometry.
+static void test_mesh_finalize(void) {
+    Mesh m;
+    mesh_init(&m);
+    int mat = mesh_add_material(&m, (Material){.type = MATERIAL_FLAT_COLOR, .texture_slot = -1});
+    mesh_begin_group(&m, mat);
+    // 20 vertices on a fan in the XZ plane, 19 triangles: past the initial
+    // 16 vertices / 48 indices, so both arrays grow once
+    for (int i = 0; i < 20; i++) {
+        float a = i * 0.3f;
+        mesh_add_vertex(&m, (MeshVertex){
+            .position = {cosf(a), 0, sinf(a)}, .normal = {0, 1, 0}, .uv = {(float)i, 0},
+        });
+    }
+    for (int i = 1; i < 20; i++) mesh_add_triangle(&m, 0, (uint16_t)(i < 19 ? i + 1 : 1), (uint16_t)i);
+    mesh_end_group(&m);
+    CHECK(m.vertex_count == 20 && m.index_count == 57);
+    CHECK(m.vertex_capacity >= 20 && m.index_capacity >= 57);
+    CHECK(!m.finalized && m.block == NULL);
+
+    MeshVertex before[20];
+    uint16_t before_idx[57];
+    for (int i = 0; i < 20; i++) before[i] = m.vertices[i];
+    for (int i = 0; i < 57; i++) before_idx[i] = m.indices[i];
+
+    mesh_finalize(&m);
+    CHECK(m.finalized && m.block != NULL);
+    CHECK(m.vertex_capacity == 20 && m.index_capacity == 57);
+    CHECK(((uintptr_t)m.vertices & 15) == 0);
+    CHECK((char *)m.indices == (char *)m.vertices + 20 * sizeof(MeshVertex));
+    int same = 1;
+    for (int i = 0; i < 20; i++) same &= memcmp(&before[i], &m.vertices[i], sizeof(MeshVertex)) == 0;
+    for (int i = 0; i < 57; i++) same &= (before_idx[i] == m.indices[i]);
+    CHECK(same);
+    CHECK(m.bound_radius > 0.9f && m.groups[0].planar);   // bounds + group analysis ran
+
+    mesh_cleanup(&m);
+    CHECK(m.block == NULL && m.vertices == NULL && m.vertex_count == 0 && !m.finalized);
+
+    // The built-in shapes are finalized to their exact size
+    mesh_defs_init();
+    const Mesh *shapes[] = {mesh_defs_get_pillar(), mesh_defs_get_platform(),
+                            mesh_defs_get_pyramid(), mesh_defs_get_sphere()};
+    for (int i = 0; i < 4; i++) {
+        CHECK(shapes[i]->finalized && shapes[i]->block != NULL);
+        CHECK(shapes[i]->vertex_capacity == shapes[i]->vertex_count);
+    }
+    mesh_defs_cleanup();
+}
+
 void run_mesh_tests(void) {
+    RUN_TEST(test_mesh_finalize);
     RUN_TEST(test_mesh_winding);
     RUN_TEST(test_mesh_planar_groups);
     RUN_TEST(test_sphere_visible_all_sides);

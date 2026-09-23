@@ -53,11 +53,17 @@ typedef struct {
 // --- Mesh ---
 
 typedef struct {
-    // Geometry (heap-allocated)
+    // Geometry (heap-allocated). While a mesh is built the two arrays grow
+    // as needed; mesh_finalize() moves them into one exact-size block
+    // (vertices, then indices) owned by `block` (roadmap D8).
     MeshVertex *vertices;
     uint16_t *indices;
     int vertex_count;
     int index_count;
+    int vertex_capacity;        // allocated entries while building
+    int index_capacity;
+    void *block;                // the finalized geometry allocation (NULL while building)
+    bool finalized;             // no vertices or triangles can be added any more
 
     // Materials & face groups
     Material materials[MESH_MAX_MATERIALS];
@@ -80,7 +86,7 @@ void mesh_cleanup(Mesh *mesh);
 
 // --- Building ---
 // Usage: mesh_init → add materials → begin_group → add vertices/triangles →
-//        end_group → (repeat) → compute_bounds
+//        end_group → (repeat) → mesh_finalize
 
 int  mesh_add_material(Mesh *mesh, Material mat);
 int  mesh_add_vertex(Mesh *mesh, MeshVertex vert);
@@ -89,6 +95,11 @@ int  mesh_begin_group(Mesh *mesh, int material_index);
 void mesh_end_group(Mesh *mesh);
 void mesh_compute_bounds(Mesh *mesh);   // also analyses every face group
 void mesh_analyze_group(const Mesh *mesh, MeshFaceGroup *group);
+
+// Last build step: computes bounds and face-group data (mesh_compute_bounds)
+// and moves the geometry into one exact-size, 16-byte aligned allocation,
+// vertices then indices. Adding vertices or triangles afterwards fails.
+void mesh_finalize(Mesh *mesh);
 
 // World-space bounding sphere of a mesh under a model matrix: the centre is
 // transformed, the radius scaled by the largest axis scale (squared column

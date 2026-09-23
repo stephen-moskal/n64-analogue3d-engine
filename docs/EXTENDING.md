@@ -110,7 +110,7 @@ Gotchas:
 
 **Files:** the scene or module that owns the mesh; for a shared built-in shape, `src/render/mesh_defs.c/.h` and `tests/host/test_mesh.c`. Background: [MESH_SYSTEM.md](MESH_SYSTEM.md).
 
-The builder API is declared in `src/render/mesh.h` and implemented in `mesh_build.c`: `mesh_init` → `mesh_add_material` → for each face group `mesh_begin_group`, `mesh_add_vertex`, `mesh_add_triangle`, `mesh_end_group` → `mesh_compute_bounds`. From `build_platform()` in `mesh_defs.c`:
+The builder API is declared in `src/render/mesh.h` and implemented in `mesh_build.c`: `mesh_init` → `mesh_add_material` → for each face group `mesh_begin_group`, `mesh_add_vertex`, `mesh_add_triangle`, `mesh_end_group` → `mesh_finalize`. From `build_platform()` in `mesh_defs.c`:
 
 ```c
 mesh_init(&platform_mesh);                          // zeroed, backface_cull = true
@@ -134,7 +134,7 @@ for (int f = 0; f < 6; f++) {
     mesh_add_triangle(&platform_mesh, base, base + 2, base + 3);   // seen from outside
     mesh_end_group(&platform_mesh);
 }
-mesh_compute_bounds(&platform_mesh);                // bounding sphere + group analysis
+mesh_finalize(&platform_mesh);                      // bounds, group analysis, exact-size geometry
 ```
 
 Steps:
@@ -142,10 +142,10 @@ Steps:
 1. Model around the origin at unit size. The object's transform places it: `mat4_from_srt(&model, &scale, rx, ry, rz, &pos)` (rotation Ry·Rx·Rz), then `mesh_draw(mesh, &model, cam, light)`, as `object_draw()` in `demo_scene.c` does.
 2. Wind every triangle counter-clockwise seen from outside, that is, from the side its normals point to.
 3. Give each flat face its own group with one shared normal (the pillar has 10 groups: 8 sides and 2 caps).
-4. Call `mesh_compute_bounds()` after the last group, and `mesh_cleanup()` in `on_cleanup`.
+4. Call `mesh_finalize()` after the last group (bounds, group analysis, and one exact-size geometry block; nothing can be added afterwards), and `mesh_cleanup()` in `on_cleanup`.
 5. For a built-in shape: a static `Mesh` and a `build_<shape>()` in `mesh_defs.c`, called from `mesh_defs_init()` and freed in `mesh_defs_cleanup()`, a getter in `mesh_defs.h`, and host checks in `tests/host/test_mesh.c`: `CHECK(count_bad_winding(mesh_defs_get_<shape>()) == 0);` in `test_mesh_winding()`, plus the expected planar-group count in `test_mesh_planar_groups()`.
 
-`mesh_compute_bounds()` runs `mesh_analyze_group()` on every group, and `mesh_draw()` treats the two kinds differently:
+`mesh_finalize()` (through `mesh_compute_bounds()`) runs `mesh_analyze_group()` on every group, and `mesh_draw()` treats the two kinds differently:
 
 | | Planar group | Curved group |
 |---|---|---|
@@ -161,8 +161,9 @@ Gotchas:
 
 - **Winding errors hide on planar groups**, which `mesh_draw()` and projected shadows both test with the group normal. On curved groups both use the screen winding, so a wrong winding shows up there as missing triangles and holes in the shadow. `count_bad_winding()` in `test_mesh.c` catches it on the host either way.
 - **Limits fail quietly** (512 vertices, 1024 indices, 8 materials, 16 groups): `mesh_add_vertex`, `mesh_add_material` and `mesh_begin_group` return -1, `mesh_add_triangle` drops the triangle, and after a failed `mesh_begin_group` triangles land in the previous group.
-- Forgetting `mesh_compute_bounds()` doesn't crash: the radius stays 0, so the mesh vanishes as soon as its centre leaves the view, and every group takes the slower curved path.
-- Every mesh allocates full capacity on its first vertex: 512 × 32 B + 1024 × 2 B ≈ 18 KB, even for a quad (D8; `mesh_finalize()` is planned in S4).
+- Forgetting `mesh_finalize()` doesn't crash: the radius stays 0, so the mesh vanishes as soon as its centre leaves the view, every group takes the slower curved path, and the build arrays keep their spare capacity.
+- Build arrays start at 16 vertices / 48 indices and double while building; `mesh_finalize()` trims them into one block. Adding vertices or triangles after it fails (assert in debug builds).
+- Placement matters: a mesh whose geometry or `Mesh` struct shares D-cache sets with the render stack draws up to ~8 % slower (D26). Bench = Layout measures it.
 - UVs are in texels (0–32 for a 32×32 sprite), and the slot of a `MATERIAL_TEXTURED` material must be loaded before the first draw (`texture_upload()` asserts in debug builds).
 
 ---

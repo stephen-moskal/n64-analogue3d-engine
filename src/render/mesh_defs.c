@@ -110,7 +110,7 @@ static void build_pillar(void) {
     }
     mesh_end_group(&pillar_mesh);
 
-    mesh_compute_bounds(&pillar_mesh);
+    mesh_finalize(&pillar_mesh);
 }
 
 // --- Platform: rectangular box, size 4.0 x 0.5 x 2.0 ---
@@ -176,7 +176,7 @@ static void build_platform(void) {
         mesh_end_group(&platform_mesh);
     }
 
-    mesh_compute_bounds(&platform_mesh);
+    mesh_finalize(&platform_mesh);
 }
 
 // --- Pyramid: 4-sided, base [-1,1] XZ, apex at Y=1 ---
@@ -257,7 +257,7 @@ static void build_pyramid(void) {
     mesh_add_triangle(&pyramid_mesh, bi, bi + 2, bi + 3);
     mesh_end_group(&pyramid_mesh);
 
-    mesh_compute_bounds(&pyramid_mesh);
+    mesh_finalize(&pyramid_mesh);
 }
 
 // --- Sphere: 6-longitude × 6-latitude UV sphere, unit radius ---
@@ -368,7 +368,7 @@ static void build_sphere(void) {
         mesh_end_group(&sphere_mesh);
     }
 
-    mesh_compute_bounds(&sphere_mesh);
+    mesh_finalize(&sphere_mesh);
 }
 
 // --- Public API ---

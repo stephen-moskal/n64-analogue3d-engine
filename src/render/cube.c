@@ -86,7 +86,7 @@ void cube_init(void) {
         mesh_end_group(&cube_mesh);
     }
 
-    mesh_compute_bounds(&cube_mesh);
+    mesh_finalize(&cube_mesh);
 }
 
 void cube_cleanup(void) {
