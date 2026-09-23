@@ -9,6 +9,7 @@
 #include "audio/audio.h"
 #include "render/atmosphere.h"
 #include "debug/engine_debug.h"
+#include "debug/debug_menu.h"
 
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
@@ -78,9 +79,8 @@ int main(void) {
 
     // Initialize RDP command queue
     rdpq_init();
-#if ENGINE_DEBUG
-    rdpq_debug_start();     // RDP command validator (debug builds only; catches hardware-only faults)
-#endif
+    // RDP validator (rdpq_debug_start) is toggled from the Debug tab in debug builds.
+    // It is off at boot: its CPU cost can push frames past 16.7 ms (defect D18).
 
     // Initialize DFS (required before sprite_load)
     dfs_init(DFS_DEFAULT_LOCATION);
@@ -143,6 +143,10 @@ int main(void) {
     menu_add_item(&start_menu, tab_c, "Shift Up",   btn_options, 13, BTN_C_RIGHT);
     menu_add_item(&start_menu, tab_c, "Shift Down", btn_options, 13, BTN_C_LEFT);
 
+    // Tab 5: Debug (Phase 1 tooling toggles — see src/debug/debug_menu.h)
+    int tab_d = menu_add_tab(&start_menu, "Debug");
+    debug_menu_init(&start_menu, tab_d);
+
     // Initialize audio and atmosphere
     snd_init();
     atmosphere_init();
@@ -171,6 +175,7 @@ int main(void) {
 
         // Update game logic once per frame with actual elapsed time
         scene_manager_update(&scene_mgr, dt);
+        debug_menu_update();
 
         // Render
         surface_t *fb = display_get();

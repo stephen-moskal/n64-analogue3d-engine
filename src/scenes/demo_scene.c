@@ -8,6 +8,7 @@
 #include "../input/action.h"
 #include "../ui/text.h"
 #include "../ui/menu.h"
+#include "../debug/engine_debug.h"
 #include "../render/billboard.h"
 #include "../render/shadow.h"
 #include "../render/particle.h"
@@ -1218,7 +1219,7 @@ static void demo_post_draw(Scene *scene) {
     // Debug text overlay
     bool show_debug = (menu_get_value(&start_menu, TAB_SETTINGS, ITEM_DEBUG_TEXT) == 0);
     if (show_debug) {
-        text_draw(&title_text, "SMozN64 Dev Engine");
+        text_draw(&title_text, "SMozN64 Dev Engine [" ENGINE_BUILD_NAME "]");
 
         // Left side: object stats
         text_draw_fmt(&obj_stats_text, "OBJ:%d/%d VIS:%d",

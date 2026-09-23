@@ -58,7 +58,13 @@ libdragon's inspector takes over the screen on an exception or `assertf()` failu
 
 ### RDP validation
 
-`rdpq_debug_start()` is available (commented out in `src/main.c`); enabling it validates every RDP command at runtime and reports mistakes that ares tolerates but real hardware does not (e.g. triangles in fill mode). It costs CPU time; the roadmap (ROADMAP_v2 Phase 1) makes it a debug-build default.
+In debug builds (`engine-debug.z64`) the RDP validator is toggled from **Start menu → Debug → RDP Check**. It validates every RDP command and reports mistakes that ares tolerates but real hardware does not (fill-mode triangles, a textured triangle format with a colour combiner that ignores the texture, missing Z-buffer). Messages go to the debug log (`sc64deployer debug` / ares). Release builds compile it out.
+
+Two cautions, both learned on the Analogue 3D on 2026-09-23:
+
+- **Keep the log quiet.** Each validator message is printed over USB, and a defect that repeats every triangle floods the log and stalls every frame. The first run flagged roadmap defect D2 about 41,000 times and the demo crawled; fixing D2 restored 60 FPS.
+- **It costs CPU time.** With the validator on, heavy frames (the menu open) run past 16.7 ms. On the A3D that shows as flicker in the lower part of the screen; ares only shows the FPS drop, and release builds do not flicker. That is why the validator is off at boot. Turn it on to check a feature, turn it off to judge performance. Tracked as defect D18 in ROADMAP_v2.
+- **Toggling is done at a frame boundary.** The engine drains the RSP/RDP (`rspq_wait()`) before starting or stopping the validator; switching it mid-frame produced bogus `SET_COLOR_IMAGE` errors and once left the RSP halted (RSP crash in the audio mixer). Right after it starts you may still see about 15 "textured primitive ... combiner" warnings on text glyphs, logged as `SET_COMBINE_MODE last sent at 0x0`: the text mode was set before the validator started. They appear once per start and can be ignored; persistent repeats of a warning are real.
 
 ### Emulator tools
 

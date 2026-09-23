@@ -288,7 +288,10 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
             trifmt = (mat->type == MATERIAL_TEXTURED)
                 ? &TRIFMT_ZBUF_SHADE_TEX : &TRIFMT_ZBUF_SHADE;
         } else {
-            trifmt = &TRIFMT_ZBUF_TEX;
+            // Flat materials must not use a textured format: the combiner
+            // ignores TEX0, and the RDP validator flags it (roadmap defect D2).
+            trifmt = (mat->type == MATERIAL_TEXTURED)
+                ? &TRIFMT_ZBUF_TEX : &TRIFMT_ZBUF;
         }
 
         // Draw all triangles in this group
