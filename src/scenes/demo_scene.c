@@ -10,6 +10,7 @@
 #include "../ui/menu.h"
 #include "../debug/engine_debug.h"
 #include "../debug/stats.h"
+#include "../debug/profiler.h"
 #include "../render/billboard.h"
 #include "../render/shadow.h"
 #include "../render/particle.h"
@@ -729,9 +730,11 @@ static void handle_object_manipulation(Scene *scene, const InputState *input) {
 
 static void demo_update(Scene *scene, float dt) {
     // Poll input through action mapping layer
+    PROF_BEGIN(PROF_INPUT);
     action_update();
     InputState input_state;
     input_update(&input_state);
+    PROF_END(PROF_INPUT);
 
     // Menu input (START is fixed — always toggles menu)
     joypad_buttons_t raw_pressed = joypad_get_buttons_pressed(JOYPAD_PORT_1);
@@ -1132,7 +1135,9 @@ static void demo_update(Scene *scene, float dt) {
     }
 
     // Update physics (semi-fixed timestep)
+    PROF_BEGIN(PROF_PHYSICS);
     physics_world_update(&physics_world, dt);
+    PROF_END(PROF_PHYSICS);
 
     // Sync ball position from physics body to scene object
     if (ball_spawned && ball_body_handle >= 0 && ball_object_index >= 0) {
@@ -1144,7 +1149,9 @@ static void demo_update(Scene *scene, float dt) {
     }
 
     // Update particles
+    PROF_BEGIN(PROF_PARTICLE_UPDATE);
     particle_update(dt);
+    PROF_END(PROF_PARTICLE_UPDATE);
 }
 
 // ============================================================
@@ -1153,12 +1160,17 @@ static void demo_update(Scene *scene, float dt) {
 
 static void demo_draw(Scene *scene) {
     // Draw sky gradient bands (behind all geometry)
+    PROF_BEGIN(PROF_SKY);
     sky_draw();
+    PROF_END(PROF_SKY);
 
     // Draw the checkered floor
+    PROF_BEGIN(PROF_FLOOR);
     floor_draw(&scene->camera, &scene->lighting);
+    PROF_END(PROF_FLOOR);
 
     // Draw shadows on floor (after floor, before objects)
+    PROF_BEGIN(PROF_SHADOWS);
     if (scene->lighting.shadow.mode != SHADOW_OFF) {
         shadow_begin(&scene->camera, &scene->lighting);
 
@@ -1191,6 +1203,7 @@ static void demo_draw(Scene *scene) {
 
         shadow_end();
     }
+    PROF_END(PROF_SHADOWS);
 }
 
 // ============================================================
@@ -1199,8 +1212,11 @@ static void demo_draw(Scene *scene) {
 
 static void demo_post_draw(Scene *scene) {
     // Draw particles (after opaque objects, before HUD)
+    PROF_BEGIN(PROF_PARTICLE_DRAW);
     particle_draw(&scene->camera);
+    PROF_END(PROF_PARTICLE_DRAW);
 
+    PROF_BEGIN(PROF_HUD);
     // Count visible objects (for HUD)
     int visible_count = 0;
     for (int i = 0; i < scene->object_count; i++) {
@@ -1238,7 +1254,7 @@ static void demo_post_draw(Scene *scene) {
             hud_fps = display_get_fps();
             hud_fps_ticks = now;
         }
-        text_draw_fmt(&fps_text, "FPS: %.0f", hud_fps);
+        text_draw_fmt(&fps_text, "FPS: %.0f CPU:%.1fms", hud_fps, profiler_cpu_ms());
 
         // Right side: selection info (only in object mode)
         if (interaction_mode != MODE_NORMAL && selected_object >= 0) {
@@ -1266,9 +1282,13 @@ static void demo_post_draw(Scene *scene) {
             scene->camera.position.z);
     }
 
+    PROF_END(PROF_HUD);
+
     // Menu overlay
     if (start_menu.is_open) {
+        PROF_BEGIN(PROF_MENU);
         menu_draw(&start_menu);
+        PROF_END(PROF_MENU);
     }
 }
 

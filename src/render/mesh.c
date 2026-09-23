@@ -1,6 +1,7 @@
 #include "mesh.h"
 #include "texture.h"
 #include "../debug/stats.h"
+#include "../debug/profiler.h"
 #include "atmosphere.h"
 #include <stdlib.h>
 #include <string.h>
@@ -134,6 +135,7 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
     STATS_INC(mesh_draws);
 
     // 1. Transform bounding sphere center to world space for frustum cull
+    PROF_BEGIN(PROF_MESH_CULL);
     vec4_t world_center_h;
     mat4_mul_vec3(&world_center_h, model, &mesh->bound_center);
     vec3_t world_center = {world_center_h.x, world_center_h.y, world_center_h.z};
@@ -153,7 +155,9 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
                                  : (sy_sq > sz_sq ? sy_sq : sz_sq);
     float world_radius = mesh->bound_radius * sqrtf(max_sq);
 
-    if (!camera_sphere_visible(cam, &world_center, world_radius)) {
+    bool visible = camera_sphere_visible(cam, &world_center, world_radius);
+    PROF_END(PROF_MESH_CULL);
+    if (!visible) {
         STATS_INC(mesh_culled_frustum);
         return;
     }
@@ -275,7 +279,9 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
 
         // Lighting — once per group
         float normal_f[3] = {nx, ny, nz};
+        PROF_BEGIN(PROF_MESH_LIGHT);
         color_t lit_color = lighting_calculate(light, normal_f, view_dir, world_pos);
+        PROF_END(PROF_MESH_LIGHT);
         uint8_t r = (uint8_t)((mat->base_color[0] * lit_color.r) / 255);
         uint8_t g_col = (uint8_t)((mat->base_color[1] * lit_color.g) / 255);
         uint8_t b = (uint8_t)((mat->base_color[2] * lit_color.b) / 255);
@@ -301,6 +307,7 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
         }
 
         // Draw all triangles in this group
+        PROF_BEGIN(PROF_MESH_TRIS);
         for (int i = group->index_start;
              i < group->index_start + group->index_count;
              i += 3) {
@@ -364,6 +371,7 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
             rdpq_triangle(trifmt, screen[0], screen[1], screen[2]);
             total_tris++;
         }
+        PROF_END(PROF_MESH_TRIS);
     }
 
     STATS_ADD(tris_mesh, total_tris);

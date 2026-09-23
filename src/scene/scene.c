@@ -1,5 +1,6 @@
 #include "scene.h"
 #include "../debug/stats.h"
+#include "../debug/profiler.h"
 #include "../render/texture.h"
 #include <string.h>
 
@@ -45,12 +46,14 @@ void scene_update(Scene *scene, float dt) {
     }
 
     // Update camera
+    PROF_BEGIN(PROF_SCENE_SYS);
     camera_update(&scene->camera);
 
     // Run collision tests
     collision_test_all(&scene->collision);
     STATS_SET(colliders, scene->collision.count);
     STATS_SET(collision_pairs, scene->collision.result_count);
+    PROF_END(PROF_SCENE_SYS);
 }
 
 void scene_draw(Scene *scene) {
@@ -66,12 +69,14 @@ void scene_draw(Scene *scene) {
     }
 
     // Draw objects with per-object callbacks
+    PROF_BEGIN(PROF_OBJECTS);
     for (int i = 0; i < scene->object_count; i++) {
         SceneObject *obj = &scene->objects[i];
         if (obj->visible && obj->on_draw) {
             obj->on_draw(obj, &scene->camera, &scene->lighting);
         }
     }
+    PROF_END(PROF_OBJECTS);
 
     // Post-draw: HUD, overlays, 2D elements (after all 3D geometry)
     if (scene->on_post_draw) {

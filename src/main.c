@@ -11,6 +11,7 @@
 #include "debug/engine_debug.h"
 #include "debug/debug_menu.h"
 #include "debug/stats.h"
+#include "debug/profiler.h"
 
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
@@ -166,42 +167,64 @@ int main(void) {
     uint32_t last_ticks = TICKS_READ();
 
     uint32_t frame_index = 0;
+    profiler_init();
 
     while (1) {
-        // Publish last frame's counters, start counting this frame
-        stats_frame_begin();
-        frame_index++;
-
         // Measure real elapsed time since last frame
         uint32_t now = TICKS_READ();
-        float dt = (float)TICKS_DISTANCE(last_ticks, now) / (float)TICKS_PER_SECOND;
+        uint32_t frame_ticks = (uint32_t)TICKS_DISTANCE(last_ticks, now);
+        float dt = (float)frame_ticks / (float)TICKS_PER_SECOND;
         last_ticks = now;
+
+        // Publish last frame's counters and timings, start this frame
+        if (frame_index > 0) profiler_frame_end(frame_ticks);
+        profiler_frame_begin();
+        profiler_set_enabled(debug_profiler_enabled());
+        stats_frame_begin();
+        frame_index++;
 
         if (dt > MAX_FRAME_DT) dt = MAX_FRAME_DT;
         if (dt <= 0.0f) dt = 1.0f / 60.0f;
 
         // Update game logic once per frame with actual elapsed time
+        PROF_BEGIN(PROF_UPDATE);
         scene_manager_update(&scene_mgr, dt);
+        PROF_END(PROF_UPDATE);
+
         debug_menu_update();
         if (debug_consume_dump_request()) {
             stats_dump_csv(frame_index);
+            profiler_dump_csv();
+        }
+        if (debug_consume_reset_peaks_request()) {
+            profiler_reset_peaks();
         }
 
         // Render
+        // Time blocked waiting for a free framebuffer is always measured
+        uint32_t t_wait = TICKS_READ();
         surface_t *fb = display_get();
+        profiler_record(PROF_WAIT_DISPLAY, TICKS_DISTANCE(t_wait, TICKS_READ()));
+
         rdpq_attach(fb, &zbuf);
+        PROF_BEGIN(PROF_DRAW);
         scene_manager_draw(&scene_mgr);
+        PROF_END(PROF_DRAW);
         rdpq_detach_show();
 
         // Feed audio mixer
+        PROF_BEGIN(PROF_AUDIO);
         snd_update();
+        PROF_END(PROF_AUDIO);
 
         // Frame rate limiting (busy-wait until target frame time)
         if (engine_target_fps > 0) {
+            uint32_t t_limit = TICKS_READ();
             uint32_t target_ticks = TICKS_PER_SECOND / engine_target_fps;
             while (TICKS_DISTANCE(now, TICKS_READ()) < (int32_t)target_ticks) {
                 // spin
             }
+            profiler_record(PROF_LIMITER, TICKS_DISTANCE(t_limit, TICKS_READ()));
         }
     }
 
