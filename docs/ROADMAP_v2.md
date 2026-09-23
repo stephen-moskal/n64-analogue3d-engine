@@ -75,7 +75,7 @@ FPS / triangle / TMEM numbers from the HUD are captured in P0.2.
 | Phase | Name | Exit criterion |
 |---|---|---|
 | 0 | Environment re-establishment & baseline (Windows 11) | ROM builds via Docker on Windows, boots in ares and on the Analogue 3D, `debugf` visible on both channels, baseline recorded, `docs/SETUP.md` reproducible from a clean machine |
-| 1 | Developer tooling & benchmarking foundation | Overlay pages (stats, profiler, memory, frame time, RSP), benchmark scene + CSV + baseline table, debug/release variants, CI green, DEBUGGING / PROFILING / BENCHMARKS / HARDWARE docs |
+| 1 ✔ | Developer tooling & benchmarking foundation (done 2026-09-23) | Overlay pages (stats, profiler, memory, frame time, RSP), benchmark scene + CSV + baseline table, debug/release variants, CI green, DEBUGGING / PROFILING / BENCHMARKS / HARDWARE docs |
 | 2 | Engine hardening | Defect register closed, 0 B heap growth over 10 resets, demo frame time −15 % vs baseline, heap −90 KB, `demo_scene.c` no longer owns menu semantics, physics verified-hw |
 | 3 | Graphics features independent of Tiny3D | Vertex cache, Gouraud, sprite animation, CI4/TMEM residency, fonts, VI options, decals, skybox, sorted transparency — each with a BENCHMARKS row |
 | 4 | Milestone 1: libdragon upgrade + Tiny3D + GLTF (F11–16) | Blender → ROM pipeline; ≥ 64 pillars at 60 FPS on hardware; both render paths measured by the Phase 1 tools |
@@ -395,6 +395,25 @@ Host tests cover the pure-C modules: `test_vec3.c`, `test_collision.c` (sphere/s
 | P1.10 | Crash diagnostics & RDP validation workflow | undocumented → §5.12 | `src/debug/rdp_debug.c/h`, `tools/rdp_log_to_hex.py`, `docs/DEBUGGING.md`, `docs/HARDWARE.md` | P1.1 | hw: a forced `assertf` shows the inspector and the USB backtrace; a one-frame capture validates clean offline | — | DEBUGGING.md, HARDWARE.md |
 
 Definition of Done for every row: builds in both variants, CI green, BENCHMARKS row committed, docs updated, status `verified-hw`.
+
+### 5.14 Phase 1 status (2026-09-23) — complete
+
+All ten features are built, exercised on the Analogue 3D through the in-engine Debug tab, and documented (DEBUGGING.md, PROFILING.md, BENCHMARKS.md, HARDWARE.md).
+
+| ID | Status | Notes |
+|---|---|---|
+| P1.1 | verified-hw | debug/release variants, auto sources, header deps; validator made opt-in after it exposed D2 and D18 |
+| P1.2 | verified-hw | unified stats; D4 (upload before cull) fixed |
+| P1.3 | verified-hw | 21 scopes; overhead ≈ 0.1 ms |
+| P1.4 | verified-hw | A3D has 8 MB (Expansion Pak); D1 leak measured at ~20 KB per reset |
+| P1.5 | verified-hw | host-tested; revealed loop pacing jitter (new D19) |
+| P1.6 | verified-hw | 2.3–4.2 ms per page (target revised: text ≈ 15–20 µs per glyph) |
+| P1.7 | verified-hw (revised) | RDP load from hardware counters (93.75 MHz on the A3D); libdragon RSPQ_PROFILE blocked at this commit (IMEM overflow), retry in P4.0 |
+| P1.8 | verified-hw | 26-step baseline committed; object ceiling ≈ 24–28 pillars at 60 FPS |
+| P1.9 | built | 67 host checks + CI script verified locally; first GitHub Actions run on the next push |
+| P1.10 | verified-hw | crash inspector + USB backtrace; two-frame RDP capture validates clean offline (0 warnings, 188 triangles) |
+
+Findings that feed Phase 2/3: the engine is **CPU-bound** (RDP busy 32–44 %); text drawing is the largest avoidable cost (HUD 1.1 ms, menu peaks 6–9 ms with the validator, overlay pages 2–4 ms); the floor (2.8 ms) and projected shadows (+16.6 ms for 16 casters) are the next biggest; state changes (SET_OTHER_MODES / SET_COMBINE_MODE) are a third of the RDP command stream.
 
 ---
 

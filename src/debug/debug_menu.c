@@ -1,6 +1,7 @@
 #include "debug_menu.h"
 #include "engine_debug.h"
 #include "../input/action.h"
+#include "rdp_debug.h"
 
 static const char *overlay_options[] = {"Off", "Stats", "Profiler", "Memory", "Frame", "RSP"};
 static const char *on_off_options[]  = {"On", "Off"};
@@ -9,6 +10,8 @@ static const char *dump_options[]    = {"---", "Dump!"};
 static const char *reset_options[]   = {"---", "Reset!"};
 static const char *scene_options[]   = {"Demo", "Benchmark"};
 static const char *bench_options[]   = {"All", "Objects", "Particles", "Lights", "Textures", "Shadows", "Fillrate"};
+static const char *capture_options[] = {"---", "Capture!"};
+static const char *crash_options[]   = {"---", "Assert!"};
 
 _Static_assert(sizeof(overlay_options) / sizeof(overlay_options[0]) == OVERLAY_PAGE_COUNT,
                "overlay_options must match OverlayPage");
@@ -37,11 +40,15 @@ void debug_menu_init(Menu *menu, int tab) {
     menu_add_item(menu, tab, "Reset Peaks", reset_options,  2, 0);
     menu_add_item(menu, tab, "Scene",       scene_options,  2, 0);
     menu_add_item(menu, tab, "Bench",       bench_options,  7, 0);
+    menu_add_item(menu, tab, "RDP Log",     capture_options, 2, 0);
+    menu_add_item(menu, tab, "Crash Test",  crash_options,  2, 0);
 
 #if !ENGINE_DEBUG
     // Validator and profiler are compiled out of release builds
     menu_item_set_disabled(menu, tab, DBG_ITEM_RDP_CHECK, true);
     menu_item_set_disabled(menu, tab, DBG_ITEM_PROFILER, true);
+    menu_item_set_disabled(menu, tab, DBG_ITEM_RDP_LOG, true);
+    menu_item_set_disabled(menu, tab, DBG_ITEM_CRASH_TEST, true);
     profiler_enabled = false;
 #endif
 }
@@ -120,6 +127,16 @@ void debug_menu_update(void) {
         requested_scene = scene;
         scene_requested = true;
         ENGINE_LOG("[debug] scene switch requested: %s\n", scene_options[scene]);
+    }
+
+    if (item_value(DBG_ITEM_RDP_LOG) == 1) {
+        item_set(DBG_ITEM_RDP_LOG, 0);
+        rdp_debug_request_capture();
+        ENGINE_LOG("[debug] one-frame RDP capture requested\n");
+    }
+    if (item_value(DBG_ITEM_CRASH_TEST) == 1) {
+        item_set(DBG_ITEM_CRASH_TEST, 0);
+        rdp_debug_crash_test();
     }
 
     if (item_value(DBG_ITEM_RESET_PEAKS) == 1) {

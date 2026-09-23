@@ -1,0 +1,111 @@
+# Profiling
+
+Tools for answering "where does the frame go?" on the Analogue 3D and in ares. Numbers and the benchmark baseline are in [BENCHMARKS.md](BENCHMARKS.md); logging and validation in [DEBUGGING.md](DEBUGGING.md).
+
+## At a glance
+
+| Tool | Where | What it measures | Cost |
+|---|---|---|---|
+| HUD `FPS … CPU x.x ms` | demo HUD | frame rate and average CPU work per frame | — |
+| Overlay pages | D-Up / Debug → Overlay | stats, per-phase CPU, memory, frame-time histogram, RDP load | 2.3–4.2 ms with a page up, 0 when off |
+| CSV dump | D-Down / Debug → Dump CSV | STATS, PROF_AVG/PEAK, FT, MEM, RDP rows over the debug log | one-off |
+| Benchmark scene | Debug → Scene = Benchmark | 26-step stress run, one BENCH row per step | — |
+| `tools/bench_compare.py` | host | regression check between two benchmark runs | — |
+
+All modules are in `src/debug/`.
+
+## CPU profiler (`profiler.c/h`)
+
+The engine times named scopes with the CPU tick counter (libdragon's `profile.h` only reports through `profile_dump()`, so it cannot feed the overlay):
+
+```c
+PROF_BEGIN(PROF_FLOOR);
+floor_draw(&scene->camera, &scene->lighting);
+PROF_END(PROF_FLOOR);
+```
+
+- Scopes compile out in release (`ENGINE_PROFILE=0`) and are skipped at runtime when Debug → Profiler is Off. Overhead measured on the A3D: ~0.1 ms per frame.
+- A slot can be entered many times per frame (once per mesh); time and calls accumulate. Nested slots are timed separately, so a parent includes its children.
+- Values: exponential moving average over ~32 frames (`avg_us`), last frame (`last_us`), and peak since boot or Reset Peaks (`peak_us`).
+- `frame`, `wait_display` and `limiter` are always measured. **CPU work = frame − wait_display − limiter** (the HUD's CPU value).
+
+Slots and nesting:
+
+```
+frame                 loop top to loop top (wall time)
+  wait_display        blocked in display_get() for a free framebuffer = idle headroom
+  limiter             30 FPS busy-wait
+  update              scene_manager_update
+    input / physics / particle_upd / scene_sys (camera + collision)
+  draw                scene_manager_draw
+    sky / floor / shadows / objects / particle_draw / hud / menu
+      objects > mesh_cull / mesh_light / mesh_tris
+  overlay             debug overlay page
+  audio               snd_update
+```
+
+To add a scope: add a slot to `ProfSlot` in `profiler.h` and its name/depth to `slot_info` in `profiler.c`, then wrap the code. `PROF_BEGIN` declares a variable, so use a slot at most once per C scope.
+
+## Unified stats (`stats.c/h`)
+
+Per-frame counters written with `STATS_INC(field)`, `STATS_ADD(field, n)` and `STATS_SET(field, v)`; `stats_get()` returns the last complete frame. Kept in release builds. Glossary:
+
+| Counter | Meaning |
+|---|---|
+| `tris_mesh / floor / shadow / particle / ui` | triangles submitted to the RDP, by source |
+| `tris_rejected_near / guard` | mesh triangles dropped at the near plane / guard band |
+| `mesh_draws`, `mesh_culled_frustum` | `mesh_draw()` calls and those rejected by the bounding-sphere test |
+| `groups_drawn`, `groups_culled_backface` | face groups submitted / skipped as back-facing |
+| `mode_changes` | `rdpq_set_mode_standard()` in `mesh_draw` |
+| `tex_uploads`, `tex_upload_bytes` | texture loads issued (only for groups that survive culling) |
+| `fill_rects` | fill rectangles (sky, benchmark layers) |
+| `particles_alive / drawn` | particle pool usage |
+| `colliders`, `collision_pairs`, `raycasts` | collision world size, overlapping pairs, raycasts this frame |
+| `physics_bodies`, `physics_steps` | active bodies, fixed steps run this frame |
+
+## Memory (`memstats.c/h`)
+
+RDRAM size and Expansion Pak flag, heap total/used/peak (`sys_get_heap_stats`), **heap delta** since boot or Reset Peaks (leak indicator: Reset Scene ×N should return to 0), framebuffer and Z-buffer sizes, and the **stack high-water mark**: the 64 KiB stack at the top of RDRAM is painted at startup (interrupts disabled) and scanned every 30 frames.
+
+## Frame time (`frametime.c/h`)
+
+A 256-frame ring of loop time and CPU time: fps, average/min/max, p99, 1 % low (1000 / mean of the slowest 1 % of frames), CPU average/max, frames whose CPU work exceeded the budget by 10 %, and a 24-bucket histogram (1.5 ms per bucket). Pure C, unit-tested on the host.
+
+With triple buffering the loop is paced by framebuffer availability, not vsync, so loop times alternate short/long (≈12.5 / 21 ms) at a steady 60 FPS (defect D19). Judge load by CPU time and fps, not by individual loop times.
+
+## RDP load (hardware counters)
+
+The RDP's cycle counters `DP_CLOCK`, `DP_BUSY`, `DP_PIPE_BUSY` and `DP_TMEM_BUSY` are read and reset once per loop and scaled by the measured counter rate. **On the Analogue 3D they tick at 93.75 MHz** (1.5× the 62.5 MHz RCP clock), so the code scales by the measured clock rather than assuming a frequency.
+
+- **busy**: cycles the RDP had commands to process. Close to the frame time means RDP-bound.
+- **pipe**: cycles the pixel pipeline was active (fill work).
+- **tmem**: cycles spent loading TMEM.
+
+Shown on the overlay's RSP page and in `RDP` CSV rows. Result so far: the demo is **CPU-bound**. RDP busy is 5–7 ms of 16.7, and pipe is only ~30 % of busy.
+
+## libdragon's RSP profiler (opt-in, currently blocked)
+
+libdragon can also time each RSP microcode overlay (`rspq_profile.h`), but only when built with `RSPQ_PROFILE=1`, a hard `#define` in `libdragon/include/rspq_constants.h`. At the pinned libdragon commit that build **fails**: with the profiling hooks the core `rsp_rdpq` microcode (and the H.264 one) overflows the RSP's 4 KB IMEM by 96 bytes.
+
+The tooling is kept for a retry after the libdragon upgrade (ROADMAP_v2 P4.0):
+
+```powershell
+./tools/rspq_profile.ps1 on       # apply tools/patches/rspq_profile.patch, rebuild libdragon + project
+./tools/rspq_profile.ps1 status
+./tools/rspq_profile.ps1 off      # restore the pristine submodule
+```
+
+When it works, the RSP page adds per-overlay RSP time and "Wait RDP" / "Wait CPU" (RSP blocked on the RDP, or starved by the CPU). Never commit the submodule while the patch is applied.
+
+## CSV rows
+
+All rows go through `debugf()` (debug builds), so the same capture works over `sc64deployer debug` and ares:
+
+```
+STATS_HDR / STATS,<frame>,...        stats counters (header sent once)
+PROF_HDR / PROF_AVG / PROF_PEAK      per-slot µs, averages and peaks
+FT_HDR / FT,<frame>,count,fps,...    frame-time window + histogram
+MEM_HDR / MEM,<frame>,rdram,...      memory
+RDP,<frame>,counter_mhz=...,busy_us=...   RDP counters
+BENCH_META / BENCH_HDR / BENCH,...   benchmark scene (see BENCHMARKS.md)
+```

@@ -50,6 +50,7 @@ A multi-object scene with lighting, atmosphere, shadows, and full camera control
 - Tabbed start menu with settings, sound, lighting, environment, and controls tabs
 - Scene reset feature (soft reset without console restart)
 - FPS counter and rendering stats overlay
+- Developer tools in a Debug menu tab: overlay pages (stats, CPU profiler, memory, frame-time histogram, RDP load), CSV export over USB, RDP validator and frame capture, crash test, and a benchmark scene
 
 ## Quick Start
 
@@ -231,6 +232,10 @@ RDP: Triangle Rasterize → Texture Sample → Z-Buffer → Framebuffer
 - [Scene System](docs/SCENE_SYSTEM.md) — Lifecycle, scene manager, transitions, soft reset
 - [Input System](docs/INPUT.md) — Controller layout, action mapping, analog handling
 - [Menu System](docs/MENU_SYSTEM.md) — API reference, data model, integration patterns
+- [Debugging](docs/DEBUGGING.md) — Debug tab, log channels, RDP validator and capture, crash inspector, unit tests
+- [Profiling](docs/PROFILING.md) — CPU profiler, stats, memory, frame time, RDP counters, CSV rows
+- [Benchmarks](docs/BENCHMARKS.md) — Measured performance on the Analogue 3D and the benchmark baseline
+- [Hardware Notes](docs/HARDWARE.md) — Analogue 3D + SummerCart64 facts, RDP rules
 - [Environment Setup](docs/SETUP.md) — Windows 11 and macOS: Docker, libdragon CLI, ares, SummerCart64 + driver
 - [Development Workflow](docs/WORKFLOW.md) — Build cycle, debugging, asset pipeline, hardware testing
 
@@ -241,7 +246,7 @@ See [ROADMAP_v2.md](docs/ROADMAP_v2.md) for the full plan with per-feature test 
 | Phase | Goal |
 |-------|------|
 | 0 — Environment & baseline | Windows 11 workflow reproducible, ROM verified on ares + Analogue 3D (done 2026-09-12) |
-| 1 — Tooling & benchmarking | Per-phase profiler, unified stats, memory/frame-time overlays, RDP validator in debug builds, benchmark scene + CSV, CI |
+| 1 — Tooling & benchmarking | Per-phase profiler, unified stats, memory/frame-time overlays, RDP validator + capture, benchmark scene + CSV, CI (done 2026-09-23) |
 | 2 — Engine hardening | Fix known defects (resource leaks on reset, renderer state, hot paths, mesh memory), settings/input cleanup |
 | 3 — Graphics features (CPU path) | Vertex cache, Gouraud lighting, sprite animation, CI4/TMEM residency, fonts, VI options, decals, skybox, sorted transparency |
 | 4 — Milestone 1: Tiny3D | libdragon upgrade, RSP rendering, Blender/Fast64 → GLTF → ROM pipeline, 64+ objects at 60 FPS |

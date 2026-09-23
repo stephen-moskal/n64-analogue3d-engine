@@ -25,11 +25,12 @@ sc64deployer upload .\engine-debug.z64
 
 | Task | Action |
 |------|--------|
-| Build ROM | `libdragon make` |
+| Build ROM (debug) | `libdragon make` → `engine-debug.z64` (default build task) |
+| Build ROM (release) | `libdragon make BUILD=release` → `engine.z64` |
 | Clean Build | `libdragon make clean` |
-| Rebuild | Clean Build, then Build ROM (sequential) |
-| Run in ares | Build, then launch the emulator with the ROM |
-| Upload to SummerCart64 | Build, then upload to the cart |
+| Rebuild | Clean Build, then Build ROM (debug) |
+| Run in ares (debug / release) | Build, then launch the emulator with the ROM |
+| Upload to SummerCart64 (debug / release) | Build, then upload to the cart |
 | Debug (USB Log) | `sc64deployer debug` in a dedicated terminal |
 
 ## Debugging
@@ -56,15 +57,9 @@ debugf("Player position: %f, %f\n", x, y);
 
 libdragon's inspector takes over the screen on an exception or `assertf()` failure and shows the message, the failed expression and a symbolized backtrace (the `.sym` file is embedded in the ROM by n64.mk). The same text goes to the debug log. Example seen on 2026-09-12: `wav64 rom:/audio/sfx/menu_open.wav64: invalid version` from `snd_init` — stale generated assets, fixed by a clean rebuild.
 
-### RDP validation
+### RDP validation and crash diagnostics
 
-In debug builds (`engine-debug.z64`) the RDP validator is toggled from **Start menu → Debug → RDP Check**. It validates every RDP command and reports mistakes that ares tolerates but real hardware does not (fill-mode triangles, a textured triangle format with a colour combiner that ignores the texture, missing Z-buffer). Messages go to the debug log (`sc64deployer debug` / ares). Release builds compile it out.
-
-Two cautions, both learned on the Analogue 3D on 2026-09-23:
-
-- **Keep the log quiet.** Each validator message is printed over USB, and a defect that repeats every triangle floods the log and stalls every frame. The first run flagged roadmap defect D2 about 41,000 times and the demo crawled; fixing D2 restored 60 FPS.
-- **It costs CPU time.** With the validator on, heavy frames (the menu open) run past 16.7 ms. On the A3D that shows as flicker in the lower part of the screen; ares only shows the FPS drop, and release builds do not flicker. That is why the validator is off at boot. Turn it on to check a feature, turn it off to judge performance. Tracked as defect D18 in ROADMAP_v2.
-- **Toggling is done at a frame boundary.** The engine drains the RSP/RDP (`rspq_wait()`) before starting or stopping the validator; switching it mid-frame produced bogus `SET_COLOR_IMAGE` errors and once left the RSP halted (RSP crash in the audio mixer). Right after it starts you may still see about 15 "textured primitive ... combiner" warnings on text glyphs, logged as `SET_COMBINE_MODE last sent at 0x0`: the text mode was set before the validator started. They appear once per start and can be ignored; persistent repeats of a warning are real.
+Moved to [DEBUGGING.md](DEBUGGING.md): the Debug tab, RDP Check (validator) cautions, one-frame RDP capture with offline `rdpvalidate`, the crash inspector and the Crash Test item.
 
 ### Emulator tools
 
@@ -79,16 +74,27 @@ ares (Homebrew Mode on): Tools → Tracer (CPU trace), Tools → Memory. Remembe
 
 ## Performance
 
-Today the HUD shows FPS (`display_get_fps()`), triangle count and TMEM uploads (`T:`/`U:`), object counts and collision stats. Ad-hoc timing uses the CPU tick counter, as in `main.c`:
+The in-engine tools (all in `src/debug/`, toggled from the Start menu's **Debug** tab) are described in [PROFILING.md](PROFILING.md):
 
-```c
-uint32_t t0 = TICKS_READ();
-// ... work ...
-float ms = TICKS_DISTANCE(t0, TICKS_READ()) / (float)(TICKS_PER_SECOND / 1000);
-debugf("update: %.2f ms\n", ms);
+- HUD `FPS … CPU x.x ms`; **D-Up** cycles overlay pages (Stats, Profiler, Memory, Frame, RSP); **D-Down** dumps CSV rows to the debug log.
+- **Benchmark scene** (Debug → Scene = Benchmark): 26 deterministic steps, one CSV row each. Capture and compare against the committed baseline:
+
+```powershell
+sc64deployer debug | Tee-Object capture.log          # then run the benchmark on the console
+Select-String '^BENCH' capture.log | % Line > new.csv
+python tools/bench_compare.py docs/benchmarks/2026-09-23-baseline-debug-a3d.csv new.csv
 ```
 
-Per-phase profiling, RDP busy time, memory stats, a benchmark scene and a CSV export are Phase 1 of [ROADMAP_v2.md](ROADMAP_v2.md).
+Rule of thumb from the baseline (BENCHMARKS.md): the engine is CPU-bound; ~24–28 flat 32-triangle objects fit in a 60 FPS frame on the current CPU path.
+
+## Tests and CI
+
+```powershell
+libdragon exec make -C tests/host run      # host unit tests (pure-logic modules)
+libdragon exec bash tools/ci_build.sh      # what CI runs: both ROMs, tests, ROM/RAM budgets
+```
+
+GitHub Actions (`.github/workflows/build.yml`) runs the same on every push and uploads the ROMs, `.sym` and `.map` files as artifacts. Hardware checks stay manual (see ROADMAP_v2 §11).
 
 ## Asset Pipeline
 

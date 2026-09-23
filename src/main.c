@@ -16,6 +16,7 @@
 #include "debug/memstats.h"
 #include "debug/frametime.h"
 #include "debug/overlay.h"
+#include "debug/rdp_debug.h"
 
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
@@ -243,6 +244,8 @@ int main(void) {
         }
 
         // Render
+        rdp_debug_frame_begin();   // one-frame RDP capture, if requested
+
         // Time blocked waiting for a free framebuffer is always measured
         uint32_t t_wait = TICKS_READ();
         surface_t *fb = display_get();
@@ -258,6 +261,7 @@ int main(void) {
             overlay_draw((engine_target_fps == 30) ? 33.33f : 16.67f);
         }
         rdpq_detach_show();
+        rdp_debug_frame_end();
 
         // Feed audio mixer
         PROF_BEGIN(PROF_AUDIO);

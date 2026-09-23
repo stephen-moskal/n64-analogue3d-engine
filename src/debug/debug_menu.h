@@ -22,6 +22,8 @@ typedef enum {
     DBG_ITEM_RESET_PEAKS,   // --- / Reset!  (self-resetting)
     DBG_ITEM_SCENE,         // Demo / Benchmark  (switches scene on menu close)
     DBG_ITEM_BENCH,         // which benchmark: All / Objects / ... (see BenchKind)
+    DBG_ITEM_RDP_LOG,       // --- / Capture!  one-frame RDP command log (debug only)
+    DBG_ITEM_CRASH_TEST,    // --- / Assert!   trigger assertf() (debug only)
     DBG_ITEM_COUNT
 } DebugMenuItem;
 

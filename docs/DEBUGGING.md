@@ -1,0 +1,102 @@
+# Debugging
+
+How to see what the engine is doing, catch hardware-only mistakes, and read crashes, on the Analogue 3D (via SummerCart64) and in ares. Performance tools are in [PROFILING.md](PROFILING.md); hardware facts in [HARDWARE.md](HARDWARE.md).
+
+## Build variants
+
+| | Debug (`libdragon make`) | Release (`libdragon make BUILD=release`) |
+|---|---|---|
+| ROM | `engine-debug.z64` | `engine.z64` |
+| `debugf` / `assertf` / USB + ISViewer log | on | compiled out (`NDEBUG`) |
+| RDP validator, RDP capture, crash test | available (Debug tab) | compiled out, items greyed |
+| CPU profiler scopes | on (Debug tab toggle) | compiled out |
+| Stats, memory, frame time, RDP counters, overlay | on | on |
+| Optimisation | `-O2` | `-O2` |
+
+Use the debug ROM day to day; its extra cost is about 0.1 ms per frame. Switches live in `src/debug/engine_debug.h` (`ENGINE_DEBUG`, `ENGINE_PROFILE`, `ENGINE_STATS`, `ENGINE_ASSERT`, `ENGINE_LOG`).
+
+## The Debug tab
+
+Start → L/R to the **Debug** tab. Values apply when the menu closes with A; B reverts.
+
+| Item | Options | What it does |
+|---|---|---|
+| Overlay | Off / Stats / Profiler / Memory / Frame / RSP | on-screen page (see PROFILING.md) |
+| Profiler | On / Off | CPU scope timing (debug) |
+| RDP Check | Off / On | runtime RDP validator (debug) |
+| Dump CSV | --- / Dump! | writes STATS, PROF, FT, MEM, RDP rows to the log |
+| Reset Peaks | --- / Reset! | clears profiler peaks, frame-time window, heap baseline |
+| Scene | Demo / Benchmark | switches scene with a fade |
+| Bench | All / Objects / … | which benchmark the Benchmark scene runs |
+| RDP Log | --- / Capture! | logs two frames of RDP commands (debug) |
+| Crash Test | --- / Assert! | triggers `assertf()` (debug) |
+
+Shortcuts with the menu closed: **D-Up** cycles overlay pages, **D-Down** dumps CSV. They only work while those buttons are not bound to a game action in the Controls tab.
+
+## Log channels
+
+`src/main.c` enables both channels:
+
+- **Hardware:** `debug_init_usblog()` → `sc64deployer debug`. Start it before resetting the console. It holds the cart's COM port, so stop it before `sc64deployer upload`. It exits when its stdin closes; from scripts keep stdin open, e.g. `ping -n 86400 127.0.0.1 >nul | sc64deployer debug > log.txt` (cmd) or `sleep 86400 | sc64deployer debug` (bash).
+- **Emulator:** `debug_init_isviewer()` → ares with **Homebrew Mode** enabled.
+
+Every boot prints the texture/audio load lines and `SMozN64 Dev Engine [debug build, <date>]`. A silent log means the ROM did not start or the capture is not attached.
+
+**Keep the log quiet.** Each line goes over USB; a message printed every triangle floods the link and stalls every frame (the first validator run printed one warning ~41,000 times and the demo crawled).
+
+## RDP validator (RDP Check)
+
+libdragon's `rdpq_debug_start()` checks every RDP command against the hardware rules and prints `[RDPQ_VALIDATION] WARN/ERROR` lines. It catches the mistakes ares forgives but the Analogue 3D does not.
+
+- Off at boot. Turn it on to check a feature, off to judge performance: it costs CPU time (quiet demo 8 → 13 ms) and pushes heavy frames past 16.7 ms, which flickers on the A3D (defect D18).
+- The engine drains the RSP/RDP (`rspq_wait()`) before starting or stopping it; toggling mid-frame produced bogus `SET_COLOR_IMAGE` errors and once halted the RSP (an RSP crash in the audio mixer's `rspq_highpri_sync`).
+- Right after it starts, expect about 15 `textured primitive ... combiner` warnings on text glyphs with `SET_COMBINE_MODE last sent at 0x0`: the text mode was set before the validator saw it. Ignore those; a warning that keeps repeating is real.
+
+Messages seen in this codebase:
+
+| Message | Meaning | Fix |
+|---|---|---|
+| `textured primitive drawn but the color combiner does not use TEX0...` (repeating) | textured triangle format with a flat combiner | use `TRIFMT_ZBUF` for flat materials (was defect D2) |
+| `drawing command before a SET_COLOR_IMAGE was sent` | validator started mid-frame | toggle at a frame boundary (the Debug tab does) |
+| `Z buffer image not configured but Z buffer mode was requested` | Z-buffered drawing without `rdpq_attach(fb, &zbuf)` (or a capture trimmed after `SET_Z_IMAGE`) | attach the Z-buffer |
+| fill-mode triangles | `rdpq_set_mode_fill()` then `rdpq_triangle()` | standard mode for triangles; fill mode only for rectangles |
+
+## One-frame RDP capture and offline validation
+
+For a full listing of what the RDP receives:
+
+1. Start the USB capture into a file (see Log channels).
+2. Debug tab → **RDP Log → Capture!**, close with A. The game pauses a few seconds while two frames of commands are printed (every triangle in full; libdragon's `RDPQ_LOG_FLAG_SHOWTRIS`). The capture spans two frames because logging begins when the RSP reaches the marker, part-way through the first frame.
+3. Extract the complete frame and validate it in the container:
+
+```powershell
+python tools/rdp_log_to_hex.py capture.log frame.rdp        # keeps SET_Z_IMAGE..next frame
+libdragon exec bash -c '$N64_INST/bin/rdpvalidate frame.rdp'        # validate
+libdragon exec bash -c '$N64_INST/bin/rdpvalidate -d -t frame.rdp'  # disassemble incl. triangles
+```
+
+Reference result (2026-09-23, demo scene): 1,740 command words, 188 `TRI_Z`, 95 `TEX_RECT` (text glyphs), 63 `SET_OTHER_MODES`, 56 `SET_COMBINE_MODE`; **0 warnings, 0 errors**. Mode and combiner changes are a third of the frame's commands, which is where state-batching work (Phase 2/3) pays off.
+
+## Crashes and assertions
+
+libdragon's inspector takes over the screen on an exception or a failed `assertf()` and shows the message, the failed expression, the file/line/function and a **symbolized backtrace** (the `.sym` file is embedded in the ROM by n64.mk). The same text is printed to the debug log. Debug tab → **Crash Test → Assert!** triggers one on purpose; on the A3D it reports `file "src/debug/rdp_debug.c", line …, function: rdp_debug_crash_test` followed by the backtrace. Reset the console afterwards.
+
+Crashes seen so far:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `ASSERTION FAILED: wav64 ...: invalid version` at boot | generated assets from another libdragon version | `libdragon make clean; libdragon make` |
+| `RSP CRASH ... rspq_highpri_sync ... wait loop timed out` | RDP validator stopped mid-frame while the RSP was paused for a trace fetch | toggle at a frame boundary (fixed) |
+| RSP timeout in `display_get` | RDP pipeline misconfiguration | enable RDP Check, fix what it reports |
+
+`debug_backtrace()` prints the current call stack at any point, and `rdpq_debug_get_tmem()` returns a 32×64 surface with the current TMEM contents (free it with `surface_free`).
+
+## Unit tests
+
+Pure-logic modules (vec3, collision, physics, action mapping, camera math, frame-time statistics) have host tests in `tests/host`, built against a small libdragon shim:
+
+```powershell
+libdragon exec make -C tests/host run      # 67 checks, 0 failures
+```
+
+They run in CI on every push (`.github/workflows/build.yml` → `tools/ci_build.sh`, which also builds both ROMs and checks ROM/RAM budgets with `tools/rom_budget.py`). They already caught one doc/behaviour mismatch: `action_analog_x()` is inverted.
