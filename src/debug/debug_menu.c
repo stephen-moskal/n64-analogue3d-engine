@@ -7,6 +7,8 @@ static const char *on_off_options[]  = {"On", "Off"};
 static const char *off_on_options[]  = {"Off", "On"};
 static const char *dump_options[]    = {"---", "Dump!"};
 static const char *reset_options[]   = {"---", "Reset!"};
+static const char *scene_options[]   = {"Demo", "Benchmark"};
+static const char *bench_options[]   = {"All", "Objects", "Particles", "Lights", "Textures", "Shadows", "Fillrate"};
 
 _Static_assert(sizeof(overlay_options) / sizeof(overlay_options[0]) == OVERLAY_PAGE_COUNT,
                "overlay_options must match OverlayPage");
@@ -19,6 +21,9 @@ static bool        profiler_enabled = true;
 static bool        rdp_check_active = false;   // validator state actually applied
 static bool        dump_requested   = false;
 static bool        reset_requested  = false;
+static int         active_scene     = 0;      // scene currently shown (0 demo, 1 benchmark)
+static bool        scene_requested  = false;
+static int         requested_scene  = 0;
 
 void debug_menu_init(Menu *menu, int tab) {
     dbg_menu = menu;
@@ -30,6 +35,8 @@ void debug_menu_init(Menu *menu, int tab) {
     menu_add_item(menu, tab, "RDP Check",   off_on_options, 2, 0);
     menu_add_item(menu, tab, "Dump CSV",    dump_options,   2, 0);
     menu_add_item(menu, tab, "Reset Peaks", reset_options,  2, 0);
+    menu_add_item(menu, tab, "Scene",       scene_options,  2, 0);
+    menu_add_item(menu, tab, "Bench",       bench_options,  7, 0);
 
 #if !ENGINE_DEBUG
     // Validator and profiler are compiled out of release builds
@@ -107,6 +114,14 @@ void debug_menu_update(void) {
         dump_requested = true;
         ENGINE_LOG("[debug] CSV dump requested\n");
     }
+    int scene = item_value(DBG_ITEM_SCENE);
+    if (scene != active_scene) {
+        active_scene = scene;
+        requested_scene = scene;
+        scene_requested = true;
+        ENGINE_LOG("[debug] scene switch requested: %s\n", scene_options[scene]);
+    }
+
     if (item_value(DBG_ITEM_RESET_PEAKS) == 1) {
         item_set(DBG_ITEM_RESET_PEAKS, 0);
         reset_requested = true;
@@ -128,6 +143,19 @@ bool debug_consume_dump_request(void) {
     bool r = dump_requested;
     dump_requested = false;
     return r;
+}
+
+bool debug_consume_scene_request(int *scene, int *bench_kind) {
+    if (!scene_requested) return false;
+    scene_requested = false;
+    *scene = requested_scene;
+    *bench_kind = item_value(DBG_ITEM_BENCH);
+    return true;
+}
+
+void debug_menu_set_active_scene(int scene) {
+    active_scene = scene;
+    if (dbg_menu) item_set(DBG_ITEM_SCENE, scene);
 }
 
 bool debug_consume_reset_peaks_request(void) {

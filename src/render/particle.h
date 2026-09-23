@@ -56,6 +56,8 @@ void particle_init(void);
 void particle_cleanup(void);
 
 // Create an emitter. Returns handle (0..MAX-1) or -1 on failure.
+// The emitter keeps the `def` pointer (it is not copied): the definition must
+// stay valid until the emitter is destroyed (use static storage).
 // pool_size: number of particles reserved for this emitter from global pool.
 int  particle_emitter_create(const ParticleEmitterDef *def, vec3_t position,
                              int pool_size);

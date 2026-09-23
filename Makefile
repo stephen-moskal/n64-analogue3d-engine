@@ -28,6 +28,11 @@ N64_ROM_SAVETYPE = none
 
 CFLAGS += -I$(SOURCE_DIR)
 
+# BENCH=1 boots straight into the full benchmark run (unattended capture)
+ifeq ($(BENCH),1)
+CFLAGS += -DENGINE_BOOT_BENCHMARK=1
+endif
+
 # All sources under src/ (one directory level deep)
 SRCS := $(wildcard $(SOURCE_DIR)/*.c $(SOURCE_DIR)/*/*.c)
 OBJS := $(SRCS:$(SOURCE_DIR)/%.c=$(BUILD_DIR)/%.o)

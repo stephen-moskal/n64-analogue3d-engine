@@ -115,3 +115,70 @@ Findings:
 - **The engine is CPU-bound, not RDP-bound.** RDP busy never exceeds ~7 ms of the 16.7 ms frame; CPU work is what approaches the budget. Phase 2/3 optimisation should target CPU: text issue (overlay +4 ms CPU vs +1.8 ms RDP), the floor, particles.
 - `pipe` (pixel pipeline active) is only ~30 % of `busy`: most RDP busy time is command/memory overhead rather than filling pixels, so fill rate has lots of headroom.
 - TMEM loading is negligible (~0.1 ms) at the demo's 6 uploads per frame.
+
+## Benchmark scene (P1.8)
+
+### Running it
+
+1. Build and upload the **debug** ROM (`engine-debug.z64`). Release builds compile `debugf` out, so they print no CSV. Both variants are `-O2`; the debug build adds asserts and profiler scopes, measured at ~0.1 ms, so its numbers stand for release.
+2. Start the capture: `sc64deployer debug | Tee-Object docs/benchmarks/<date>-<label>.log` (the SC64 must not be busy with another `debug` session).
+3. Reset the console, then Start → **Debug** → **Bench** (All or one test) → **Scene = Benchmark** → A. The scene fades in, runs every step (60 warm-up + 240 measured frames each, fixed camera path), and fades back to the demo. Start aborts.
+4. For unattended runs, `libdragon make BENCH=1` boots straight into "All".
+5. Keep only the `BENCH` lines (`Select-String '^BENCH' capture.log | % Line > file.csv`) and compare:
+
+```powershell
+python tools/bench_compare.py docs/benchmarks/2026-09-23-baseline-debug-a3d.csv new.csv
+# exit 0 = OK, 1 = regression (CPU +5 % and +0.15 ms, or a step that held 60 FPS no longer does)
+```
+
+The tests, all on a dark background without floor, sky or fog (demo settings are restored afterwards):
+
+| Bench | Steps | Load |
+|---|---|---|
+| all step 0 | — | empty scene: engine + status text baseline |
+| objects | 8, 16, 24, 32, 48, 64 | flat-shaded pillars (32 tris each) on a grid |
+| particles | 32, 64, 96, 128 | target particle counts from 4 continuous additive emitters |
+| lights | 0, 1, 2, 4 | 16 pillars under N coloured point lights (sun and ambient dimmed) |
+| textures | 1, 2, 4, 8 | 16 boxes cycling through N distinct 32×32 RGBA16 textures |
+| shadows | 0, 1, 2 | 16 pillars with shadows off / blob / projected |
+| fillrate | 1, 2, 4, 8 | N full-screen blended rectangles (RDP read-modify-write) |
+
+### Baseline (2026-09-23, debug build, Analogue 3D, `docs/benchmarks/2026-09-23-baseline-debug-a3d.csv`)
+
+| Bench | Param | FPS | 1 % low | CPU avg / max ms | RDP busy ms (%) | Tris | Uploads |
+|---|---|---|---|---|---|---|---|
+| empty | 0 | 60.0 | 55.5 | 1.20 / 3.7 | 1.1 (7) | 0 | 0 |
+| objects | 8 | 60.0 | 54.6 | 4.53 / 7.8 | 2.4 (14) | 128 | 0 |
+| objects | 16 | 60.0 | 51.0 | 7.88 / 11.9 | 3.6 (22) | 256 | 0 |
+| objects | 24 | 59.9 | 48.0 | 11.35 / 16.3 | 5.0 (30) | 384 | 0 |
+| objects | 32 | **54.6** | 42.8 | 18.09 / 23.4 | 6.2 (33) | 512 | 0 |
+| objects | 48 | **36.7** | 28.4 | 27.27 / 35.3 | 8.9 (32) | 768 | 0 |
+| objects | 64 | **27.6** | 21.4 | 36.21 / 46.7 | 11.2 (31) | 1024 | 0 |
+| particles | 32 (27 alive) | 60.0 | 57.6 | 2.59 / 4.9 | 1.3 (8) | 55 | 0 |
+| particles | 64 (58) | 60.0 | 57.2 | 4.07 / 6.3 | 1.4 (8) | 117 | 0 |
+| particles | 96 (89) | 60.0 | 57.0 | 5.60 / 8.0 | 1.5 (9) | 178 | 0 |
+| particles | 128 (121) | 60.0 | 56.6 | 7.21 / 9.7 | 1.6 (10) | 242 | 0 |
+| lights | 0 | 60.0 | 51.0 | 7.91 / 12.1 | 3.7 (22) | 256 | 0 |
+| lights | 1 | 60.0 | 51.0 | 8.06 / 12.2 | 3.6 (22) | 256 | 0 |
+| lights | 2 | 60.0 | 51.1 | 8.13 / 12.1 | 3.6 (22) | 256 | 0 |
+| lights | 4 | 60.0 | 51.1 | 8.37 / 12.5 | 3.7 (22) | 256 | 0 |
+| textures | 1 | 60.0 | 54.5 | 7.54 / 10.8 | 2.5 (15) | 96 | 48 |
+| textures | 8 | 60.0 | 54.6 | 7.72 / 9.8 | 2.5 (15) | 96 | 48 |
+| shadows | off | 60.0 | 51.0 | 8.06 / 12.1 | 3.7 (22) | 256 | 0 |
+| shadows | blob | 60.1 | 48.0 | 8.99 / 14.0 | 4.9 (29) | 288 | 0 |
+| shadows | projected | **40.5** | 32.0 | 24.70 / 31.2 | 7.2 (29) | 768 | 0 |
+| fillrate | 1 | 60.0 | 57.1 | 1.14 / 3.8 | 2.8 (17) | 0 | 0 |
+| fillrate | 2 | 60.0 | 57.1 | 1.14 / 3.7 | 4.5 (27) | 0 | 0 |
+| fillrate | 4 | 60.0 | 57.1 | 1.15 / 3.6 | 7.9 (48) | 0 | 0 |
+| fillrate | 8 | 60.0 | 56.9 | 1.15 / 3.7 | 14.7 (88) | 0 | 0 |
+
+(textures 2 and 4 match 1 and 8 within 0.2 ms; full rows in the CSV.)
+
+What the baseline says about the CPU path:
+- **Object ceiling ≈ 24–28 pillars (~400–450 triangles) at 60 FPS**, CPU-bound: ~0.42 ms CPU per 32-triangle pillar (≈13 µs per triangle), with the RDP only ~33 % busy. This is the number Tiny3D (Phase 4) and the vertex cache (P3.1) must beat.
+- **Particles** cost ~1.5 ms CPU per 30 particles (≈50 µs each) and little RDP.
+- **Point lights** are cheap on this path (~0.12 ms each for 16 objects) because lighting is per face group; per-vertex lighting (P3.2) will change that.
+- **Textures:** 48 uploads per frame whatever the number of distinct textures, because every visible face re-uploads (no residency, P3.3). TMEM upload cost is low at this scale.
+- **Projected shadows** are the most expensive feature measured: +16.6 ms CPU for 16 casters (defect D14). Blob shadows cost ~0.9 ms.
+- **Fill rate:** ~1.7 ms of RDP per full-screen blended layer; 8 layers use 88 % of the RDP and still hold 60 FPS. The RDP has plenty of headroom for post-effects; the CPU is the bottleneck.
+- The 1 % lows (≈51–58 fps even when the average is 60) reflect the loop-pacing jitter in D19, not dropped frames.

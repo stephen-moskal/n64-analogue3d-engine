@@ -6,6 +6,7 @@
 #include "ui/menu.h"
 #include "scene/scene.h"
 #include "scenes/demo_scene.h"
+#include "scenes/benchmark_scene.h"
 #include "audio/audio.h"
 #include "render/atmosphere.h"
 #include "debug/engine_debug.h"
@@ -165,7 +166,14 @@ int main(void) {
     // Initialize scene manager and load demo scene
     SceneManager scene_mgr;
     scene_manager_init(&scene_mgr);
+#if defined(ENGINE_BOOT_BENCHMARK) && ENGINE_BOOT_BENCHMARK
+    // Unattended benchmark run: make BUILD=release BENCH=1
+    benchmark_scene_configure(BENCH_ALL);
+    debug_menu_set_active_scene(1);
+    scene_manager_switch(&scene_mgr, benchmark_scene_get(), TRANSITION_CUT, 0);
+#else
     scene_manager_switch(&scene_mgr, demo_scene_get(), TRANSITION_CUT, 0);
+#endif
 
     debugf("SMozN64 Dev Engine [%s build, %s %s]\n", ENGINE_BUILD_NAME, __DATE__, __TIME__);
 
@@ -212,6 +220,21 @@ int main(void) {
             profiler_rsp_dump_csv(frame_index);
             frametime_dump_csv(frame_index, budget_ms);
             memstats_dump_csv(frame_index);
+        }
+        // Scene switching from the Debug tab, and returning when a benchmark ends
+        int req_scene, req_bench;
+        if (debug_consume_scene_request(&req_scene, &req_bench)) {
+            if (req_scene == 1) {
+                benchmark_scene_configure((BenchKind)req_bench);
+                scene_manager_switch(&scene_mgr, benchmark_scene_get(), TRANSITION_FADE_BLACK, 3.0f);
+            } else {
+                scene_manager_switch(&scene_mgr, demo_scene_get(), TRANSITION_FADE_BLACK, 3.0f);
+            }
+        }
+        if (scene_manager_current(&scene_mgr) == benchmark_scene_get() &&
+            benchmark_scene_finished() && !scene_manager_is_transitioning(&scene_mgr)) {
+            debug_menu_set_active_scene(0);
+            scene_manager_switch(&scene_mgr, demo_scene_get(), TRANSITION_FADE_BLACK, 3.0f);
         }
         if (debug_consume_reset_peaks_request()) {
             profiler_reset_peaks();

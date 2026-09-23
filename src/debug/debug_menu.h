@@ -20,6 +20,8 @@ typedef enum {
     DBG_ITEM_RDP_CHECK,     // Off / On  (debug builds only)
     DBG_ITEM_DUMP_CSV,      // --- / Dump!   (self-resetting)
     DBG_ITEM_RESET_PEAKS,   // --- / Reset!  (self-resetting)
+    DBG_ITEM_SCENE,         // Demo / Benchmark  (switches scene on menu close)
+    DBG_ITEM_BENCH,         // which benchmark: All / Objects / ... (see BenchKind)
     DBG_ITEM_COUNT
 } DebugMenuItem;
 
@@ -47,5 +49,13 @@ bool debug_rdp_check_enabled(void);
 // One-shot requests (return true once, then clear)
 bool debug_consume_dump_request(void);
 bool debug_consume_reset_peaks_request(void);
+
+// Scene switch requested from the Debug tab: returns true once, with the
+// target (0 = demo, 1 = benchmark) and the selected benchmark kind.
+bool debug_consume_scene_request(int *scene, int *bench_kind);
+
+// Tell the menu which scene is active (e.g. after a benchmark ends) without
+// generating a new request.
+void debug_menu_set_active_scene(int scene);
 
 #endif
