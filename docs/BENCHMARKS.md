@@ -182,3 +182,17 @@ What the baseline says about the CPU path:
 - **Projected shadows** are the most expensive feature measured: +16.6 ms CPU for 16 casters (defect D14). Blob shadows cost ~0.9 ms.
 - **Fill rate:** ~1.7 ms of RDP per full-screen blended layer; 8 layers use 88 % of the RDP and still hold 60 FPS. The RDP has plenty of headroom for post-effects; the CPU is the bottleneck.
 - The 1 % lows (≈51–58 fps even when the average is 60) reflect the loop-pacing jitter in D19, not dropped frames.
+
+## Phase 2 kickoff (2026-09-23)
+
+Phase 2 (engine hardening, ROADMAP_v2 §6) is measured against these start references:
+
+| Reference | Value |
+|---|---|
+| Benchmark baseline | `docs/benchmarks/2026-09-23-baseline-debug-a3d.csv` (26 steps, debug build, A3D) |
+| Demo quiet-view CPU | 8.0 ms (floor 2.8, objects 2.0, audio 1.3, HUD 1.1) |
+| Demo heap after init | 913,544 bytes |
+| Reset Scene leak (D1) | ~20 KB per reset |
+| Menu (validator on) | `menu_draw` peaks 6–9 ms |
+
+Each Phase 2 stage commits its own CSV as `docs/benchmarks/<date>-p2-s<N>-debug-a3d.csv`; it becomes the comparison point for the next stage (moving baseline). The exit comparison (S13) is against the 2026-09-23 baseline.
