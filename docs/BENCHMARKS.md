@@ -221,3 +221,15 @@ Overload (`docs/benchmarks/2026-09-23-p2-s0-overload-debug-a3d.csv`, validator o
 Findings:
 - **Frame overruns alone do not flicker** on the A3D, with or without the validator. D18 needs the menu to be on screen during the overrun, so the menu drawing path (translucent background triangles, text) is the suspect, not the frame loop.
 - Under overload the frame rate degrades smoothly (46 → 26 FPS) instead of snapping to 30/20: with triple buffering the loop never waits for vsync. Relevant to D19 and the S6 pacing work.
+
+## Phase 2 · S1 resource lifecycle (2026-09-23, debug build, Analogue 3D)
+
+The demo now declares its eight textures (six cube faces, two billboards) in `Scene.texture_paths`; `scene_init`/`scene_cleanup` load and free them. `texture_init()` is idempotent and no longer touches slots above 5.
+
+| Check | Result |
+|---|---|
+| Reset Soak (1 warm-up + 10 resets), run 1 | heap 946,992 → 946,992 B: **0 B** (was +13.5 KB per reset, D1) |
+| Bench = Textures, then back to the demo | CPU 7.66–7.93 ms vs baseline 7.54–7.72, 60 FPS; demo textures intact after the scene switch (D21) |
+| Reset Soak, run 2 (after the scene switch) | 946,992 → 946,992 B: **0 B** |
+
+Heap after the warm-up reset is 13.5 KB lower than in S0 (960,488 B), because the stale cube sprites are gone.

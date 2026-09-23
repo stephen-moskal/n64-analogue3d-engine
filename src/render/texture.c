@@ -14,15 +14,28 @@ static const char *cube_face_paths[] = {
     "rom:/face_left.sprite",
 };
 
+// Recompute the "highest slot in use + 1" bound after a slot is freed
+static void update_slot_count(void) {
+    slot_count = 0;
+    for (int i = 0; i < TEX_MAX_SLOTS; i++) {
+        if (slots[i]) slot_count = i + 1;
+    }
+}
+
+// Load the six cube-face textures into slots 0-5. Idempotent: reloading frees
+// the previous sprites first (D1), and slots above 5 are left untouched (D21).
 void texture_init(void) {
     for (int i = 0; i < 6; i++) {
-        slots[i] = sprite_load(cube_face_paths[i]);
-        assertf(slots[i] != NULL, "Failed to load %s", cube_face_paths[i]);
-        assertf(sprite_fits_tmem(slots[i]), "Sprite %s too large for TMEM", cube_face_paths[i]);
-        debugf("Loaded texture: %s (%dx%d)\n", cube_face_paths[i],
-               slots[i]->width, slots[i]->height);
+        bool ok = texture_load_slot(i, cube_face_paths[i]);
+        assertf(ok, "Failed to load %s", cube_face_paths[i]);
+        (void)ok;   // assertf is compiled out in release
     }
-    slot_count = 6;
+}
+
+// Paths of the cube-face textures, for scenes that declare them in
+// Scene.texture_paths instead of calling texture_init().
+const char *texture_cube_face_path(int face) {
+    return (face >= 0 && face < 6) ? cube_face_paths[face] : NULL;
 }
 
 int texture_upload(int slot, rdpq_tile_t tile) {
@@ -76,6 +89,7 @@ void texture_free_slot(int slot) {
         sprite_free(slots[slot]);
         slots[slot] = NULL;
     }
+    update_slot_count();
 }
 
 bool texture_slot_loaded(int slot) {

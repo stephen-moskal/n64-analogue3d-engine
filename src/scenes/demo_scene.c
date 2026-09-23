@@ -519,8 +519,9 @@ static void demo_init(Scene *scene) {
     obj_collider_count = 0;
     for (int i = 0; i < MAX_OBJ_COLLIDERS; i++) obj_colliders[i] = -1;
 
-    // Load cube textures
-    texture_init();
+    // Textures (cube faces + billboards) are declared in Scene.texture_paths
+    // below and loaded/freed by scene_init/scene_cleanup (fixes the reset leak D1).
+    billboard_data_count = 0;
 
     // Initialize cube mesh
     cube_init();
@@ -616,8 +617,6 @@ static void demo_init(Scene *scene) {
 
     // --- Billboard objects (decorative, not selectable) ---
     billboard_init();
-    texture_load_slot(TEX_BILLBOARD_MARKER, "rom:/marker.sprite");
-    texture_load_slot(TEX_BILLBOARD_TREE, "rom:/tree.sprite");
 
     // Marker billboard (spherical — floating above pyramid)
     spawn_billboard(scene, TEX_BILLBOARD_MARKER, BILLBOARD_SPHERICAL,
@@ -1316,8 +1315,6 @@ static void demo_cleanup(Scene *scene) {
     emitter_torch_l = -1;
     emitter_torch_r = -1;
     billboard_cleanup();
-    texture_free_slot(TEX_BILLBOARD_MARKER);
-    texture_free_slot(TEX_BILLBOARD_TREE);
     cube_cleanup();
     mesh_defs_cleanup();
     ground_collider = -1;
@@ -1341,7 +1338,18 @@ static void demo_cleanup(Scene *scene) {
 static Scene demo_scene = {
     .name = "Demo Scene",
     .object_count = 0,
-    .texture_count = 0,
+    // Loaded by scene_init() before demo_init(), freed by scene_cleanup()
+    .texture_paths = {
+        "rom:/face_front.sprite", "rom:/face_back.sprite", "rom:/face_top.sprite",
+        "rom:/face_bottom.sprite", "rom:/face_right.sprite", "rom:/face_left.sprite",
+        "rom:/marker.sprite", "rom:/tree.sprite",
+    },
+    .texture_slots = {
+        TEX_CUBE_FRONT, TEX_CUBE_BACK, TEX_CUBE_TOP,
+        TEX_CUBE_BOTTOM, TEX_CUBE_RIGHT, TEX_CUBE_LEFT,
+        TEX_BILLBOARD_MARKER, TEX_BILLBOARD_TREE,
+    },
+    .texture_count = 8,
     .world_offset = {0, 0, 0},
     .bg_color = {0x60, 0x80, 0xD0, 0xFF},
     .on_init = demo_init,

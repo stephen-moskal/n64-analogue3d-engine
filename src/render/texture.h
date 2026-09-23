@@ -13,7 +13,9 @@
 #define TEX_CUBE_RIGHT  4
 #define TEX_CUBE_LEFT   5
 
+// Load the six cube-face textures into slots 0-5 (idempotent; frees first)
 void texture_init(void);
+const char *texture_cube_face_path(int face);
 int  texture_upload(int slot, rdpq_tile_t tile);
 void texture_cleanup(void);
 
