@@ -9,29 +9,41 @@ How to see what the engine is doing, catch hardware-only mistakes, and read cras
 | ROM | `engine-debug.z64` | `engine.z64` |
 | `debugf` / `assertf` / USB + ISViewer log | on | compiled out (`NDEBUG`) |
 | RDP validator, RDP capture, crash test | available (Debug tab) | compiled out, items greyed |
-| CPU profiler scopes | on (Debug tab toggle) | compiled out |
+| CPU profiler scopes | on (Debug tab toggle) | compiled out, item greyed |
 | Stats, memory, frame time, RDP counters, overlay | on | on |
+| Reset Soak, Menu Sweep | run, results in the log | run, on-screen status only |
 | Optimisation | `-O2` | `-O2` |
 
 Use the debug ROM day to day; its extra cost is about 0.1 ms per frame. Switches live in `src/debug/engine_debug.h` (`ENGINE_DEBUG`, `ENGINE_PROFILE`, `ENGINE_STATS`, `ENGINE_ASSERT`, `ENGINE_LOG`).
 
 ## The Debug tab
 
-Start → L/R to the **Debug** tab. Values apply when the menu closes with A; B reverts.
+Start → L/R to the **Debug** tab (the Start menu exists in the demo scene). Values apply when the menu closes with A; B reverts. One-shot items (`Dump!`, `Reset!`, `Capture!`, `Assert!`, `Run!`) fire once and reset to `---`.
 
 | Item | Options | What it does |
 |---|---|---|
-| Overlay | Off / Stats / Profiler / Memory / Frame / RSP | on-screen page (see PROFILING.md) |
+| Overlay | Off / Stats / Profiler / Memory / Frame / RSP | on-screen page (see PROFILING.md); hidden while the menu is open |
 | Profiler | On / Off | CPU scope timing (debug) |
 | RDP Check | Off / On | runtime RDP validator (debug) |
-| Dump CSV | --- / Dump! | writes STATS, PROF, FT, MEM, RDP rows to the log |
+| Dump CSV | --- / Dump! | writes STATS, PROF, RDP, RSP, FT, MEM rows to the log, 120 frames (~2 s) after the menu closes so the averages no longer include the menu |
 | Reset Peaks | --- / Reset! | clears profiler peaks, frame-time window, heap baseline |
 | Scene | Demo / Benchmark | switches scene with a fade |
-| Bench | All / Objects / … | which benchmark the Benchmark scene runs |
+| Bench | All / Objects / Particles / Lights / Textures / Shadows / Fillrate / Overload | which benchmark the Benchmark scene runs (BENCHMARKS.md) |
 | RDP Log | --- / Capture! | logs two frames of RDP commands (debug) |
 | Crash Test | --- / Assert! | triggers `assertf()` (debug) |
+| Reset Soak | --- / Run! | one warm-up and 10 measured scene resets, logs the heap delta (see below) |
+| Menu Sweep | --- / Run! | steps every menu option, restores the originals (see below) |
 
-Shortcuts with the menu closed: **D-Up** cycles overlay pages, **D-Down** dumps CSV. They only work while those buttons are not bound to a game action in the Controls tab.
+Shortcuts with the menu closed: **D-Up** cycles overlay pages, **D-Down** dumps CSV (with the same ~2 s delay). They only work while those buttons are not bound to a game action in the Controls tab, and they read the joypad state the scene polled (`action_update()` in the scene's update).
+
+The tab is built by `debug_menu_init()` and applied by `debug_menu_update()` (`src/debug/debug_menu.c`), whose item order is the `DebugMenuItem` enum; how to add an item is in [EXTENDING.md](EXTENDING.md).
+
+## Reset Soak and Menu Sweep
+
+Automated robustness checks in `src/debug/testbed.c`, started from the Debug tab. While one runs, an orange status line (`RESET SOAK n/10`, `SWEEP <tab>: <item> <option>`) is drawn at the top of the screen.
+
+- **Reset Soak** requests a soft reset of the current scene ([SCENE_SYSTEM.md](SCENE_SYSTEM.md)) 11 times, 30 frames apart: one warm-up reset, then 10 measured ones. It logs `SOAK,start,resets=10` and at the end `SOAK,resets=10,heap_before=…,heap_after=…,delta=…,per_reset=…`, then resets the Memory page's heap baseline. A leak-free scene reports `delta=0`.
+- **Menu Sweep** runs with the menu closed (it pauses while the menu is open). It steps every item of every tab except Controls and Debug (and skips Reset Scene) through all its options, holding each for 15 frames so the scene applies it, restores each item's original value, and logs one `SWEEP,<tab>,<item>,<options>` line per item and `SWEEP,END,items=…,options=…`. Run it with RDP Check on to validate every menu combination.
 
 ## Log channels
 
@@ -42,13 +54,15 @@ Shortcuts with the menu closed: **D-Up** cycles overlay pages, **D-Down** dumps 
 
 Every boot prints the texture/audio load lines and `SMozN64 Dev Engine [debug build, <date>]`. A silent log means the ROM did not start or the capture is not attached.
 
+**Capture files for the Python tools.** `tools/bench_compare.py` and `tools/rdp_log_to_hex.py` read UTF-8 as well as the UTF-16 files that Windows PowerShell 5.1's `Tee-Object` and `>` write, so any of the capture forms above works.
+
 **Keep the log quiet.** Each line goes over USB; a message printed every triangle floods the link and stalls every frame (the first validator run printed one warning ~41,000 times and the demo crawled).
 
 ## RDP validator (RDP Check)
 
 libdragon's `rdpq_debug_start()` checks every RDP command against the hardware rules and prints `[RDPQ_VALIDATION] WARN/ERROR` lines. It catches the mistakes ares forgives but the Analogue 3D does not.
 
-- Off at boot. Turn it on to check a feature, off to judge performance: it costs CPU time (quiet demo 8 → 13 ms) and pushes heavy frames past 16.7 ms, which flickers on the A3D (defect D18).
+- Off at boot. Turn it on to check a feature, off to judge performance: it costs CPU time (quiet demo 8 → 13 ms) and pushes heavy frames past 16.7 ms; with the menu open those frames flicker on the A3D (defect D18; overruns without the menu do not, see BENCHMARKS.md, Phase 2 S0).
 - The engine drains the RSP/RDP (`rspq_wait()`) before starting or stopping it; toggling mid-frame produced bogus `SET_COLOR_IMAGE` errors and once halted the RSP (an RSP crash in the audio mixer's `rspq_highpri_sync`).
 - Right after it starts, expect about 15 `textured primitive ... combiner` warnings on text glyphs with `SET_COMBINE_MODE last sent at 0x0`: the text mode was set before the validator saw it. Ignore those; a warning that keeps repeating is real.
 
@@ -67,10 +81,10 @@ For a full listing of what the RDP receives:
 
 1. Start the USB capture into a file (see Log channels).
 2. Debug tab → **RDP Log → Capture!**, close with A. The game pauses a few seconds while two frames of commands are printed (every triangle in full; libdragon's `RDPQ_LOG_FLAG_SHOWTRIS`). The capture spans two frames because logging begins when the RSP reaches the marker, part-way through the first frame.
-3. Extract the complete frame and validate it in the container:
+3. Extract the complete frame and validate it in the container (the capture file must be inside the repo, which is what the container sees; host Python works too: `py` on Windows, `python3` on macOS):
 
 ```powershell
-python tools/rdp_log_to_hex.py capture.log frame.rdp        # keeps SET_Z_IMAGE..next frame
+libdragon exec python3 tools/rdp_log_to_hex.py capture.log frame.rdp   # keeps SET_Z_IMAGE..next frame
 libdragon exec bash -c '$N64_INST/bin/rdpvalidate frame.rdp'        # validate
 libdragon exec bash -c '$N64_INST/bin/rdpvalidate -d -t frame.rdp'  # disassemble incl. triangles
 ```
@@ -93,10 +107,10 @@ Crashes seen so far:
 
 ## Unit tests
 
-Pure-logic modules (vec3, collision, physics, action mapping, camera math, frame-time statistics) have host tests in `tests/host`, built against a small libdragon shim:
+Modules without rendering dependencies have host tests in `tests/host`: vec3, collision (including sparse collider slots), physics, action mapping, camera math and the camera's dirty/follow behaviour, frame-time statistics, mesh building and the built-in shapes (winding, planar groups), and the particle simulation. They are compiled with the host compiler against a small libdragon stand-in, `tests/host/shim/libdragon.h` (colour types, `debugf`/`assertf`, `TICKS_READ()`, and a joypad whose state the tests set), with `-Wall -Werror`:
 
 ```powershell
-libdragon exec make -C tests/host run      # 67 checks, 0 failures
+libdragon exec make -C tests/host run      # 123 checks, 0 failures
 ```
 
-They run in CI on every push (`.github/workflows/build.yml` → `tools/ci_build.sh`, which also builds both ROMs, checks ROM/RAM budgets with `tools/rom_budget.py` and the I-cache layout of the render path with `tools/hot_text.py`). They already caught one doc/behaviour mismatch: `action_analog_x()` is inverted.
+They run in CI on every push (`.github/workflows/build.yml` → `tools/ci_build.sh`, which also builds both ROMs, checks ROM/RAM budgets with `tools/rom_budget.py` and the I-cache layout of the render path with `tools/hot_text.py`). They already caught one doc/behaviour mismatch: `action_analog_x()` is inverted. How to add a test: [EXTENDING.md](EXTENDING.md).

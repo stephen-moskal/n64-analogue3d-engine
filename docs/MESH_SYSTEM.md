@@ -11,26 +11,26 @@ The Mesh abstraction separates **what** to draw (geometry + materials) from **ho
 ## Architecture
 
 ```
-Mesh (geometry + materials)
+Mesh (geometry + materials)                     built with mesh_build.c
 ├── MeshVertex[]     — positions, normals, UVs in local space
 ├── uint16_t[]       — triangle index buffer
 ├── Material[]       — RDP rendering state (texture/color per group)
-├── MeshFaceGroup[]  — groups of triangles sharing a material
+├── MeshFaceGroup[]  — groups of triangles sharing a material, with a
+│                      precomputed centre, normal and planar flag
 └── Bounding sphere  — for frustum culling
 
-mesh_draw(mesh, model_matrix, camera, light)
-├── Frustum culling (bounding sphere vs camera frustum)
-├── Build MVP = VP * Model
+mesh_draw(mesh, model_matrix, camera, light)    mesh.c (hot path)
+├── Frustum cull: mesh_world_bounds() + camera_sphere_visible()
+├── Build MVP = VP * Model and the normal matrix
 ├── For each face group:
-│   ├── Set RDP mode from material
-│   ├── Upload texture (if textured material)
+│   ├── Reset the RDP mode when material type or alpha cutout changes
+│   ├── Planar group: back-face test + lighting once (skip the group if it faces away)
+│   ├── Upload the texture (textured material, unless this draw already uploaded that slot)
 │   └── For each triangle:
-│       ├── Transform normal → world space
-│       ├── Backface cull
-│       ├── Compute lighting
-│       ├── Transform vertices → screen space
+│       ├── Transform the 3 corners → screen space (reject near plane / guard band)
+│       ├── Curved group: winding back-face test + lighting per triangle
 │       └── rdpq_triangle()
-└── Update texture stats
+└── Stats: draws, culled, groups, triangles
 ```
 
 ## Data Types
@@ -49,6 +49,7 @@ typedef struct {
     MaterialType type;
     int texture_slot;       // Index into texture system (-1 = no texture)
     uint8_t base_color[3];  // RGB base color (modulated by lighting)
+    bool alpha_cutout;      // Discard pixels with alpha=0 (for sprites)
 } Material;
 ```
 
@@ -57,6 +58,7 @@ typedef struct {
 | `type` | Determines RDP combiner mode. `TEXTURED` samples a texture and multiplies by flat color. `FLAT_COLOR` uses only the flat color. |
 | `texture_slot` | Which slot in the texture system to upload. -1 for untextured materials. |
 | `base_color` | RGB color modulated by lighting. For textured materials, this tints the texture. For flat materials, this is the surface color. |
+| `alpha_cutout` | Enables alpha compare so transparent texels are discarded (the billboard quad). |
 
 ### MeshVertex
 
@@ -81,10 +83,15 @@ typedef struct {
     int material_index;     // Index into Mesh.materials[]
     int index_start;        // First index in Mesh.indices[]
     int index_count;        // Number of indices (must be multiple of 3)
+
+    // Filled by mesh_compute_bounds() (mesh_analyze_group)
+    float center[3];        // Average vertex position (local space)
+    float normal[3];        // Shared normal if planar, else normalised average
+    bool  planar;           // One normal, one plane: cull/light the group once
 } MeshFaceGroup;
 ```
 
-Groups minimize RDP state changes. Within a group, the RDP mode and texture are set once, then all triangles are drawn. Only the primitive color changes per-triangle (due to per-face lighting).
+Groups minimize RDP state changes. Within a group, the texture is uploaded at most once and all triangles are drawn with it. A **planar** group (every vertex shares one normal and lies on one plane: cube faces, pillar sides) is culled and lit once, so the primitive color is set once. A **curved** group (the sphere's latitude bands) is culled and lit per triangle. `mesh_compute_bounds()` decides which, so build each flat face as its own group if it should get the cheap path.
 
 ### Mesh
 
@@ -132,11 +139,11 @@ void mesh_init(Mesh *mesh);
 void mesh_cleanup(Mesh *mesh);
 ```
 
-`mesh_init` zeroes the struct and sets defaults. `mesh_cleanup` frees the heap-allocated vertex and index arrays.
+`mesh_init` zeroes the struct and sets defaults (`backface_cull = true`). `mesh_cleanup` frees the heap-allocated vertex and index arrays.
 
 ### Building
 
-Build a mesh by adding materials, then adding face groups with vertices and triangles.
+Build a mesh by adding materials, then adding face groups with vertices and triangles. The builder lives in `mesh_build.c`, which has no rendering dependencies and is compiled into the host unit tests.
 
 ```c
 int  mesh_add_material(Mesh *mesh, Material mat);
@@ -144,7 +151,16 @@ int  mesh_add_vertex(Mesh *mesh, MeshVertex vert);
 void mesh_add_triangle(Mesh *mesh, uint16_t i0, uint16_t i1, uint16_t i2);
 int  mesh_begin_group(Mesh *mesh, int material_index);
 void mesh_end_group(Mesh *mesh);
-void mesh_compute_bounds(Mesh *mesh);
+void mesh_compute_bounds(Mesh *mesh);   // bounding sphere + mesh_analyze_group() for every group
+void mesh_analyze_group(const Mesh *mesh, MeshFaceGroup *group);
+```
+
+Helpers in `mesh.h`, also used by the projected shadows:
+
+```c
+void  mesh_world_bounds(const Mesh *mesh, const mat4_t *model, vec3_t *center, float *radius);
+void  mesh_normal_matrix(const mat4_t *model, float cof[3][3]);   // cofactor matrix for normals
+float mesh_screen_area2(const float a[2], const float b[2], const float c[2]);  // < 0: front face
 ```
 
 **Builder pattern:**
@@ -180,17 +196,17 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
 
 Draws the entire mesh with the given model matrix. Handles:
 
-1. **Frustum culling** — Transforms bounding sphere to world space (including scale), tests against camera frustum. Entire mesh skipped if off-screen.
-2. **MVP computation** — `MVP = VP * Model`
-3. **RDP mode setup** — Only resets RDP mode (`rdpq_set_mode_standard()`) when the material **type** or its **alpha cutout** changes between groups, so a material without cutout never inherits alpha compare (D5). Texture uploads happen per group, after the cull.
+1. **Frustum culling** — `mesh_world_bounds()` transforms the bounding sphere to world space (including scale), `camera_sphere_visible()` tests it against the camera frustum. Entire mesh skipped if off-screen.
+2. **MVP computation** — `MVP = VP * Model`, plus the normal matrix (`mesh_normal_matrix()`)
+3. **RDP mode setup** — Only resets RDP mode (`rdpq_set_mode_standard()`) when the material **type** or its **alpha cutout** changes between groups, so a material without cutout never inherits alpha compare (D5). Texture uploads happen per group, after the cull, and are skipped when the previous upload of this draw (since the last mode reset) was the same slot.
 4. **Per-group processing** (flat shading). `mesh_compute_bounds()` also analyses every group (`mesh_analyze_group()` in `mesh_build.c`): its centre, its normal, and whether it is **planar** (every vertex shares one normal and lies on one plane).
    - **Planar groups** (cube faces, pillar sides): one exact back-face test, whether the camera is in front of the group's own plane, then lighting once and `rdpq_set_prim_color()` once.
    - **Curved groups** (sphere bands wrap around the mesh, so no single normal describes them): culled per triangle by the sign of the projected screen area (`mesh_screen_area2()`), and lit per triangle with the average of its vertex normals.
    - Normals reach world space through the cofactor matrix of the model matrix, so non-uniform scale keeps them perpendicular to their faces.
    - Before S2 every group was culled and lit with its first vertex's normal against the object-centre direction; spheres vanished when seen from their −Z side (D3, D24).
 5. **Per-triangle processing:**
-   - Vertex transform (MVP → perspective divide → NDC → screen coordinates)
-   - `rdpq_triangle(&TRIFMT_ZBUF_TEX, ...)` with Z-buffer
+   - Vertex transform (MVP → perspective divide → NDC → screen coordinates); a triangle with a corner behind the near plane or outside the guard band is dropped
+   - `rdpq_triangle()` with Z-buffer, in the format that matches the combiner: `TRIFMT_ZBUF_TEX` (textured) or `TRIFMT_ZBUF` (flat), and `TRIFMT_ZBUF_SHADE_TEX` / `TRIFMT_ZBUF_SHADE` when fog is on
 
 ## Usage Example: Cube
 
@@ -230,7 +246,7 @@ void cube_cleanup(void) { mesh_cleanup(&cube_mesh); }
 
 ## Shape Library (mesh_defs)
 
-Factory functions for reusable mesh primitives. Each shape is a lazy-initialized static `Mesh` in local space, centered at origin, unit scale. The SceneObject's transform handles position/rotation/scale.
+Factory functions for reusable mesh primitives. Each shape is a static `Mesh` in local space, centered at origin, unit scale; `mesh_defs_init()` builds all four (a second call does nothing until `mesh_defs_cleanup()` frees them). The SceneObject's transform handles position/rotation/scale.
 
 ```c
 void mesh_defs_init(void);              // Build all shapes
@@ -238,6 +254,7 @@ void mesh_defs_cleanup(void);           // Free all mesh geometry
 const Mesh *mesh_defs_get_pillar(void);
 const Mesh *mesh_defs_get_platform(void);
 const Mesh *mesh_defs_get_pyramid(void);
+const Mesh *mesh_defs_get_sphere(void);
 ```
 
 | Shape | Geometry | Triangles | Material | Color |
@@ -245,8 +262,11 @@ const Mesh *mesh_defs_get_pyramid(void);
 | Pillar | 8-sided cylinder, height [-1,1], radius 1.0 | 32 | `MATERIAL_FLAT_COLOR` | Stone gray (180, 160, 140) |
 | Platform | Box 4.0 x 0.5 x 2.0 | 12 | `MATERIAL_FLAT_COLOR` | Dark wood (140, 100, 60) |
 | Pyramid | 4-sided pyramid, base [-1,1] XZ, apex Y=1 | 6 | `MATERIAL_FLAT_COLOR` | Sand gold (200, 180, 100) |
+| Sphere | UV sphere, 6 latitude × 6 longitude segments, radius 1 | 60 | `MATERIAL_FLAT_COLOR` | Red (200, 60, 60) |
 
-Each shape uses multiple face groups for proper per-face lighting normals (e.g., pillar has 10 groups: 8 sides + top cap + bottom cap).
+The flat shapes use one planar face group per face for proper per-face lighting normals (e.g., pillar has 10 groups: 8 sides + top cap + bottom cap). The sphere has one curved group per latitude band (6 groups), so it takes the per-triangle path; it is the demo's static sphere and the physics ball.
+
+Adding a shape or any other mesh: [EXTENDING.md](EXTENDING.md).
 
 ## SceneObject Integration
 
@@ -285,10 +305,10 @@ static void object_draw(SceneObject *obj, const Camera *cam, const LightConfig *
 
 - **Frustum culling**: Entire mesh rejected with one bounding sphere test (6 plane dot products).
 - **Backface culling**: once per planar group (skips ~50 % of groups on convex objects); per triangle for curved groups.
-- **Winding**: front faces are counter-clockwise seen from outside the mesh. The per-triangle cull depends on it; `tests/host/test_mesh.c` checks every built-in mesh.
+- **Winding**: front faces are counter-clockwise seen from outside the mesh. The per-triangle cull and the projected shadows depend on it; `tests/host/test_mesh.c` checks the `mesh_defs` shapes (winding, planar groups, the sphere visible from every side).
 - **Code placement**: `mesh_draw` and its per-triangle callees are `ENGINE_HOT` (linked in the hot-text block). A triangle loop that collides with `rdpq_triangle_rsp` in the direct-mapped I-cache costs ~1,100 cycles per triangle (HARDWARE.md, D25).
-- **RDP mode batching**: `rdpq_set_mode_standard()` is expensive — it resets the entire RDP pipeline. Only called when the material **type** changes between groups, not per-group. For a mesh where all groups share the same type (e.g., all textured), mode is set exactly once.
-- **Per-group lighting**: Normal transform + `lighting_calculate()` computed once per group. An early version computed these per-triangle, which doubled the lighting work for no visual difference in flat shading.
+- **RDP mode batching**: `rdpq_set_mode_standard()` is expensive — it resets the entire RDP pipeline. Only called when the material **type** or **alpha cutout** changes between groups, not per-group. For a mesh where all groups share the same type (e.g., all textured), mode is set exactly once.
+- **Per-group lighting**: Normal transform + `lighting_calculate()` computed once per planar group. An early version computed these per-triangle, which doubled the lighting work for no visual difference in flat shading; only curved groups still light per triangle.
 - **Bounding sphere scale**: Uses squared column lengths with a single `sqrtf` at the end, rather than 3 separate `sqrtf` calls. `sqrtf` is expensive on the N64's MIPS FPU.
 
 ### Optimization History
@@ -316,8 +336,10 @@ This means the CPU renderer built here becomes the reference implementation whil
 
 | File | Purpose |
 |------|---------|
-| [src/render/mesh.h](../src/render/mesh.h) | Mesh, Material, MeshVertex, MeshFaceGroup structs and API |
-| [src/render/mesh.c](../src/render/mesh.c) | Builder functions, bounding volume, rendering |
-| [src/render/mesh_defs.h](../src/render/mesh_defs.h) | Shape library API (pillar, platform, pyramid) |
+| [src/render/mesh.h](../src/render/mesh.h) | Mesh, Material, MeshVertex, MeshFaceGroup structs, API, inline helpers |
+| [src/render/mesh_build.c](../src/render/mesh_build.c) | Builder functions, bounds and group analysis (host-testable) |
+| [src/render/mesh.c](../src/render/mesh.c) | `mesh_draw()` (hot path) |
+| [src/render/mesh_defs.h](../src/render/mesh_defs.h) | Shape library API (pillar, platform, pyramid, sphere) |
 | [src/render/mesh_defs.c](../src/render/mesh_defs.c) | Geometry generators for each shape |
 | [src/render/cube.c](../src/render/cube.c) | Cube geometry (textured, built on Mesh) |
+| [tests/host/test_mesh.c](../tests/host/test_mesh.c) | Winding and planarity tests for the shape library |

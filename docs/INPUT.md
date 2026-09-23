@@ -32,10 +32,13 @@ action_analog_x/y()  →  input_update()  →  InputState (camera adapter)
 
 | Input | Purpose | Why Fixed |
 |-------|---------|-----------|
-| Start | Toggle menu | System-level, always available |
+| Start | Toggle menu (demo scene); abort the run (benchmark scene) | System-level |
 | D-pad (in menu) | Navigate menu items | Standard UI convention |
 | A/B (in menu) | Confirm/Cancel menu | Standard UI convention |
 | L/R (in menu) | Switch menu tabs | Standard UI convention |
+| D-Up / D-Down (menu closed) | Debug overlay page / CSV dump | Developer shortcuts, only while no game action is bound to them ([DEBUGGING.md](DEBUGGING.md)) |
+
+These read the raw joypad (`joypad_get_buttons_pressed()`) instead of actions: the menu in `menu.c`, Start in each scene's update, the shortcuts in `debug_menu.c`.
 
 ### Remappable Game Actions
 
@@ -93,23 +96,29 @@ action_set_context(&combat_controls);
 
 The Controls tab (tab 4) in the start menu lists all 11 game actions. Each action shows its currently assigned button and can be cycled through all 13 physical buttons.
 
-Menu option indices match the `PhysicalButton` enum order (A=0, B=1, Z=2, ..., C-Right=12), so remapping is a direct cast:
+Menu option indices match the `PhysicalButton` enum order (A=0, B=1, Z=2, ..., C-Right=12), and item indices match the `GameAction` order, so remapping is a direct cast. The demo applies a binding only when its menu value changes (`demo_update()`):
 
 ```c
 for (int i = 0; i < ACTION_COUNT; i++) {
     int btn_idx = menu_get_value(&start_menu, TAB_CONTROLS, i);
-    action_set_binding((GameAction)i, (PhysicalButton)btn_idx);
+    if (btn_idx != last_binding[i]) {
+        action_set_binding((GameAction)i, (PhysicalButton)btn_idx);
+        last_binding[i] = btn_idx;
+    }
 }
 ```
+
+Nothing stops two actions from sharing a button; both then fire.
 
 Pressing B to cancel the menu reverts all bindings to their pre-menu-open values via the menu's snapshot system.
 
 ## Analog Stick
 
 - Raw range: -128 to 127 (8-bit signed)
-- Deadzone: configurable per context (default 8)
+- Deadzone: configurable per context (default 8); an axis inside it reads 0
 - Sensitivity: configurable per context (default 0.002, maps full deflection to ~0.24 radians/frame)
-- Processed by `action_analog_x/y()` which apply the active context's deadzone and sensitivity
+- Processed by `action_analog_x/y()`: the raw value times the sensitivity, with no rescaling past the deadzone
+- **`action_analog_x()` is inverted:** stick right gives a negative value (the orbit-azimuth convention). `action_analog_y()` is positive for stick up.
 
 ## InputState (Camera Adapter)
 
@@ -128,9 +137,9 @@ typedef struct {
 ## Input Flow
 
 ```
-action_init()                        [once at startup — calls joypad_init()]
+action_init()                        [once at startup in main.c — calls joypad_init()]
     ↓
-action_update()                      [once per frame — calls joypad_poll()]
+action_update()                      [once per frame, first thing in the scene's on_update — calls joypad_poll()]
     ↓
 action_pressed/held/released()       [queried by game logic]
 action_analog_x/y()                  [queried by input_update for camera]
@@ -140,7 +149,11 @@ input_update(&state)                 [fills InputState for camera]
 joypad_get_buttons_pressed().start   [checked directly for menu toggle]
     ↓
 menu_update() OR game controls       [depending on menu state]
+    ↓
+debug_menu_update()                  [main.c, after the scene update: D-Up/D-Down shortcuts]
 ```
+
+Nothing else polls the joypad: a scene that does not call `action_update()` receives no input, and the debug shortcuts stop working while it runs. The demo and benchmark scenes both call it.
 
 ## API Reference
 
@@ -163,7 +176,7 @@ menu_update() OR game controls       [depending on menu state]
 
 | Function | Description |
 |----------|-------------|
-| `action_analog_x()` | Horizontal stick value, filtered by deadzone and sensitivity |
+| `action_analog_x()` | Horizontal stick value, filtered by deadzone and sensitivity; inverted (right = negative) |
 | `action_analog_y()` | Vertical stick value, filtered by deadzone and sensitivity |
 | `action_has_analog()` | True if stick is past the deadzone threshold |
 

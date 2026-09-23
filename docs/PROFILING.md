@@ -8,9 +8,9 @@ Tools for answering "where does the frame go?" on the Analogue 3D and in ares. N
 |---|---|---|---|
 | HUD `FPS … CPU x.x ms` | demo HUD | frame rate and average CPU work per frame | — |
 | Overlay pages | D-Up / Debug → Overlay | stats, per-phase CPU, memory, frame-time histogram, RDP load | 2.3–4.2 ms with a page up, 0 when off |
-| CSV dump | D-Down / Debug → Dump CSV | STATS, PROF_AVG/PEAK, FT, MEM, RDP rows over the debug log | one-off |
-| Benchmark scene | Debug → Scene = Benchmark | 26-step stress run, one BENCH row per step | — |
-| `tools/bench_compare.py` | host | regression check between two benchmark runs | — |
+| CSV dump | D-Down / Debug → Dump CSV | STATS, PROF_AVG/PEAK, RDP, RSP, FT, MEM rows over the debug log, ~2 s (120 menu-closed frames) after the request | one-off |
+| Benchmark scene | Debug → Scene = Benchmark, or a `BENCH=1` ROM | stress run (26 steps for All), one BENCH and one BENCH_PROF row per step | — |
+| `tools/bench_compare.py` | host or container | regression check between two benchmark runs | — |
 
 All modules are in `src/debug/`.
 
@@ -44,11 +44,13 @@ frame                 loop top to loop top (wall time)
   audio               snd_update
 ```
 
-To add a scope: add a slot to `ProfSlot` in `profiler.h` and its name/depth to `slot_info` in `profiler.c`, then wrap the code. `PROF_BEGIN` declares a variable, so use a slot at most once per C scope.
+`sky` and `objects` are timed in `scene_draw()` (the sky is the frame's background there; the benchmark times its own object loop); `floor`, `shadows`, `particle_draw`, `hud` and `menu` in the scene callbacks; the `mesh_*` slots inside `mesh_draw()`.
+
+To add a scope: add a slot to `ProfSlot` in `profiler.h` and its name/depth to `slot_info` in `profiler.c`, then wrap the code. `PROF_BEGIN` declares a variable, so use a slot at most once per C scope. A new slot appears in the PROF CSV rows automatically, but on the Profiler overlay page only when it is added to the row list in `page_profiler()` (`overlay.c`). Step-by-step: [EXTENDING.md](EXTENDING.md).
 
 ## Unified stats (`stats.c/h`)
 
-Per-frame counters written with `STATS_INC(field)`, `STATS_ADD(field, n)` and `STATS_SET(field, v)`; `stats_get()` returns the last complete frame. Kept in release builds. Glossary:
+Per-frame counters written with `STATS_INC(field)`, `STATS_ADD(field, n)` and `STATS_SET(field, v)`; `stats_get()` returns the last complete frame. Kept in release builds. A new counter needs a field in `EngineStats`, a column appended to the end of the `STATS_HDR` / `STATS` rows in `stats.c` (existing column positions stay stable), and optionally a line on the Stats overlay page ([EXTENDING.md](EXTENDING.md)). Glossary:
 
 | Counter | Meaning |
 |---|---|
@@ -66,7 +68,7 @@ Per-frame counters written with `STATS_INC(field)`, `STATS_ADD(field, n)` and `S
 
 ## Memory (`memstats.c/h`)
 
-RDRAM size and Expansion Pak flag, heap total/used/peak (`sys_get_heap_stats`), **heap delta** since boot or Reset Peaks (leak indicator: Reset Scene ×N should return to 0), framebuffer and Z-buffer sizes, and the **stack high-water mark**: the 64 KiB stack at the top of RDRAM is painted at startup (interrupts disabled) and scanned every 30 frames.
+RDRAM size and Expansion Pak flag, heap total/used/peak (`sys_get_heap_stats`), **heap delta** since boot or Reset Peaks (leak indicator: Reset Scene ×N should return to 0; Debug → Reset Soak automates the check), framebuffer and Z-buffer sizes, and the **stack high-water mark**: the 64 KiB stack at the top of RDRAM is painted at startup (interrupts disabled) and scanned every 30 frames.
 
 ## Frame time (`frametime.c/h`)
 
@@ -100,13 +102,19 @@ When it works, the RSP page adds per-overlay RSP time and "Wait RDP" / "Wait CPU
 
 ## CSV rows
 
-All rows go through `debugf()` (debug builds), so the same capture works over `sc64deployer debug` and ares:
+All rows go through `debugf()` (debug builds), so the same capture works over `sc64deployer debug` and ares. The STATS, PROF, FT and MEM headers are printed once per boot, before the first dump; the BENCH headers at the start of every benchmark run:
 
 ```
-STATS_HDR / STATS,<frame>,...        stats counters (header sent once)
-PROF_HDR / PROF_AVG / PROF_PEAK      per-slot µs, averages and peaks
-FT_HDR / FT,<frame>,count,fps,...    frame-time window + histogram
-MEM_HDR / MEM,<frame>,rdram,...      memory
-RDP,<frame>,counter_mhz=...,busy_us=...   RDP counters
-BENCH_META / BENCH_HDR / BENCH,...   benchmark scene (see BENCHMARKS.md)
+STATS_HDR / STATS,<frame>,...            stats counters (stats.c)
+PROF_HDR / PROF_AVG / PROF_PEAK          per-slot µs, averages and peaks (profiler.c)
+RDP,<frame>,counter_mhz=...,busy_us=...  RDP counters (profiler.c)
+RSP,<frame>,...                          RSP profile, "unavailable" unless RSPQ_PROFILE (profiler.c)
+FT_HDR / FT,<frame>,count,fps,...        frame-time window + histogram (frametime.c)
+MEM_HDR / MEM,<frame>,rdram,...          memory (memstats.c)
+BENCH_META / BENCH_HDR / BENCH,...       benchmark run and steps (benchmark_scene.c, BENCHMARKS.md)
+BENCH_PROF_HDR / BENCH_PROF,...          per-step CPU breakdown (profiler on)
+BENCH_LAYOUT,...                         data addresses, once per run (D26)
+BENCH,END / BENCH,ABORTED                end of a benchmark run
+SOAK,... / SWEEP,...                     Reset Soak and Menu Sweep (testbed.c, DEBUGGING.md)
+RDPLOG_BEGIN ... RDPLOG_END              RDP command capture (rdp_debug.c, DEBUGGING.md)
 ```

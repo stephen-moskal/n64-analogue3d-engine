@@ -16,6 +16,7 @@ edit src/ -> libdragon make -> engine-debug.z64 -> ares (emulator)
 - Windows 11 with hardware virtualization enabled in firmware (Docker Desktop needs it; if `wsl --status` later says "virtualization is not enabled", enable Intel VT-x / AMD-V in the BIOS).
 - [Git for Windows](https://git-scm.com/download/win) and `winget` (built into Windows 11).
 - A terminal: Windows PowerShell 5.1 or PowerShell 7. Commands below are PowerShell unless noted. Steps marked **(admin)** need an elevated prompt (UAC).
+- Optional: Python 3 on the host for the scripts in `tools/` (the launcher is `py`; a bare `python` may be the Microsoft Store stub). Without it, run them in the build container: `libdragon exec python3 tools/<tool>.py …`.
 
 ### 1. WSL2 (admin, reboot)
 
@@ -108,17 +109,20 @@ libdragon make                  # debug build   -> engine-debug.z64 (~5 s warm)
 libdragon make BUILD=release    # release build -> engine.z64
 ```
 
-Expected tail of the build output:
+Expected build output (a first build also converts the assets with `[SPRITE]` / `[WAV64]` lines; sizes vary):
 
 ```
     [CC] src/main.c
-    ... (22 modules) ...
+    ... (one [CC] line per .c file under src/) ...
+    [LDSCRIPT] build/debug/engine.ld
     [LD] build/debug/engine-debug.elf
       text       data        bss      total filename
-    311992      95640      35320     442952 build/debug/engine-debug.elf
+       ...        ...        ...        ... build/debug/engine-debug.elf
     [DFS] build/debug/engine-debug.dfs
     [Z64] engine-debug.z64
 ```
+
+The release build goes to `build/release/`; `libdragon make BENCH=1` (a ROM that boots into the benchmark) to `build/debug-bench/` and `engine-debug-bench.z64`.
 
 `libdragon make` does **not** rebuild libdragon itself; after changing the submodule (or its commit) run `libdragon install`, then `libdragon make clean` so the generated assets are rebuilt with the matching tools.
 

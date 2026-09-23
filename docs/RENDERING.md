@@ -5,23 +5,21 @@ The engine uses a hybrid CPU/RDP rendering approach: the CPU handles 3D math (tr
 ## Pipeline Overview
 
 ```
-Input Poll → Camera Update → Scene Update
+Scene update: input → game logic → camera → collision
                                   ↓
-                         Model Matrix (SRT)
+Per object (mesh_draw):  Model Matrix (SRT)
+                                  ↓
+                         Frustum cull (bounding sphere)
                                   ↓
                          MVP = VP * Model
                                   ↓
-                      Per-face: Frustum Cull
+Per face group:          planar → back-face test + lighting once
+                         curved → per triangle, below
                                   ↓
-                      Per-face: Backface Cull
+Per triangle corner:     MVP transform → near-plane reject → perspective divide
+                         → viewport map → guard-band reject
                                   ↓
-                      Per-face: Lighting Calc
-                                  ↓
-                      Per-vertex: MVP Transform
-                                  ↓
-                      Per-vertex: Perspective Divide
-                                  ↓
-                      Per-vertex: Viewport Map
+Per triangle (curved):   winding back-face test + lighting
                                   ↓
                        RDP: Triangle Rasterize
                                   ↓
@@ -51,9 +49,11 @@ The engine uses a hardware 16-bit depth buffer for correct occlusion, replacing 
 // Allocate once before game loop
 surface_t zbuf = surface_alloc(FMT_RGBA16, 320, 240);
 
-// Each frame: attach both color and depth
+// Each frame: attach both color and depth (main.c)
 rdpq_attach(fb, &zbuf);
-rdpq_clear(bg_color);
+
+// scene_draw(): the sky replaces the colour clear when it covers the screen
+if (sky_covers_screen()) sky_draw(); else rdpq_clear(bg_color);
 rdpq_clear_z(ZBUF_MAX);
 
 // Enable Z-buffer read + write in render mode
@@ -126,7 +126,7 @@ rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);  // Texture * prim color
 rdpq_mode_persp(true);                        // Perspective-correct texturing
 rdpq_mode_filter(FILTER_BILINEAR);            // Bilinear texture filtering
 rdpq_mode_zbuf(true, true);                   // Z-buffer read + write
-rdpq_set_prim_color(color);                   // Per-face lit color
+rdpq_set_prim_color(color);                   // Lit color of the group or triangle
 ```
 
 ### Fill Mode — for rectangles ONLY
@@ -152,11 +152,13 @@ The `rdpq_triangle()` function accepts different vertex formats:
 | `TRIFMT_ZBUF_SHADE_TEX` | 10 | `{X, Y, Z, R, G, B, A, S, T, INV_W}` | Shaded + textured + Z (fog) |
 
 The engine uses:
-- `TRIFMT_ZBUF_TEX` for textured 3D geometry (cube via mesh system) when fog is OFF
-- `TRIFMT_ZBUF` for flat-colored Z-buffered geometry (floor, particles — no texture coords)
-- `TRIFMT_ZBUF_SHADE` for flat-colored geometry with hardware fog (shade RGB = lit color, shade A = fog factor)
-- `TRIFMT_ZBUF_SHADE_TEX` for textured geometry with hardware fog
-- `TRIFMT_FILL` for UI overlays (menu background)
+- `TRIFMT_ZBUF_TEX` for textured mesh materials (cube, billboards, benchmark boxes) when fog is OFF
+- `TRIFMT_ZBUF` for flat-colored Z-buffered geometry: flat mesh materials when fog is OFF, the floor, shadows and particles (no texture coords)
+- `TRIFMT_ZBUF_SHADE` for flat mesh materials with hardware fog (shade RGB = lit color, shade A = fog factor)
+- `TRIFMT_ZBUF_SHADE_TEX` for textured mesh materials with hardware fog
+- `TRIFMT_FILL` for 2D overlays (menu background, scene transition fade)
+
+A textured format with a flat combiner is an RDP error the validator reports (defect D2): `mesh_draw()` picks the format from the material type and the fog state.
 
 **Performance note:** Use the simplest format that fits your needs. `TRIFMT_ZBUF` skips texture gradient computation in `rdpq_triangle()`, which is meaningful at high triangle counts (floor: 200 triangles/frame).
 
@@ -185,15 +187,19 @@ z_depth  = ndc_z * 0.5 + 0.5;                      // [0, 1] for Z-buffer
 
 ### Frustum Culling (per-object)
 
-Before rendering an object, its bounding sphere is tested against the 6 frustum planes. If fully outside any plane, the entire object is skipped.
+Before rendering a mesh, `mesh_draw()` tests its world-space bounding sphere against the 6 frustum planes. If it is fully outside any plane, the entire object is skipped (`mesh_culled_frustum` in the stats).
 
 ```c
-if (!camera_sphere_visible(cam, &object_position, bounding_radius)) return;
+vec3_t center; float radius;
+mesh_world_bounds(mesh, model, &center, &radius);   // mesh.h: centre transformed, radius × largest axis scale
+if (!camera_sphere_visible(cam, &center, radius)) return;
 ```
+
+The other passes cull their own way: a projected shadow is skipped when a sphere around its projected centre is off screen (`shadow.c`), and each particle is dropped when its screen square lies outside the screen or the guard band (`particle_draw.c`).
 
 ### Backface Culling
 
-Flat (planar) face groups: the group normal is taken to world space through the model matrix's cofactor matrix and dotted with the direction from the group's centre to the camera; a group facing away is skipped with all its triangles. Curved groups (sphere bands) are culled per triangle after projection, by the sign of the screen-space area: front faces are counter-clockwise, which is negative area once Y points down.
+Flat (planar) face groups: the group normal is taken to world space through the model's normal matrix (`mesh_normal_matrix()`, the cofactor matrix) and dotted with the direction from the group's centre to the camera; a group facing away is skipped with all its triangles (`groups_culled_backface`). Curved groups (sphere bands) are culled per triangle after projection, by the sign of the screen-space area (`tris_culled_backface`): front faces are counter-clockwise, which is negative area once Y points down. Meshes with `backface_cull = false` (the billboard quad) skip both tests.
 
 ```c
 // planar group
@@ -207,15 +213,15 @@ The previous test (one normal per group from its first vertex, against the objec
 
 ## Lighting
 
-Per-face Blinn-Phong lighting computed on the CPU before rasterization. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full lighting model.
+Flat-shaded Blinn-Phong lighting computed on the CPU before rasterization: once per planar face group, and once per triangle (with the average of its vertex normals) for curved groups. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full lighting model.
 
-The lit color modulates the base face color:
+The lit color modulates the material's base color:
 ```c
-color_t lit = lighting_calculate(light, world_normal, view_dir);
-uint8_t r = (face_color.r * lit.r) / 255;  // Multiply base × light
+color_t lit = lighting_calculate(light, world_normal, view_dir, world_pos);  // world_pos for point lights
+uint8_t r = (mat->base_color[0] * lit.r) / 255;  // Multiply base × light
 ```
 
-The result is set as prim color, combined with the texture via `RDPQ_COMBINER_TEX_FLAT`.
+Without fog the result is set as prim color, combined with the texture via `RDPQ_COMBINER_TEX_FLAT` (or used alone via `RDPQ_COMBINER_FLAT`). With fog it goes into the shade RGB of each vertex, and shade alpha carries the fog factor.
 
 ## Alpha Blending
 
@@ -233,35 +239,34 @@ This produces a semi-transparent overlay by blending with the existing framebuff
 
 ## Frame Structure
 
+The loop in `src/main.c`, simplified (profiler, stats and debug-tool calls omitted):
+
 ```c
 while (1) {
     // === UPDATE ===
-    input_update(&state);
-    camera_update(&camera);
-    cube_update();
+    float dt = /* seconds since the previous iteration, capped at 0.1 */;
+    scene_manager_update(&mgr, dt);   // scene on_update (input, menu, logic), camera, collision
 
     // === RENDER ===
-    surface_t *fb = display_get();       // Acquire framebuffer
-    rdpq_attach(fb, &zbuf);              // Attach color + depth
+    surface_t *fb = display_get();    // Wait for a free framebuffer (triple buffering)
+    rdpq_attach(fb, &zbuf);           // Attach color + depth
+    scene_manager_draw(&mgr);         // scene_draw(), then the transition fade
+    overlay_draw(budget_ms);          // Debug overlay page (not while the menu is open)
+    rdpq_detach_show();               // Present frame
 
-    rdpq_clear(bg_color);               // Clear background
-    rdpq_clear_z(ZBUF_MAX);             // Clear depth
-
-    cube_draw(&camera, &light_config);  // 3D geometry (Z-buffered)
-
-    // 2D overlays (text, menus)
-    text_draw(...);
-    menu_draw(...);
-
-    rdpq_detach_show();                 // Present frame
+    snd_update();                     // Feed the audio mixer
+    // 30 FPS mode: busy-wait until the frame time is reached
 }
 ```
+
+Draw order inside `scene_draw()` for the demo: background (sky gradient or colour clear) → Z clear → floor → shadows (Z-read, no Z-write) → objects (meshes, billboards) → particles (additive, Z-read, no Z-write) → HUD text → menu.
 
 ## Performance Notes
 
 - At 60 FPS, each frame has ~16.67ms total budget
 - CPU and RDP can overlap: CPU prepares next frame while RDP rasterizes current
-- The current scene (12 cube triangles + ~200 floor triangles) runs at 60 FPS
+- The engine is CPU-bound: the demo's quiet view submits a few hundred triangles (200 of them floor) and the RDP is busy about a third of the frame. Measurements are in [BENCHMARKS.md](BENCHMARKS.md)
+- Per-triangle code is linked in a hot-text block so it does not collide in the direct-mapped I-cache ([HARDWARE.md](HARDWARE.md))
 
 ### RDP State Change Cost
 
@@ -286,6 +291,13 @@ Result: ~4x fewer triangles, 200x fewer state changes, less CPU per-triangle. FP
 | File | Purpose |
 |------|---------|
 | [src/main.c](../src/main.c) | Frame loop, display init, Z-buffer setup |
-| [src/render/cube.c](../src/render/cube.c) | MVP transform, culling, triangle submission |
-| [src/render/camera.c](../src/render/camera.c) | View/projection matrices |
+| [src/scene/scene.c](../src/scene/scene.c) | Per-frame background (sky or clear), draw order, transition fade |
+| [src/render/mesh.c](../src/render/mesh.c) | `mesh_draw()`: culling, lighting, transform, triangle submission |
+| [src/render/mesh.h](../src/render/mesh.h) | Mesh types, `mesh_world_bounds()`, `mesh_normal_matrix()`, `mesh_screen_area2()` |
+| [src/render/floor.c](../src/render/floor.c) | Checkered floor (Z-bias, per-tile fog and point lights) |
+| [src/render/shadow.c](../src/render/shadow.c) | Blob and projected shadows |
+| [src/render/particle_draw.c](../src/render/particle_draw.c) | Particle renderer ([PARTICLES.md](PARTICLES.md)) |
+| [src/render/atmosphere.c](../src/render/atmosphere.c) | Fog factor, sky gradient |
+| [src/render/camera.c](../src/render/camera.c) | View/projection matrices, frustum |
 | [src/render/lighting.c](../src/render/lighting.c) | Blinn-Phong calculation |
+| [src/engine/hot_text.ld](../src/engine/hot_text.ld) | Placement of the render path in the I-cache |

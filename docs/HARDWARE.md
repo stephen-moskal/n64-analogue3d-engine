@@ -20,7 +20,7 @@ What we have measured or learned about the target hardware, and the RDP rules th
 | Heap available to malloc | 7.86 MB | same |
 | RDP counter rate (`DP_CLOCK`) | **93.75 MHz**, 1.5× the 62.5 MHz RCP clock | RDP counters vs loop time (P1.7) |
 | Stack peak (demo) | ~3 KB of the 64 KB stack (4.5 KB with the validator) | stack painting (P1.4) |
-| Late frames | flicker in the lower screen area when CPU work exceeds 16.7 ms (debug build + validator + menu); ares shows only an FPS drop | defect D18 |
+| Late frames | flicker in the lower screen area when frames overrun with the Start menu on screen (debug build + validator + menu); overruns without the menu do not flicker (Overload benchmark, Phase 2 S0); ares shows only an FPS drop | defect D18 |
 
 Design for 4 MB anyway (a real N64 without Expansion Pak); the extra 4 MB is headroom for debug builds and tooling.
 
@@ -29,7 +29,7 @@ Design for 4 MB anyway (a real N64 without Expansion Pak); the extra 4 MB is hea
 | Aspect | ares | Analogue 3D |
 |---|---|---|
 | RDP rule violations (fill-mode triangles, format/combiner mismatch) | tolerated | hang, RSP timeout or garbage |
-| Late frames | FPS drops | FPS drops and visible flicker (D18) |
+| Late frames | FPS drops | FPS drops; flicker only with the menu on screen (D18) |
 | Timing | close, not exact | real |
 | Log | ISViewer (Homebrew Mode) | USB via sc64deployer |
 | Crash inspector / backtrace | yes | yes (also over USB) |
@@ -68,10 +68,12 @@ Design for 4 MB anyway (a real N64 without Expansion Pak); the extra 4 MB is hea
 The VR4300 has a 16 KB instruction cache (32-byte lines) and an 8 KB data cache (16-byte lines), both **direct-mapped**: two addresses that are equal modulo the cache size share one line and evict each other.
 
 - **Measured (Phase 2 S2):** a triangle loop that shared all 46 cache lines of libdragon's `rdpq_triangle_rsp` cost ~1,100 extra cycles per triangle, +38 % CPU for the same work (D25). Every function moves when code linked before it changes size, so unrelated edits moved benchmark CPU by ~6 % between builds.
-- **Hot text:** the per-triangle render path is linked contiguously at the start of `.text`. The Makefile builds `build/<variant>/engine.ld` from libdragon's `n64.ld` with `src/engine/hot_text.ld` inserted after the boot code; engine functions opt in with `ENGINE_HOT` (`src/engine/hot.h`), and libdragon's triangle path (`rdpq_triangle`, `rdpq_triangle_rsp`, the `floorf`/`floor` it calls, the per-group rdpq helpers) is placed by section name.
-- **Check:** `tools/hot_text.py <elf>` (part of `ci_build.sh`) verifies that no two functions of a render phase (mesh, floor, shadow, particle) need different lines at the same cache index, and lists phase callees left outside the block. New per-triangle code: mark it `ENGINE_HOT`; a new drawing loop also gets a phase entry in the tool.
+- **Hot text:** the per-triangle render path is linked contiguously at the start of `.text`. The Makefile builds `build/<variant>/engine.ld` from libdragon's `n64.ld` with `src/engine/hot_text.ld` inserted after the boot code; engine functions opt in with `ENGINE_HOT` (`src/engine/hot.h`, a no-op in host tests), and libdragon's triangle path (`rdpq_triangle`, `rdpq_triangle_rsp`, the `floorf`/`floor` it calls) and the per-group rdpq helpers are placed by section name.
+- **Layout rules:** `hot_text.ld` selects sections by object file (`*render/mesh.o`) or function name, so renaming or splitting a render `.c` file means updating it (the particle renderer's move to `particle_draw.c` did). The block is larger than the 16 KB I-cache, so its tail wraps onto its head: the head holds the floor, shadow and particle loops, the tail `mesh_draw`, which never runs at the same time. Anything else marked `ENGINE_HOT` goes last.
+- **Texture uploads stay out:** `texture_upload()` and libdragon's sprite upload (~7 KB) would push the mesh phase past 16 KB and into `rdpq_triangle_rsp`'s lines, so they are left outside the block and `mesh_draw()` skips uploading a slot that is already in TMEM ([TEXTURES.md](TEXTURES.md)).
+- **Check:** `tools/hot_text.py <elf>` (part of `ci_build.sh`) follows each render phase (mesh, floor, shadow, particle) from its root functions through their callees inside the block, fails when two functions of a phase need different lines at the same cache index or when a phase function lies outside the block, and lists callees outside it (`COLD_OK` allows `texture_upload` and rare-path functions such as asserts; calls through function pointers are declared in `INDIRECT`). New per-triangle code: mark it `ENGINE_HOT` and place its object file in `hot_text.ld` if the order matters; a new drawing loop also gets a phase entry in `PHASES`. Step-by-step: [EXTENDING.md](EXTENDING.md).
 - **libdragon compiles with `-ftrivial-auto-var-init=pattern`:** every uninitialized local array is filled with 0xFE whenever it comes into scope, which in a triangle loop means a `memset` per triangle. Scratch arrays that are fully written before they are read take `ENGINE_NOINIT`.
-- **Data cache:** identical code on two copies of the same mesh data differed by up to 9 % (D26, open).
+- **Data cache:** identical code on two copies of the same mesh data differed by up to 9 % (D26, open). The benchmark's `BENCH_LAYOUT` row logs the addresses involved (the render stack frame and the pillar's vertex and index arrays) once per run.
 
 ## RSP / microcode limits
 

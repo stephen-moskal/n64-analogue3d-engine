@@ -50,10 +50,14 @@ z = target.z + distance * cos(elevation) * cos(azimuth);
 |-----------|-------|---------|-------------|
 | `azimuth` | unbounded | 0.0 | Horizontal angle (radians) |
 | `elevation` | -85 to +85 degrees | 0.3 rad (~17 degrees) | Vertical angle |
-| `distance` | 50 to 1000 | 300 | Distance from target |
+| `distance` | 100 to 1500 | 300 | Distance from target |
 | `target` | any | (0, 0, 0) | World-space orbit pivot |
 
+`camera_update()` clamps elevation and distance (`MAX_ELEVATION`, `MIN_DISTANCE`, `MAX_DISTANCE` in `camera.c`).
+
 #### Orbital Controls
+
+The controls in this and the following tables are the demo scene's (`demo_update()`), fed by `InputState` ([INPUT.md](INPUT.md)); values are per frame.
 
 | Input | Action | Scale |
 |-------|--------|-------|
@@ -80,8 +84,8 @@ camera_set_fixed(&cam,
 |-------|--------|-------|
 | Analog stick X | Translate camera X | azimuth * 150.0 |
 | Analog stick Y | Translate camera Z | elevation * 150.0 |
-| C-Up | Move camera up | 5.0 per frame |
-| C-Down | Move camera down | 5.0 per frame |
+| C-Up | Move camera up | +25 per frame (zoom step 5 × `FIXED_Y_SPEED` 5) |
+| C-Down | Move camera down | -25 per frame |
 | C-Left | Shift look-at target down | -2.0 per frame |
 | C-Right | Shift look-at target up | +2.0 per frame |
 
@@ -109,8 +113,8 @@ The camera computes `desired_position = *follow_target + follow_offset`, then le
 |-------|--------|-------|
 | Analog stick X | Adjust offset X | azimuth * 150.0 |
 | Analog stick Y | Adjust offset Z | elevation * 150.0 |
-| C-Up | Adjust offset up | 5.0 per frame |
-| C-Down | Adjust offset down | 5.0 per frame |
+| C-Up | Adjust offset up | +25 per frame |
+| C-Down | Adjust offset down | -25 per frame |
 
 ## Camera Collision
 
@@ -138,7 +142,7 @@ Casts a ray from the look-at target toward the camera position. If the ray hits 
 
 Treats the camera as a small sphere (radius = `collision_radius`) and tests for overlap against ALL sphere colliders in the world, regardless of layer. If the camera sphere overlaps a collider sphere, it is pushed out along the collision normal by the penetration depth.
 
-- Tests against: all active sphere colliders (skips AABBs)
+- Tests against: all active sphere colliders (skips AABBs), scanning the slots below `CollisionWorld.high`
 - Camera radius: `collision_radius` (default 0 = disabled)
 - Use case: prevents camera from entering the cube's bounding sphere
 
@@ -159,7 +163,7 @@ collision_add_sphere(&world, center, radius,
     COLLISION_LAYER_DEFAULT, COLLISION_LAYER_DEFAULT, NULL);
 
 // Ground: DEFAULT + ENV layers (raycast tests against ENV)
-// Extend ±1500 in X/Z to cover camera at MAX_DISTANCE=1000
+// Extend ±1500 in X/Z to cover the camera at MAX_DISTANCE (1500)
 collision_add_aabb(&world, (vec3_t){-1500,-180,-1500}, (vec3_t){1500,-100,1500},
     COLLISION_LAYER_DEFAULT | COLLISION_LAYER_ENV,
     COLLISION_LAYER_DEFAULT | COLLISION_LAYER_ENV, NULL);
@@ -195,8 +199,8 @@ const CameraConfig CAMERA_DEFAULT = {
     .distance   = 300.0f,
     .target     = {0, 0, 0},
     .fov_y      = 1.0472f,     // 60 degrees
-    .near_plane = 10.0f,
-    .far_plane  = 1000.0f,
+    .near_plane = 20.0f,       // near/far ratio 1:100 for the 16-bit Z-buffer (RENDERING.md)
+    .far_plane  = 2000.0f,
     .follow_offset    = {0, 200, -300},
     .follow_smoothing = 0.1f,
     .fixed_position   = {0, 200, 300},
@@ -209,8 +213,10 @@ const CameraConfig CAMERA_DEFAULT = {
 ### Initialization
 
 ```c
-void camera_init(Camera *cam, const CameraConfig *config);
+void camera_init(Camera *cam, const CameraConfig *config);  // also builds the matrices once
 ```
+
+`scene_init()` does not initialize the camera: every scene calls `camera_init()` in its `on_init`.
 
 ### Orbital Controls
 
@@ -232,7 +238,7 @@ void camera_set_collision(Camera *cam, const struct CollisionWorld *world, uint1
 ### Update & Query
 
 ```c
-void camera_update(Camera *cam);  // Recompute matrices (only if dirty)
+void camera_update(Camera *cam);  // Recompute matrices when dirty or following (scene_update calls it)
 bool camera_sphere_visible(const Camera *cam, const vec3_t *center, float radius);
 ```
 
@@ -242,7 +248,7 @@ bool camera_sphere_visible(const Camera *cam, const vec3_t *center, float radius
 camera_update() computes:
 
 1. Position (from mode: spherical / fixed / follow+lerp)
-2. Camera collision (raycast snap)
+2. Camera collision (raycast snap, sphere push-out, Y clamp)
 3. View direction (normalized)
 4. View matrix (mat4_lookat)
 5. Projection matrix (mat4_perspective)
@@ -306,7 +312,7 @@ All functions operate on column-major matrices matching OpenGL conventions.
 
 ## Dirty Flag Optimization
 
-The camera uses a dirty flag to avoid recomputing matrices when nothing has changed:
+`scene_update()` calls `camera_update()` every frame, but it rebuilds position, matrices and frustum only when there is something to do:
 
 ```c
 void camera_orbit(Camera *cam, float da, float de) {
@@ -316,13 +322,18 @@ void camera_orbit(Camera *cam, float da, float de) {
 }
 
 void camera_update(Camera *cam) {
-    if (!cam->dirty) return;
+    bool following = (cam->mode == CAMERA_MODE_FOLLOW && cam->follow_target);
+    if (!cam->dirty && !following) return;
     // ... recompute everything ...
     cam->dirty = false;
 }
 ```
 
-`camera_update()` is called every frame but only does work when parameters change.
+- `camera_orbit()`, `camera_zoom()`, `camera_shift_target_y()`, `camera_set_mode()`, `camera_set_fixed()`, `camera_set_follow_target()` and `camera_set_collision()` mark the camera dirty (`camera_init()` builds it immediately).
+- Follow mode with a target rebuilds every frame, because the target moves and the position is smoothed toward it.
+- Code that writes `Camera` fields directly must set `cam->dirty = true` itself: the demo does when the stick moves the fixed position or follow offset, and the benchmark scene sets it every frame because it spins `azimuth` directly.
+
+`tests/host/test_camera.c` checks this behaviour.
 
 ## Source Files
 

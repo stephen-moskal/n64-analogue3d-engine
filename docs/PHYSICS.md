@@ -37,7 +37,7 @@ The physics system uses a **semi-fixed timestep** while the rest of the engine u
 - The simulation steps in fixed increments of `PHYSICS_DT`
 - At 60 FPS: 1 step per frame. At 30 FPS: 2 steps per frame
 - Below 15 FPS: capped at 4 steps (physics slows down gracefully)
-- Leftover accumulator time carries to the next frame
+- Leftover accumulator time carries to the next frame, capped at one step so a stall does not replay as a burst of steps
 
 ```c
 void physics_world_update(PhysicsWorld *world, float dt) {
@@ -48,6 +48,7 @@ void physics_world_update(PhysicsWorld *world, float dt) {
         world->accumulator -= PHYSICS_DT;
         steps++;
     }
+    if (world->accumulator > PHYSICS_DT) world->accumulator = PHYSICS_DT;
 }
 ```
 
@@ -376,6 +377,8 @@ All functions follow the existing `vec3.h` convention: parameters are `const vec
 
 At 60 FPS with 1 step/frame and 32 bodies: ~9,600 cycles/frame = ~0.1ms. Physics is well within the ~7-9ms CPU budget available after rendering.
 
+`physics_world_update()` records the body count and the fixed steps it ran in the per-frame stats (`physics_bodies`, `physics_steps`), and the demo times it in the `physics` profiler slot ([PROFILING.md](PROFILING.md)); the demo measured ~0.02 ms on the Analogue 3D ([BENCHMARKS.md](BENCHMARKS.md)).
+
 ### Memory Cost
 
 | Resource | Size |
@@ -411,6 +414,11 @@ The demo scene (`src/scenes/demo_scene.c`) demonstrates the physics system with 
 - Pressing B again resets the ball position and applies an upward impulse
 - The platform has a dedicated AABB collider on `COLLISION_LAYER_ENV` for flat ground detection
 - If the ball rolls off the platform, it continues bouncing on the floor (ground AABB at Y=-100)
+- The ball casts no shadow and cannot be selected: both loops only cover the objects spawned before it (defect D20)
+
+## Testing
+
+`tests/host/test_physics.c` checks free fall, bounce and rest detection, and the max-steps clamp on the host. The ball demo has so far been verified in ares only; the hardware check is planned (ROADMAP_v2 D16).
 
 ## Future Extensions
 

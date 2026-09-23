@@ -1,24 +1,24 @@
 # Texture System
 
-The engine's texture system manages loading sprite assets from the ROM filesystem, uploading them to the RDP's texture memory (TMEM), and tracking per-frame statistics.
+The texture system loads sprite assets from the ROM filesystem into a table of numbered slots and uploads them to the RDP's texture memory (TMEM) when a textured face group is drawn.
 
 ## Architecture
 
 ```
 PNG assets (assets/*.png)
-       ↓  [build time: mksprite]
+       ↓  [build time: mksprite --format RGBA16]
 Sprite files (filesystem/*.sprite)
-       ↓  [ROM: bundled into .dfs]
-sprite_load() → sprite_t* slots
-       ↓  [per-frame]
-rdpq_sprite_upload() → TMEM (4KB)
+       ↓  [ROM: bundled into the .dfs]
+texture_load_slot() → sprite_t* in one of 16 slots
+       ↓  [per draw, per visible textured face group]
+texture_upload() → rdpq_sprite_upload() → TMEM (4 KB)
        ↓
 RDP samples during rasterization
 ```
 
 ## TMEM (Texture Memory)
 
-The N64 RDP has **4096 bytes** of on-chip texture memory (TMEM). All textures must fit within TMEM at the time of rasterization. The engine uploads textures one at a time per face, so each texture must individually fit in TMEM.
+The N64 RDP has **4096 bytes** of on-chip texture memory (TMEM). All textures must fit within TMEM at the time of rasterization. The engine uploads one texture at a time, so each texture must individually fit in TMEM.
 
 **Current textures:** 32x32 pixels, RGBA16 format = 32 * 32 * 2 = **2048 bytes** per texture (fits in TMEM).
 
@@ -26,7 +26,7 @@ The N64 RDP has **4096 bytes** of on-chip texture memory (TMEM). All textures mu
 
 ### Build Time
 
-PNG files in `assets/` are converted to libdragon `.sprite` format during build:
+Every PNG in `assets/` is converted to libdragon's `.sprite` format during the build (the Makefile uses a wildcard, so no list to maintain):
 
 ```makefile
 MKSPRITE_FLAGS ?= --format RGBA16
@@ -35,58 +35,50 @@ filesystem/%.sprite: assets/%.png
     $(N64_MKSPRITE) $(MKSPRITE_FLAGS) -o filesystem "$<"
 ```
 
-The `.sprite` files are bundled into a DFS filesystem archive (`.dfs`) which is appended to the ROM.
+The `.sprite` files are bundled into a DFS filesystem archive (`.dfs`) which is appended to the ROM. They are generated, not committed; `libdragon make clean` deletes them.
 
 ### Runtime Loading
 
 ```c
-void texture_init(void) {
-    for (int i = 0; i < 6; i++) {
-        slots[i] = sprite_load(cube_face_paths[i]);
-        assertf(slots[i] != NULL, "Failed to load %s", ...);
-        assertf(sprite_fits_tmem(slots[i]), "Sprite too large for TMEM", ...);
-    }
-}
+bool texture_load_slot(int slot, const char *path);  // frees the slot first, then sprite_load()
+void texture_free_slot(int slot);
+bool texture_slot_loaded(int slot);
+void texture_cleanup(void);                          // frees every slot
+void texture_init(void);                             // loads the six cube faces into slots 0-5 (idempotent)
+const char *texture_cube_face_path(int face);        // their rom:/ paths
 ```
 
-`sprite_load()` reads from the ROM filesystem (paths prefixed with `rom:/`). The `sprite_fits_tmem()` check catches oversized textures at load time rather than crashing during rendering.
+`texture_load_slot()` reads from the ROM filesystem (paths start with `rom:/`; a wrong path stops at libdragon's `File not found` assertion) and asserts `sprite_fits_tmem()`, so an oversized texture fails at load time rather than during rendering.
 
 ## Texture Slots
 
-Textures are managed via a simple slot array:
+`TEX_MAX_SLOTS` is 16. Slots are global, not owned by a scene: two scenes that use the same slot number replace each other's texture.
 
-```c
-#define TEX_MAX_SLOTS 16
+| Slots | Used by |
+|---|---|
+| 0–5 | cube faces (`TEX_CUBE_FRONT` … `TEX_CUBE_LEFT` in `texture.h`) |
+| 6, 7 | billboard marker and tree (`TEX_BILLBOARD_MARKER` / `TEX_BILLBOARD_TREE` in `demo_scene.c`) |
+| 8–15 | free |
 
-// Pre-defined cube face slots
-#define TEX_CUBE_FRONT  0
-#define TEX_CUBE_BACK   1
-#define TEX_CUBE_TOP    2
-#define TEX_CUBE_BOTTOM 3
-#define TEX_CUBE_RIGHT  4
-#define TEX_CUBE_LEFT   5
-```
+### Per-scene lifecycle
 
-Slots 0-5 are used for cube faces. Slots 6-15 are available for future objects.
+A scene lists its textures in `Scene.texture_paths` / `texture_slots` / `texture_count`. `scene_init()` loads them before the scene's `on_init`, and `scene_cleanup()` frees them after `on_cleanup`, so a Reset Scene or a scene switch cannot leak them. The demo declares its eight textures this way.
+
+A texture loaded by hand with `texture_load_slot()` is **not** freed by `scene_cleanup()`: free it in `on_cleanup` (the benchmark scene loads with `texture_init()` and `texture_load_slot()` and calls `texture_cleanup()` in its cleanup). See [SCENE_SYSTEM.md](SCENE_SYSTEM.md).
 
 ## Per-Frame Upload
 
-Before drawing each face, its texture is uploaded to TMEM:
+`mesh_draw()` calls `texture_upload(material->texture_slot, TILE0)` for each textured face group that survives back-face culling, unless an earlier group of the same draw already uploaded that slot with no RDP mode reset in between: a box whose six faces share one texture uploads it once per draw. Each call issues `rdpq_sprite_upload()`, which loads the pixels into TMEM and configures the tile descriptor. Nothing stays resident across draws (TMEM residency is planned in ROADMAP_v2 P3.3), so every `mesh_draw()` that shows a texture uploads it again.
 
-```c
-texture_upload(face_tex_slot[f], TILE0);
-```
-
-This calls `rdpq_sprite_upload(tile, sprite, NULL)` which:
-1. Uploads pixel data to TMEM
-2. Configures the tile descriptor (size, format, stride)
-3. May use internal caching to skip redundant uploads
+`texture_upload()` is deliberately left out of the hot-text block: its libdragon upload path (~7 KB of code) would not fit next to `mesh_draw()` in the I-cache, which is why `mesh_draw()` avoids redundant uploads ([HARDWARE.md](HARDWARE.md)).
 
 ## Render Mode for Textures
 
+Without fog (`mesh_draw()`):
+
 ```c
 rdpq_set_mode_standard();
-rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);  // texture_color * prim_color
+rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);  // texture_color * prim_color (the lit colour)
 rdpq_mode_persp(true);                        // Perspective-correct interpolation
 rdpq_mode_filter(FILTER_BILINEAR);            // Bilinear filtering
 ```
@@ -95,9 +87,11 @@ rdpq_mode_filter(FILTER_BILINEAR);            // Bilinear filtering
 - Perspective correction is essential for 3D — without it, textures swim as polygons rotate
 - Bilinear filtering smooths texel boundaries
 
+With fog on, textured groups use `RDPQ_COMBINER_TEX_SHADE` with `TRIFMT_ZBUF_SHADE_TEX` and `RDPQ_FOG_STANDARD`; the lit colour travels in the shade channels ([RENDERING.md](RENDERING.md)). Materials with `alpha_cutout` set (the billboard quad) also enable alpha compare, so transparent texels are discarded.
+
 ## UV Coordinates
 
-Each face quad uses the full texture (0 to 32 in texel space):
+UVs are in texels, not 0–1: a 32×32 texture spans 0 to 32. The cube faces (`face_uvs` in `cube.c`) and the billboard quad use the full texture:
 
 ```c
 static const float face_uvs[4][2] = {
@@ -111,31 +105,13 @@ static const float face_uvs[4][2] = {
 UV coordinates are passed as part of the vertex data in `TRIFMT_ZBUF_TEX` format:
 `{screen_x, screen_y, z_depth, s, t, inv_w}`
 
-## Per-Frame Statistics
+## Statistics
 
-The texture system tracks stats that are displayed in the debug HUD:
+Uploads are counted in the unified per-frame stats (`src/debug/stats.h`): `tex_uploads` and `tex_upload_bytes` (sprite stride × height per upload). They appear as `U:` in the demo HUD (`T:<triangles> U:<uploads> COL:… RAY:…`), on the Stats overlay page, and as the `tex_uploads` / `tex_bytes` columns of `STATS` CSV rows ([PROFILING.md](PROFILING.md)).
 
-```c
-typedef struct {
-    int tmem_bytes_used;    // Total TMEM bytes uploaded this frame
-    int upload_count;       // Number of sprite uploads this frame
-    int triangle_count;     // Triangles submitted this frame
-} TextureStats;
-```
+## Adding a Texture
 
-Stats are reset each frame with `texture_stats_reset()` and displayed as:
-```
-T:12 U:6 TMEM:12288B
-```
-(12 triangles, 6 uploads, 12288 bytes total TMEM traffic)
-
-## Adding New Textures
-
-1. Place a PNG in `assets/` (recommended: 32x32, power-of-2 dimensions)
-2. It will auto-convert to `.sprite` during build
-3. Add a slot define in `texture.h`: `#define TEX_MY_OBJECT 6`
-4. Load in `texture_init()`: `slots[TEX_MY_OBJECT] = sprite_load("rom:/my_texture.sprite");`
-5. Upload before drawing: `texture_upload(TEX_MY_OBJECT, TILE0);`
+Drop the PNG in `assets/` (it is converted on the next build), pick a free slot, declare it in your scene's `texture_paths` / `texture_slots`, and reference the slot from a `Material.texture_slot` or `BillboardData.texture_slot`. The step-by-step recipe is in [EXTENDING.md](EXTENDING.md).
 
 ### Size Constraints
 
@@ -144,7 +120,7 @@ T:12 U:6 TMEM:12288B
 | 32x32 | RGBA16 | 2048B | Yes |
 | 64x64 | RGBA16 | 8192B | No (exceeds 4KB) |
 | 64x32 | RGBA16 | 4096B | Yes (exactly) |
-| 32x32 | CI4 | 512B + palette | Yes |
+| 32x32 | CI4 | 512B + palette | Yes (not used yet: the Makefile converts every PNG to RGBA16) |
 
 For larger textures, consider CI4/CI8 (indexed color) or split into tiles.
 
@@ -152,6 +128,7 @@ For larger textures, consider CI4/CI8 (indexed color) or split into tiles.
 
 | File | Purpose |
 |------|---------|
-| [src/render/texture.h](../src/render/texture.h) | Slot defines, stats struct, API |
-| [src/render/texture.c](../src/render/texture.c) | Load, upload, stats tracking |
+| [src/render/texture.h](../src/render/texture.h) | Slot defines, API |
+| [src/render/texture.c](../src/render/texture.c) | Slot table, load/free, upload and upload stats |
+| [src/scene/scene.c](../src/scene/scene.c) | Loads and frees each scene's declared textures |
 | [Makefile](../Makefile) | Asset conversion rules (PNG → sprite) |

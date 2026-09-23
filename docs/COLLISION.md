@@ -8,13 +8,15 @@ The collision system manages a world of up to 64 colliders. Each frame, `collisi
 
 ```
 collision_test_all()
-├── For each pair (i, j):
+├── For each pair (i, j) of slots below world->high:
 │   ├── Skip inactive, skip static-static
 │   ├── Layer mask test: (a.layer & b.mask) && (b.layer & a.mask)
 │   ├── Broadphase: AABB overlap test
 │   └── Narrowphase: shape-specific test
 └── Results stored in world->results[] (up to 32)
 ```
+
+A collider handle is its slot index. `collision_add_*()` takes the lowest free slot, and `CollisionWorld.high` is one past the highest active slot: `collision_test_all()`, `collision_raycast()`, `collision_overlap_sphere()` and the camera's push-out loop scan only the slots below it, so a world with a few colliders costs a few iterations, not 64. Removing the top collider lowers `high`; a hole below it is skipped as inactive.
 
 ## Collider Types
 
@@ -165,6 +167,18 @@ bool collision_raycast(const CollisionWorld *world, const Ray *ray,
                        uint16_t mask, CollisionResult *out);
 ```
 
+### Single Colliders and Shapes
+
+```c
+// Ray against one collider
+bool collision_raycast_single(const Collider *collider, const Ray *ray, CollisionResult *out);
+
+// Shape tests, usable standalone
+bool collision_sphere_sphere(const ColliderSphere *a, const ColliderSphere *b, CollisionResult *out);
+bool collision_aabb_aabb(const ColliderAABB *a, const ColliderAABB *b, CollisionResult *out);
+bool collision_sphere_aabb(const ColliderSphere *s, const ColliderAABB *b, CollisionResult *out);
+```
+
 ### Utility
 
 ```c
@@ -192,14 +206,16 @@ camera_update(&scene->camera);   // Camera matrices
 collision_test_all(&scene->collision);  // Collision detection
 ```
 
-Scenes add/remove colliders in their `on_init` and `on_cleanup` callbacks.
+`scene_init()` resets the world with `collision_world_init()` before `on_init`, where scenes add their colliders; a soft reset or scene switch therefore starts from an empty world. The collider count and overlapping pairs go to the per-frame stats (`colliders`, `collision_pairs`), and every `collision_raycast()` counts in `raycasts` ([PROFILING.md](PROFILING.md)).
 
 ## Limits
 
 | Limit | Value |
 |-------|-------|
-| Max colliders per world | 64 |
-| Max results per frame | 32 |
+| Max colliders per world | 64 (`COLLISION_MAX_COLLIDERS`) |
+| Max results per frame | 32 (`COLLISION_MAX_RESULTS`; `collision_test_all()` stops when full) |
+
+Host tests: `tests/host/test_collision.c` (shape tests, layers, raycasts, sparse slots).
 
 ## Source Files
 

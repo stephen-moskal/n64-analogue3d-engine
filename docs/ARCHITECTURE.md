@@ -107,40 +107,39 @@ DMA buffers (used by RSP) must be uncached and 8-byte aligned.
 ```
 main.c
 ├── input/action        [action mapping, joypad polling, context management]
-├── input/input         [camera input adapter, reads from action API]
 ├── ui/text             [font rendering]
-├── ui/menu             [settings menu overlay]
+├── ui/menu             [global start menu, built here (6 tabs)]
 │   └── ui/text
-├── scene/scene         [scene manager, lifecycle, transitions]
-│   ├── render/camera   [multi-mode camera, 3D math, frustum, collision]
-│   ├── render/lighting [Blinn-Phong calculation]
-│   ├── collision/collision [collision detection, raycasting]
-│   └── render/texture  [dynamic texture slot management]
+├── debug/*             [debug_menu, profiler, stats, memstats, frametime, overlay,
+│                        rdp_debug, testbed: DEBUGGING.md, PROFILING.md]
 ├── audio/audio         [audio mixer, SFX/BGM playback]
 │   └── audio/sound_bank [sound event definitions]
-├── physics/physics     [physics simulation, semi-fixed timestep, gravity, bounce]
-│   └── collision/collision
-└── scenes/demo_scene   [demo scene: multi-object, selection, manipulation]
-    ├── render/cube     [cube geometry definition (textured)]
-    │   └── render/mesh [generic mesh rendering]
-    │       ├── render/camera
-    │       ├── render/lighting
-    │       ├── render/texture
-    │       └── render/atmosphere
-    ├── render/mesh_defs [shape library: pillar, platform, pyramid, sphere]
-    │   └── render/mesh
-    ├── render/billboard [camera-facing textured quads]
-    │   └── render/mesh
-    ├── render/shadow    [blob + projected shadow casting]
-    │   ├── render/camera
-    │   ├── render/lighting
-    │   └── render/mesh
-    ├── render/particle  [particle system, direct RDP renderer]
-    │   ├── render/camera
-    │   └── render/atmosphere
-    ├── render/atmosphere [fog config, sky gradient, 7 presets]
-    ├── physics/physics   [physics bodies, gravity, bounce response]
-    └── scene/scene
+├── render/atmosphere   [fog config, sky gradient, 7 presets]
+├── scene/scene         [scene manager, lifecycle, background, transitions]
+│   ├── render/camera   [multi-mode camera, 3D math, frustum, collision]
+│   ├── render/lighting [Blinn-Phong calculation]
+│   ├── render/texture  [texture slots, per-scene loading]
+│   ├── render/atmosphere [sky background]
+│   └── collision/collision [collision detection, raycasting]
+├── scenes/demo_scene   [demo scene: objects, selection, menu semantics, HUD]
+│   ├── input/input     [camera input adapter, reads from action API]
+│   ├── render/cube     [cube geometry definition (textured)]
+│   │   └── render/mesh [mesh_build.c builder, mesh.c mesh_draw()]
+│   │       ├── render/camera
+│   │       ├── render/lighting
+│   │       ├── render/texture
+│   │       └── render/atmosphere
+│   ├── render/mesh_defs [shape library: pillar, platform, pyramid, sphere]
+│   ├── render/floor     [checkered floor, point-lit and fogged per tile]
+│   ├── render/billboard [camera-facing textured quads, drawn with render/mesh]
+│   ├── render/shadow    [blob + projected shadow casting, uses render/mesh helpers]
+│   ├── render/particle  [particle.c simulation, particle_draw.c renderer]
+│   ├── physics/physics  [physics bodies, gravity, bounce response]
+│   │   └── collision/collision
+│   └── audio/audio
+└── scenes/benchmark_scene [stress test: meshes, particles, shadows, floor, fill rate]
+
+engine/hot.h, engine/hot_text.ld   [I-cache placement of the render hot path (HARDWARE.md)]
 ```
 
 ### Initialization Order
@@ -150,23 +149,27 @@ main.c
 debug_init_isviewer();      // Debug output (ISViewer)
 debug_init_usblog();        // Debug output (USB)
 display_init(...);          // Framebuffers
-rdpq_init();                // RDP command queue
+memstats_init(...);         // RDRAM size, stack painting
+rdpq_init();                // RDP command queue (validator off; Debug tab)
 dfs_init(...);              // ROM filesystem
-action_init();              // Joypad + action mapping (replaces input_init)
+action_init();              // Joypad + action mapping
 text_init();                // Load fonts
-menu_init(&menu, title);    // Menu state
-snd_init();                 // Audio mixer
+menu_init(&start_menu, ...);// Global start menu; tabs and items added here,
+debug_menu_init(...);       //   the Debug tab by debug_menu_init()
+snd_init();                 // Audio mixer, SFX preload
 atmosphere_init();          // Fog/sky global state
 surface_alloc(...);         // Z-buffer (shared across scenes)
 
 // Scene manager init
 scene_manager_init(&mgr);
-scene_manager_switch(&mgr, demo_scene_get(), TRANSITION_CUT, 0);
+testbed_init(&mgr, &start_menu);   // Reset Soak / Menu Sweep
+scene_manager_switch(&mgr, demo_scene_get(), TRANSITION_CUT, 0);  // benchmark in a BENCH=1 build
+profiler_init();
 
 // Inside scene_init() (called by manager):
 collision_world_init();     // Reset collision world
 lighting_init(&config);     // Light parameters
-texture_load_slot();        // Per-scene textures
+texture_load_slot();        // Declared per-scene textures
 scene->on_init();           // Scene-specific setup
   camera_init(&cam, &preset); // Camera matrices
   cube_init();                // Model geometry (demo scene)
@@ -176,7 +179,7 @@ scene->on_init();           // Scene-specific setup
 
 ### Frame Loop (Variable Timestep)
 
-Game logic runs once per rendered frame using the actual elapsed time (`dt`). Frame rate is selectable via menu (30 or 60 FPS). At 60 FPS, objects update 60 times per second for smooth motion; at 30 FPS, a busy-wait limiter skips every other VBlank.
+Game logic runs once per rendered frame using the actual elapsed time (`dt`, capped at 0.1 s). Frame rate is selectable via menu (30 or 60 FPS). At 60 FPS there is no limiter; at 30 FPS a busy-wait holds each loop iteration to 1/30 s.
 
 ```c
 uint32_t last_ticks = TICKS_READ();
@@ -191,26 +194,32 @@ while (1) {
     scene_manager_update(&mgr, dt);
     //   -> scene_update(current, dt)
     //      -> per-object on_update(dt)
-    //      -> scene->on_update(dt) [input, game logic]
+    //      -> scene->on_update(dt) [input, menu, game logic]
     //      -> camera_update()
     //      -> collision_test_all()
+    debug_menu_update();               // Debug tab, D-Up/D-Down shortcuts
+    testbed_update();                  // Reset Soak / Menu Sweep
 
     // Render
-    surface_t *fb = display_get();    // Blocks until VBlank (60Hz cap)
+    surface_t *fb = display_get();    // Waits for a free framebuffer
     rdpq_attach(fb, &zbuf);
     scene_manager_draw(&mgr);
     //   -> scene_draw(current)
-    //      -> rdpq_clear(bg_color), rdpq_clear_z(ZBUF_MAX)
-    //      -> scene->on_draw() [floor, 3D geometry]
-    //      -> per-object on_draw()
-    //      -> scene->on_post_draw() [particles, HUD, overlays]
+    //      -> sky_draw() or rdpq_clear(bg_color); rdpq_clear_z(ZBUF_MAX)
+    //      -> scene->on_draw() [floor, shadows]
+    //      -> per-object on_draw() [meshes, billboards]
+    //      -> scene->on_post_draw() [particles, HUD, menu]
     //   -> transition overlay (if transitioning)
+    overlay_draw(budget_ms);           // Debug overlay page
     rdpq_detach_show();
+    snd_update();                      // Feed the audio mixer
 
     // Busy-wait frame limiter (for 30 FPS target)
     if (engine_target_fps > 0) { /* spin until target frame time */ }
 }
 ```
+
+With triple buffering, `display_get()` waits for a free framebuffer rather than for vsync, so loop times alternate short and long (about 12.5 / 21 ms) at a steady 60 FPS, and `dt` inherits that jitter (defect D19, [PROFILING.md](PROFILING.md)). The profiler, stats and memory hooks around this loop are described in PROFILING.md.
 
 **Why variable timestep:** A previous fixed-timestep accumulator (30Hz logic) caused every other frame at 60 FPS to be an identical duplicate — the accumulator hadn't reached the 33ms threshold, so no logic update ran. Motion was effectively 30Hz regardless of display rate, making 30 and 60 FPS feel identical. Variable timestep ensures every rendered frame has a unique logic update.
 
@@ -221,17 +230,19 @@ See [RENDERING.md](RENDERING.md) for the full pipeline documentation.
 ### Summary
 
 ```
-CPU: Model Matrix -> MVP = VP * Model -> Per-face: Cull + Light + Transform
+CPU: Model Matrix -> frustum cull -> MVP = VP * Model
+     -> per planar face group (or per triangle of a curved group): cull + light
+     -> per triangle corner: transform, clip checks, viewport map
 RDP: Rasterize -> Texture Sample -> Z-Test -> Framebuffer
 ```
 
 - Software transforms on CPU, hardware rasterization on RDP
 - Hardware 16-bit Z-buffer (replaced painter's algorithm)
-- `TRIFMT_ZBUF_TEX` vertex format: `{X, Y, Z, S, T, INV_W}`
+- Triangle format chosen per material and fog state: `TRIFMT_ZBUF_TEX` `{X, Y, Z, S, T, INV_W}` for textured, `TRIFMT_ZBUF` for flat, `TRIFMT_ZBUF_SHADE(_TEX)` with fog
 
 ## Lighting Model
 
-Per-face Blinn-Phong lighting computed on the CPU with configurable directional sun, up to 4 point lights, and shadow casting.
+Flat-shaded Blinn-Phong lighting computed on the CPU (once per planar face group, once per triangle on curved groups) with configurable directional sun, up to 4 point lights, and shadow casting.
 
 ### Lighting Formula
 
@@ -281,7 +292,7 @@ Two shadow modes rendered after the floor and before objects. Configured via `Sh
 |------|------|--------|
 | `SHADOW_OFF` | 0 tris | No shadows |
 | `SHADOW_BLOB` | 2 tris/object | Dark quad under each object, scaled by bounding radius |
-| `SHADOW_PROJECTED` | ~10 tris/object | Mesh silhouette projected onto floor plane along light direction |
+| `SHADOW_PROJECTED` | the caster's light-facing triangles | Mesh silhouette projected onto floor plane along light direction |
 
 ### RDP State
 
@@ -295,100 +306,56 @@ rdpq_mode_zbuf(true, false);        // Z-read ON, Z-write OFF
 - **Z-write OFF**: shadows don't occlude objects drawn afterward
 - Shadow color derived from `ShadowConfig.darkness` (0.0 = invisible, 1.0 = fully black)
 
+### Blob Shadows
+
+`shadow_draw_blob()` draws two triangles under the caster: a square of `blob_radius` scaled by the caster's bounding radius (0.5–2×), skipped when the caster is below the floor or more than 400 units above it.
+
 ### Projected Shadow Math
 
-Per-vertex planar projection along the light direction onto `y = floor_y`:
+Projecting a point along the light direction onto the floor plane is an affine map, so `shadow_draw_projected()` composes one matrix per caster that takes a local vertex straight to its shadow's clip position:
 
 ```c
-float t = (world_vertex.y - floor_y) / light_direction.y;
-shadow_x = world_vertex.x - light_direction.x * t;
-shadow_z = world_vertex.z - light_direction.z * t;
-// Render at (shadow_x, floor_y + 0.01, shadow_z)
+// kx = lx / ly, kz = lz / ly (light direction l, toward the light)
+// S: x' = x - kx * (y - floor_y),  y' = floor_y + 0.01,  z' = z - kz * (y - floor_y)
+M = VP * S * model
 ```
 
-Draw order: floor → shadows → objects → particles → HUD
+Per caster:
+
+- **Culling:** nothing is drawn when the light is nearly horizontal (`ly < 0.05`) or when the shadow is off screen. The shadow of the caster's bounding sphere (radius r) fits in a sphere of radius r / ly around the projected centre, which is tested against the frustum (`mesh_world_bounds()` + `camera_sphere_visible()`).
+- **Light-facing faces only:** for a closed mesh (`backface_cull` on) the faces turned toward the light cover the shadow exactly, so the others are skipped: a planar face group is tested once with its normal against the light direction, a triangle of a curved group by its projected winding. Open or double-sided meshes project every face.
+- **Each vertex once:** a vertex is projected the first time a drawn triangle needs it and kept in static scratch (`MESH_MAX_VERTICES` entries) for the rest of the caster; vertices behind the near plane or outside the guard band drop the triangles that use them.
+
+Draw order: background → floor → shadows → objects → particles → HUD → menu
 
 ## Particle System
 
-Emitter-based particle system with pool-based allocation and a direct RDP batch renderer that bypasses the `mesh_draw()` pipeline for maximum throughput.
-
-### Architecture
+Emitter-based particles with a fixed pool and a direct RDP batch renderer that bypasses `mesh_draw()`. Full documentation (definitions, API, renderer): [PARTICLES.md](PARTICLES.md).
 
 ```
-ParticleEmitterDef (static const, data-driven)
+ParticleEmitterDef (static const, data-driven; the emitter keeps the pointer)
     ↓ particle_emitter_create()
 ParticleEmitter (runtime: position, pool slice, spawn state)
     ↓ particle_emitter_burst() or continuous spawn
-Particle pool[128] (global, contiguous slices per emitter)
-    ↓ particle_update(dt)
-Physics: gravity, drag, position integration, color/scale interpolation
-    ↓ particle_draw(cam)
-Direct RDP emission: camera-facing quads, batch by blend mode
+Particle pool[128] (global, one contiguous slice per emitter)
+    ↓ particle_update(dt)            particle.c: simulation (host-tested)
+Gravity, drag, integration, colour/scale interpolation
+    ↓ particle_draw(cam)             particle_draw.c: renderer (ENGINE_HOT)
+Screen-aligned squares, one RDP mode set for all particles
 ```
 
-### Renderer (Direct RDP Emission)
+- **Files:** `particle.c` (pool, emitters, `particle_update()`; no rendering, so `tests/host/test_particle.c` covers it), `particle_draw.c` (the renderer, in the hot-text block), `particle_internal.h` (the shared `Particle` / `ParticleEmitter` state; not a public API).
+- **Update:** walks each emitter's own slice of the pool with that emitter's definition, so per-emitter constants are computed once and no particle searches for its owner.
+- **Renderer:** sets the RDP mode once (standard mode, flat combiner, Z-read without Z-write, additive blend). A camera-facing quad is parallel to the image plane, so each particle's centre is transformed once and drawn as a screen-aligned square (two `TRIFMT_ZBUF` triangles); particles behind the near plane, beyond the far plane, off screen or past the guard band are skipped, and the prim colour is only set when it changes.
+- **Limits:** 128 particles, 8 emitters, no heap allocation; destroying emitters returns the unused tail of the pool.
+- **Blending:** only additive is implemented; `blend_mode = PARTICLE_BLEND_ALPHA` is ignored (defect D13). Fog dims the colour on the CPU (`1 - fog_factor`), since the RDP fog blender conflicts with additive blending.
 
-The particle renderer follows the `floor_draw()` pattern — not `mesh_draw()`. This is critical for performance:
+## Billboards
 
-| Approach | `rdpq_set_mode_standard()` calls | Why |
-|----------|----------------------------------|-----|
-| `mesh_draw()` per particle | 1 per particle (up to 128) | Mode reset per material boundary |
-| Direct RDP emission | 1 total (all particles) | Mode set once, batch all triangles |
+Camera-facing textured quads (`src/render/billboard.c`), used by the demo's marker and trees. Full documentation: [BILLBOARDS.md](BILLBOARDS.md).
 
-Steps:
-1. Compute camera basis vectors (right, up) once per frame
-2. Set RDP mode once: `rdpq_set_mode_standard()`, `RDPQ_COMBINER_FLAT`, Z-read ON / Z-write OFF, `RDPQ_BLENDER_ADDITIVE`
-3. Per alive particle: compute 4 quad corners from `position ± right*scale ± up*scale`
-4. Transform corners through `cam->vp` → screen space (same clip/guard-band/depth-clamp as mesh_draw)
-5. Emit 2 triangles via `rdpq_triangle(&TRIFMT_ZBUF, ...)` (3 floats: X, Y, Z — no texture)
-
-### ParticleEmitterDef (Effect Definition)
-
-Data-driven struct — define effects as `static const` and reuse across scenes:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `burst_count` | int | Particles spawned per burst call |
-| `spawn_rate` | float | Particles/sec for continuous mode |
-| `lifetime_min/max` | float | Random lifetime range (seconds) |
-| `velocity_min/max` | vec3_t | Per-axis random initial velocity |
-| `gravity` | vec3_t | Acceleration per second² |
-| `drag` | float | Velocity damping (0=none, 1=full stop) |
-| `color_start/end` | uint8_t[4] | RGBA at birth/death, linearly interpolated |
-| `scale_start/end` | float | Quad half-size at birth/death |
-| `spawn_shape` | enum | POINT or SPHERE (with radius) |
-| `blend_mode` | enum | ADDITIVE or ALPHA |
-
-### API
-
-```c
-void particle_init(void);
-void particle_cleanup(void);
-
-int  particle_emitter_create(const ParticleEmitterDef *def, vec3_t pos, int pool_size);
-void particle_emitter_destroy(int handle);
-void particle_emitter_set_position(int handle, vec3_t position);
-void particle_emitter_burst(int handle);           // Spawn burst_count particles
-void particle_emitter_set_active(int handle, bool); // Enable continuous spawning
-
-void particle_update(float dt);                    // Physics + interpolation
-void particle_draw(const Camera *cam);             // Direct RDP batch render
-int  particle_alive_count(void);                   // Active particle count
-```
-
-### Pool Compaction
-
-When an emitter is destroyed, `particle_emitter_destroy()` reclaims pool space by scanning active emitters for the highest pool endpoint and resetting `pool_allocated` to that value. This prevents permanent pool fragmentation when emitters are repeatedly created and destroyed (e.g., torch particles toggling with point light settings). Only 8 iterations (PARTICLE_MAX_EMITTERS) — negligible cost.
-
-### Performance
-
-- **Pool**: 128 particles max, 8 emitters max, zero heap allocation
-- **Triangles**: 2 per alive particle (worst case 256 tris at full pool)
-- **RDP mode calls**: 1 per frame (all particles share one blend mode pass)
-- **TMEM cost**: Zero (flat-colored quads, no textures)
-- **Per-particle frustum culling** via `camera_sphere_visible()`
-- **Color batching**: `rdpq_set_prim_color()` only called when color changes
-- **Fog integration**: CPU-side fog dimming (multiply RGBA by `1 - fog_factor`), since hardware fog conflicts with additive blender
+- A scene object with `on_draw = billboard_draw` and a `BillboardData` (texture slot, spherical or cylindrical mode, width/height, tint) in `data`.
+- One shared unit-quad mesh (`billboard_init()` / `billboard_cleanup()`): textured, alpha cutout, no back-face culling. Each draw builds a model matrix that faces the camera (cylindrical mode rotates around Y only), sets the shared material's texture slot and tint, and calls `mesh_draw()`, so frustum culling, lighting, fog and stats apply as for any mesh.
 
 ## Fog & Atmosphere System
 
@@ -406,7 +373,7 @@ Renderers query atmosphere state per frame:
   mesh_draw()     → hardware fog (RDPQ_FOG_STANDARD via shade alpha)
   floor_draw()    → CPU fog (per-tile color blend toward fog color)
   particle_draw() → CPU fog (RGBA dimming for additive blend compat)
-  sky_draw()      → gradient fill rectangles (interpolated strips)
+  sky_draw()      → gradient fill rectangles (interpolated strips), called by scene_draw()
 ```
 
 ### Hardware Fog (mesh_draw)
@@ -438,7 +405,9 @@ Particles use `RDPQ_BLENDER_ADDITIVE`. Combining with `RDPQ_FOG_STANDARD` requir
 
 ### Sky Gradient
 
-`sky_draw()` renders a smooth vertical gradient using 60 horizontal fill rectangle strips (4px each). Band colors from `SkyConfig` are treated as evenly-spaced gradient stops; each strip's color is linearly interpolated between the two nearest stops. This produces smooth transitions instead of hard-edged flat bands.
+`sky_draw()` renders a smooth vertical gradient using 60 horizontal fill rectangle strips (4px each). Band colors from `SkyConfig` are treated as evenly-spaced gradient stops; each strip's color is linearly interpolated between the two nearest stops. This produces smooth transitions instead of hard-edged flat bands. Fill mode is set once; each strip only changes the fill colour. A one-band sky is a single full-screen rectangle.
+
+The sky is the frame's background: `scene_draw()` calls `sky_draw()` instead of the colour clear whenever `sky_covers_screen()` (sky enabled with at least one band), and clears to `bg_color` otherwise. Scenes do not draw the sky themselves.
 
 Critical design rule: **bottom sky band = fog color = bg_color** in every preset. This creates seamless blending from sky → fog → background clear color.
 
@@ -463,12 +432,12 @@ Each preset includes a `LightingHint` with `sun_intensity`, `ambient` color, and
 - **Fog OFF**: Zero overhead — identical code paths, formats, and combiners as before
 - **Fog ON (mesh)**: +1 float per vertex (shade alpha), 2-cycle mode (RDP throughput halved, but low tri count)
 - **Fog ON (floor)**: ~100 `rdpq_set_prim_color()` calls vs 2 unfogged (color dedup reduces actual calls)
-- **Fog ON (particles)**: +1 VP multiply per particle for fog factor
-- **Sky**: 60 fill rectangles per frame — negligible RDP cost
+- **Fog ON (particles)**: one `fog_calculate_factor()` per particle, from the `w` of the centre transform the renderer already does
+- **Sky**: 60 fill rectangles per frame, drawn instead of the colour clear — negligible RDP cost
 
 ### Menu Integration
 
-ENVIRON tab (tab 3) with 6 items: Preset (8 options), Fog On/Off, Fog Near, Fog Far, Fog Color, Sky On/Off. Named presets auto-enable fog+sky and sync menu toggles. Custom mode allows individual control.
+ENVIRON tab (tab 3) with 6 items: Preset (8 options), Fog On/Off, Fog Near, Fog Far, Fog Color, Sky On/Off. Named presets auto-enable fog+sky and sync menu toggles. Custom mode allows individual control; with a named preset the five sub-items are disabled (the demo updates the disabled states only when the preset changes).
 
 ## Action Mapping System
 
@@ -493,10 +462,11 @@ joypad_poll()  →  action_update()  →  action_pressed/held/released()
 
 ### Design Rules
 
-- **Start button**: Always toggles menu — hardcoded, not remappable (system-level)
+- **Start button**: Always toggles menu — hardcoded, not remappable (system-level; the demo scene reads it from the raw joypad)
 - **Menu navigation**: D-pad, A/B, L/R in `menu.c` stay hardcoded (standard UI convention)
-- **Analog stick**: Sensitivity/deadzone configurable per context, but not remapped to buttons
+- **Analog stick**: Sensitivity/deadzone configurable per context, but not remapped to buttons; `action_analog_x()` is inverted (stick right = negative)
 - **InputState preserved**: `input_update()` is a thin adapter reading from the action API — camera code unchanged
+- **Polling**: each scene calls `action_update()` at the start of its `on_update`; nothing else polls the joypad ([INPUT.md](INPUT.md))
 
 ### Contexts
 
@@ -527,12 +497,15 @@ Developers define new contexts as `static const` data arrays — no code changes
 
 ### Runtime Remapping
 
-The Controls menu tab (tab 4) lists all 11 game actions. Each action's option list contains all 13 physical buttons. Menu option indices match `PhysicalButton` enum order, so remapping is:
+The Controls menu tab (tab 4) lists all 11 game actions. Each action's option list contains all 13 physical buttons. Menu option indices match `PhysicalButton` enum order, so remapping is a cast; the demo applies a binding only when its menu value changes:
 
 ```c
 for (int i = 0; i < ACTION_COUNT; i++) {
     int btn_idx = menu_get_value(&start_menu, TAB_CONTROLS, i);
-    action_set_binding((GameAction)i, (PhysicalButton)btn_idx);
+    if (btn_idx != last_binding[i]) {
+        action_set_binding((GameAction)i, (PhysicalButton)btn_idx);
+        last_binding[i] = btn_idx;
+    }
 }
 ```
 
@@ -551,7 +524,7 @@ bool  action_held(GameAction action);             // Continuous
 bool  action_released(GameAction action);         // Edge-triggered
 
 // Analog stick
-float action_analog_x(void);                      // Filtered by deadzone/sensitivity
+float action_analog_x(void);                      // Filtered by deadzone/sensitivity; inverted
 float action_analog_y(void);
 bool  action_has_analog(void);
 
@@ -578,7 +551,7 @@ See [COLLISION.md](COLLISION.md) for full documentation.
 - Broadphase AABB culling + narrowphase shape tests
 - Raycasting (sphere, AABB, triangle)
 - Overlap queries
-- Up to 64 colliders, 32 results per frame
+- Up to 64 colliders, 32 results per frame; every scan stops at the highest active slot (`CollisionWorld.high`)
 
 ## Physics System
 
@@ -607,9 +580,10 @@ See [SCENE_SYSTEM.md](SCENE_SYSTEM.md) for full documentation.
 - Each scene owns Camera, LightConfig, CollisionWorld
 - Scene manager with transitions (cut, fade-black, fade-white)
 - **Soft reset**: set `scene->reset_requested = true` to trigger cleanup + reinit next frame (reusable for game logic: level restarts, death screens, debug reset)
-- Up to 32 objects and 16 textures per scene
+- Up to 32 objects and 16 declared textures per scene; declared textures load before `on_init` and are freed after `on_cleanup`
 - Per-object update/draw callbacks via SceneObject
-- Draw order: sky_draw → on_draw (floor/3D) → per-object on_draw → on_post_draw (particles → HUD/overlays)
+- Draw order: background (sky or colour clear, by `scene_draw`) → on_draw (floor, shadows) → per-object on_draw → on_post_draw (particles → HUD → menu)
+- Each scene polls input itself; only the demo scene drives the Start menu
 - Support for both independent and shared-coordinate scenes
 
 ## Camera System
@@ -621,7 +595,7 @@ See [CAMERA.md](CAMERA.md) for full documentation.
 - Three modes: orbital, fixed, follow
 - Camera collision via raycasting against environment layer
 - Perspective projection with frustum culling
-- Dirty flag optimization
+- Matrices rebuilt only when the camera is dirty (its API setters mark it) or in follow mode
 
 ## Text Rendering
 
@@ -651,35 +625,51 @@ typedef struct {
 ```c
 text_draw(&config, "static string");
 text_draw_fmt(&config, "formatted %d", value);
+text_set_style(font_id, style_id, color);   // colour for inline "^xx" style switches
 ```
+
+Text is expensive on the CPU (about 15–20 µs per glyph on the Analogue 3D with the built-in debug font): the debug overlay prints each page as one multi-line paragraph with `^xx` colour switches and rebuilds it at 4 Hz ([BENCHMARKS.md](BENCHMARKS.md)).
+
+## Audio
+
+A thin `snd_*` wrapper over libdragon's audio and mixer (`src/audio/audio.c`). Full documentation: [AUDIO.md](AUDIO.md).
+
+- 22,050 Hz output, 4 DMA buffers, 16 mixer channels; background music on channel 0 (a looping `wav64`), sound effects round-robin on channels 2–7.
+- Sounds are `SoundId` entries in `sound_bank.h` / `sound_bank.c` (path, SFX or BGM, volume 0–128); game code never uses paths. `snd_init()` opens every SFX once at boot.
+- `snd_update()` feeds the mixer once per frame from the main loop (`audio` profiler slot). The demo's Sound tab sets the SFX and BGM volumes; Master defaults to Off.
 
 ## Memory Budget (4MB)
 
+Measured on the Analogue 3D, debug build ([BENCHMARKS.md](BENCHMARKS.md); the Memory overlay page shows the live values):
+
 | Resource | Size | Notes |
 |----------|------|-------|
-| Framebuffer x3 | ~450KB | 320x240 x 2 bytes x 3 |
-| Z-buffer | ~150KB | 320x240 x 2 bytes |
-| Textures (sprites) | ~12KB | 6 x 32x32 RGBA16 |
+| Framebuffer x3 | 460,800 B | 320x240 x 2 bytes x 3, heap-allocated by `display_init()` |
+| Z-buffer | 153,600 B | 320x240 x 2 bytes, heap-allocated in `main.c` |
+| Heap in use after the demo loads | ~0.9 MB | Includes the framebuffers and Z-buffer, meshes, sprites, audio |
+| Textures (sprites) | ~2 KB each | 8 x 32x32 RGBA16 in the demo |
 | TMEM per frame | 4KB max | RDP on-chip texture cache |
-| Code + data | ~337KB | Current ROM size |
-| Audio buffers | ~64KB | Reserved for future |
-| **Available** | **~3MB** | For game assets and logic |
+| Stack | 64 KB reserved | Peak use ~3 KB (~4.5 KB with the RDP validator) |
 
-With Expansion Pak (8MB), an additional 4MB is available. Shared resources (framebuffers, Z-buffer) persist across scene transitions. Per-scene textures load/unload with the scene.
+Static code and data come on top (`tools/rom_budget.py` reports text + data + bss; CI fails above 1 MB). The Analogue 3D reports an Expansion Pak (8 MB), but design for 4 MB. Shared resources (framebuffers, Z-buffer) persist across scene transitions. Per-scene textures load/unload with the scene.
 
 ## Optimization Notes
 
 ### CPU
-- Dirty flag on camera (skip matrix recompute when unchanged)
+- Camera matrices rebuilt only when the camera is dirty or following a target
 - Frustum culling rejects entire objects before per-face work
-- Backface culling skips ~50% of faces on convex objects
-- Static-static collision pairs skipped
+- Backface culling skips ~50% of faces on convex objects: once per planar group, per triangle on curved groups
+- Static-static collision pairs skipped; collision scans stop at the highest active slot
 - Broadphase AABB culling before narrowphase shape tests
+- Projected shadows: one composed matrix per caster, each vertex projected at most once, faces turned away from the light skipped
+- Particles: one transform per particle, per-emitter constants hoisted out of the update loop
+- Render hot path linked contiguously so it does not thrash the direct-mapped I-cache ([HARDWARE.md](HARDWARE.md))
 
 ### RDP
 - Batch triangles by render state to minimize mode changes
-- One texture upload per face (6 per cube) — batch by texture for multiple objects
+- One texture upload per visible textured face group; consecutive groups of one draw that share a texture reuse the upload (no residency across draws yet)
 - Z-buffer eliminates need for CPU-side depth sorting
+- The sky replaces the colour clear instead of painting over it
 - Transition overlays use 1-cycle mode triangles (hardware-safe)
 
 ### Memory
@@ -692,29 +682,36 @@ With Expansion Pak (8MB), an additional 4MB is available. Shared resources (fram
 
 | File | Purpose |
 |------|---------|
-| `src/main.c` | Entry point, display/input/menu init, variable-timestep game loop |
+| `src/main.c` | Entry point, display/input/menu init (builds the 6-tab start menu), variable-timestep game loop |
 | `src/render/camera.c/h` | Multi-mode camera, 3D math, frustum culling, collision |
-| `src/render/mesh.c/h` | Generic mesh type, builder API, universal draw function |
+| `src/render/mesh.h` | Mesh types and API, inline helpers (`mesh_world_bounds`, `mesh_normal_matrix`, `mesh_screen_area2`) |
+| `src/render/mesh_build.c` | Mesh builder, bounds and face-group analysis (host-tested) |
+| `src/render/mesh.c` | `mesh_draw()`, the universal draw function |
 | `src/render/mesh_defs.c/h` | Shape library: pillar, platform, pyramid, sphere factory functions |
 | `src/render/cube.c/h` | Cube geometry (textured, built on Mesh) |
 | `src/render/floor.c/h` | Checkered floor grid (dynamic, Z-biased, point light illumination) |
 | `src/render/lighting.c/h` | Blinn-Phong lighting, point lights, configurable sun |
-| `src/render/texture.c/h` | Texture loading, TMEM management, dynamic slots |
+| `src/render/texture.c/h` | Texture slots, per-scene loading, TMEM upload |
 | `src/render/billboard.c/h` | Billboard system: camera-facing textured quads |
 | `src/render/shadow.c/h` | Shadow casting (blob + projected planar shadows) |
-| `src/render/particle.c/h` | Particle system: pool-based emitters, direct RDP batch renderer |
+| `src/render/particle.c/h` | Particle pool, emitters and update (host-tested); public API |
+| `src/render/particle_draw.c` | Particle renderer (direct RDP batch, hot path) |
+| `src/render/particle_internal.h` | Particle state shared by the two particle files |
 | `src/render/atmosphere.c/h` | Fog config, sky gradient renderer, 7 atmosphere presets |
 | `src/math/vec3.h` | Vector math library (header-only) |
 | `src/collision/collision.c/h` | Collision detection, raycasting, overlap queries |
 | `src/physics/physics.c/h` | Physics simulation: gravity, impulse, bounce, ground detection |
-| `src/scene/scene.c/h` | Scene lifecycle, manager, transitions, per-object callbacks, soft reset |
-| `src/scenes/demo_scene.c/h` | Demo scene: mesh objects, billboards, selection, HUD |
+| `src/scene/scene.c/h` | Scene lifecycle, background, manager, transitions, per-object callbacks, soft reset |
+| `src/scenes/demo_scene.c/h` | Demo scene: mesh objects, billboards, selection, menu semantics, HUD |
+| `src/scenes/benchmark_scene.c/h` | Benchmark scene: stress steps and BENCH CSV rows |
 | `src/input/action.c/h` | Action mapping: remappable bindings, contexts, pressed/held/released |
 | `src/input/input.c/h` | Camera input adapter (reads from action API) |
 | `src/ui/text.c/h` | Text rendering |
-| `src/ui/menu.c/h` | Tabbed menu system (5 tabs: Settings, Sound, Lighting, Environ, Controls), scrollable, disabled items |
+| `src/ui/menu.c/h` | Tabbed menu system, scrollable, disabled items |
 | `src/audio/audio.c/h` | Audio mixer, SFX/BGM playback |
 | `src/audio/sound_bank.c/h` | Sound event definitions and path mapping |
+| `src/debug/*.c/h` | Build switches, Debug tab, profiler, stats, memory, frame time, overlay pages, RDP capture, Reset Soak / Menu Sweep |
+| `src/engine/hot.h`, `hot_text.ld` | `ENGINE_HOT` / `ENGINE_NOINIT` and the hot-text link order |
 
 ## Documentation Index
 
@@ -722,14 +719,23 @@ With Expansion Pak (8MB), an additional 4MB is available. Shared resources (fram
 |----------|----------|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | This file — system overview |
 | [RENDERING.md](RENDERING.md) | Rendering pipeline details |
+| [MESH_SYSTEM.md](MESH_SYSTEM.md) | Mesh/model abstraction |
 | [TEXTURES.md](TEXTURES.md) | Texture pipeline and TMEM |
+| [PARTICLES.md](PARTICLES.md) | Particle system |
+| [BILLBOARDS.md](BILLBOARDS.md) | Billboards |
+| [AUDIO.md](AUDIO.md) | Audio mixer and sound bank |
 | [CAMERA.md](CAMERA.md) | Camera modes, math, frustum, collision |
 | [COLLISION.md](COLLISION.md) | Collision detection and raycasting |
 | [PHYSICS.md](PHYSICS.md) | Physics engine: gravity, bounce, impulse, timestep |
 | [SCENE_SYSTEM.md](SCENE_SYSTEM.md) | Scene/world management |
 | [MENU_SYSTEM.md](MENU_SYSTEM.md) | Menu overlay system |
 | [INPUT.md](INPUT.md) | Controller input handling |
-| [MESH_SYSTEM.md](MESH_SYSTEM.md) | Mesh/model abstraction |
-| [ROADMAP.md](ROADMAP.md) | Development roadmap and milestones |
+| [EXTENDING.md](EXTENDING.md) | How-to recipes and the contribution stage gate |
+| [DEBUGGING.md](DEBUGGING.md) | Debug tab, logs, RDP validator and capture, crashes, unit tests |
+| [PROFILING.md](PROFILING.md) | Profiler, stats, memory, frame time, RDP load, CSV rows |
+| [BENCHMARKS.md](BENCHMARKS.md) | Benchmark scene and measured results |
+| [HARDWARE.md](HARDWARE.md) | Analogue 3D + SummerCart64 facts, RDP rules, CPU caches |
 | [SETUP.md](SETUP.md) | Environment setup guide |
 | [WORKFLOW.md](WORKFLOW.md) | Development workflow |
+| [ROADMAP_v2.md](ROADMAP_v2.md) | Current roadmap, defect register |
+| [ROADMAP.md](ROADMAP.md) | v1 roadmap (delivery record for Features 1–10) |
