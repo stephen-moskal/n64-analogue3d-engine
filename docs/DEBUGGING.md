@@ -99,4 +99,4 @@ Pure-logic modules (vec3, collision, physics, action mapping, camera math, frame
 libdragon exec make -C tests/host run      # 67 checks, 0 failures
 ```
 
-They run in CI on every push (`.github/workflows/build.yml` → `tools/ci_build.sh`, which also builds both ROMs and checks ROM/RAM budgets with `tools/rom_budget.py`). They already caught one doc/behaviour mismatch: `action_analog_x()` is inverted.
+They run in CI on every push (`.github/workflows/build.yml` → `tools/ci_build.sh`, which also builds both ROMs, checks ROM/RAM budgets with `tools/rom_budget.py` and the I-cache layout of the render path with `tools/hot_text.py`). They already caught one doc/behaviour mismatch: `action_analog_x()` is inverted.

@@ -191,14 +191,19 @@ Before rendering an object, its bounding sphere is tested against the 6 frustum 
 if (!camera_sphere_visible(cam, &object_position, bounding_radius)) return;
 ```
 
-### Backface Culling (per-face)
+### Backface Culling
 
-Face normals are transformed to world space via the model matrix upper-3x3, then dotted with the camera-to-object direction. Faces pointing away from the camera are skipped.
+Flat (planar) face groups: the group normal is taken to world space through the model matrix's cofactor matrix and dotted with the direction from the group's centre to the camera; a group facing away is skipped with all its triangles. Curved groups (sphere bands) are culled per triangle after projection, by the sign of the screen-space area: front faces are counter-clockwise, which is negative area once Y points down.
 
 ```c
-float facing = dot(world_normal, to_camera_dir);
-if (facing < 0.0f) continue;  // Face points away
+// planar group
+float facing = dot(world_normal, cam_pos - group_center_world);
+if (facing <= 0.0f) continue;                  // whole group faces away
+// curved group, per triangle
+if (mesh_screen_area2(s0, s1, s2) >= 0.0f) continue;
 ```
+
+The previous test (one normal per group from its first vertex, against the object-centre direction) made spheres vanish from some sides (D24).
 
 ## Lighting
 

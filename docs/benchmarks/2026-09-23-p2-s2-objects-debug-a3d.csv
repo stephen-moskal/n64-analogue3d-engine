@@ -1,0 +1,16 @@
+BENCH_META,build=debug,date=Sep 23 2026 19:31:03,rdram=8388608,benchmark=objects,steps=6,warmup=60,measure=240
+BENCH_HDR,kind,step,param,frames,fps,avg_ms,p99_ms,low1_fps,cpu_avg_ms,cpu_max_ms,rdp_busy_ms,rdp_busy_pct,tris,tex_uploads,heap_kb
+BENCH_PROF_HDR,kind,step,param,update_us,draw_us,objects_us,mesh_cull_us,mesh_light_us,mesh_tris_us
+BENCH,objects,0,8,239,60.0,16.67,18.32,54.6,4.65,7.79,2.36,14.2,126,0.0,1049
+BENCH_PROF,objects,0,8,150,3992,3547,38,505,2573
+BENCH,objects,1,16,239,60.0,16.67,19.57,51.1,8.08,12.36,3.59,21.6,253,0.0,1049
+BENCH_PROF,objects,1,16,150,7236,6781,68,984,4922
+BENCH,objects,2,24,239,60.1,16.65,20.76,48.1,11.65,16.61,4.79,28.8,379,0.0,1049
+BENCH_PROF,objects,2,24,150,10446,9985,99,1445,7251
+BENCH,objects,3,32,239,53.4,18.71,23.99,41.6,18.45,24.04,6.00,31.9,506,0.0,1049
+BENCH_PROF,objects,3,32,152,16931,16469,137,2041,12669
+BENCH,objects,4,48,239,35.8,27.91,35.75,27.9,27.90,35.80,8.54,30.8,758,0.0,1049
+BENCH_PROF,objects,4,48,154,25274,24820,203,3200,18945
+BENCH,objects,5,64,239,26.9,37.12,47.20,21.1,37.12,47.39,11.03,29.9,1011,0.0,1049
+BENCH_PROF,objects,5,64,156,32057,31597,266,3979,24238
+BENCH,END,6,40.1

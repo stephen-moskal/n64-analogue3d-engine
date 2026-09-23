@@ -63,6 +63,16 @@ Design for 4 MB anyway (a real N64 without Expansion Pak); the extra 4 MB is hea
 6. **DMA buffers** must be uncached and 8-byte aligned.
 7. **RSP timeout in `display_get`** usually means an RDP pipeline misconfiguration: turn on RDP Check.
 
+## CPU caches and code placement
+
+The VR4300 has a 16 KB instruction cache (32-byte lines) and an 8 KB data cache (16-byte lines), both **direct-mapped**: two addresses that are equal modulo the cache size share one line and evict each other.
+
+- **Measured (Phase 2 S2):** a triangle loop that shared all 46 cache lines of libdragon's `rdpq_triangle_rsp` cost ~1,100 extra cycles per triangle, +38 % CPU for the same work (D25). Every function moves when code linked before it changes size, so unrelated edits moved benchmark CPU by ~6 % between builds.
+- **Hot text:** the per-triangle render path is linked contiguously at the start of `.text`. The Makefile builds `build/<variant>/engine.ld` from libdragon's `n64.ld` with `src/engine/hot_text.ld` inserted after the boot code; engine functions opt in with `ENGINE_HOT` (`src/engine/hot.h`), and libdragon's triangle path (`rdpq_triangle`, `rdpq_triangle_rsp`, the `floorf`/`floor` it calls, the per-group rdpq helpers) is placed by section name.
+- **Check:** `tools/hot_text.py <elf>` (part of `ci_build.sh`) verifies that no two functions of a render phase (mesh, floor, shadow, particle) need different lines at the same cache index, and lists phase callees left outside the block. New per-triangle code: mark it `ENGINE_HOT`; a new drawing loop also gets a phase entry in the tool.
+- **libdragon compiles with `-ftrivial-auto-var-init=pattern`:** every uninitialized local array is filled with 0xFE whenever it comes into scope, which in a triangle loop means a `memset` per triangle. Scratch arrays that are fully written before they are read take `ENGINE_NOINIT`.
+- **Data cache:** identical code on two copies of the same mesh data differed by up to 9 % (D26, open).
+
 ## RSP / microcode limits
 
 - RSP IMEM and DMEM are 4 KB each. At the pinned libdragon commit, enabling libdragon's own RSP profiler (`RSPQ_PROFILE=1`) makes the core `rsp_rdpq` microcode 96 bytes too large, so it cannot be used (PROFILING.md).

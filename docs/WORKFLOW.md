@@ -91,7 +91,7 @@ Rule of thumb from the baseline (BENCHMARKS.md): the engine is CPU-bound; ~24–
 
 ```powershell
 libdragon exec make -C tests/host run      # host unit tests (pure-logic modules)
-libdragon exec bash tools/ci_build.sh      # what CI runs: both ROMs, tests, ROM/RAM budgets
+libdragon exec bash tools/ci_build.sh      # what CI runs: both ROMs, tests, ROM/RAM budgets, hot-text layout
 ```
 
 GitHub Actions (`.github/workflows/build.yml`) runs the same on every push and uploads the ROMs, `.sym` and `.map` files as artifacts. Hardware checks stay manual (see ROADMAP_v2 §11).

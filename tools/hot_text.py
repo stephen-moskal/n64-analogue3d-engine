@@ -44,7 +44,6 @@ GROUP_PATH = ["__rdpq_write8_syncchange", "__rdpq_fixup_write8_syncchange",
 # automatically. A trailing '?' marks an optional root (skipped when absent).
 PHASES = {
     "mesh":        ["mesh_draw"],
-    "mesh_legacy": ["mesh_draw_legacy?"],      # temporary S2 A/B copy
     "floor":       ["floor_draw"],
     "shadow":      ["shadow_begin", "shadow_draw_blob", "shadow_draw_projected"],
     "particle":    ["particle_draw"],

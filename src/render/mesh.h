@@ -102,8 +102,5 @@ static inline float mesh_screen_area2(const float a[2], const float b[2],
 
 void mesh_draw(const Mesh *mesh, const mat4_t *model,
                const Camera *cam, const LightConfig *light);
-// Debug builds only, temporary: pre-S2 renderer for the Mesh A/B benchmark
-void mesh_draw_legacy(const Mesh *mesh, const mat4_t *model,
-                      const Camera *cam, const LightConfig *light);
 
 #endif

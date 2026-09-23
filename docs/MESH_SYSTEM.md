@@ -182,11 +182,12 @@ Draws the entire mesh with the given model matrix. Handles:
 
 1. **Frustum culling** — Transforms bounding sphere to world space (including scale), tests against camera frustum. Entire mesh skipped if off-screen.
 2. **MVP computation** — `MVP = VP * Model`
-3. **RDP mode setup** — Only resets RDP mode (`rdpq_set_mode_standard()`) when the material **type** changes between groups. Texture uploads happen per-group.
-4. **Per-group processing** (flat shading):
-   - Normal transform + lighting computed **once per group** (all triangles in a flat-shaded group share the same normal)
-   - Backface cull skips entire groups, not individual triangles
-   - `rdpq_set_prim_color()` set once per group
+3. **RDP mode setup** — Only resets RDP mode (`rdpq_set_mode_standard()`) when the material **type** or its **alpha cutout** changes between groups, so a material without cutout never inherits alpha compare (D5). Texture uploads happen per group, after the cull.
+4. **Per-group processing** (flat shading). `mesh_compute_bounds()` also analyses every group (`mesh_analyze_group()` in `mesh_build.c`): its centre, its normal, and whether it is **planar** (every vertex shares one normal and lies on one plane).
+   - **Planar groups** (cube faces, pillar sides): one exact back-face test, whether the camera is in front of the group's own plane, then lighting once and `rdpq_set_prim_color()` once.
+   - **Curved groups** (sphere bands wrap around the mesh, so no single normal describes them): culled per triangle by the sign of the projected screen area (`mesh_screen_area2()`), and lit per triangle with the average of its vertex normals.
+   - Normals reach world space through the cofactor matrix of the model matrix, so non-uniform scale keeps them perpendicular to their faces.
+   - Before S2 every group was culled and lit with its first vertex's normal against the object-centre direction; spheres vanished when seen from their −Z side (D3, D24).
 5. **Per-triangle processing:**
    - Vertex transform (MVP → perspective divide → NDC → screen coordinates)
    - `rdpq_triangle(&TRIFMT_ZBUF_TEX, ...)` with Z-buffer
@@ -283,7 +284,9 @@ static void object_draw(SceneObject *obj, const Camera *cam, const LightConfig *
 ## Performance Notes & Optimization Lessons
 
 - **Frustum culling**: Entire mesh rejected with one bounding sphere test (6 plane dot products).
-- **Backface culling**: Per-group (not per-triangle). Skips ~50% of groups on convex objects.
+- **Backface culling**: once per planar group (skips ~50 % of groups on convex objects); per triangle for curved groups.
+- **Winding**: front faces are counter-clockwise seen from outside the mesh. The per-triangle cull depends on it; `tests/host/test_mesh.c` checks every built-in mesh.
+- **Code placement**: `mesh_draw` and its per-triangle callees are `ENGINE_HOT` (linked in the hot-text block). A triangle loop that collides with `rdpq_triangle_rsp` in the direct-mapped I-cache costs ~1,100 cycles per triangle (HARDWARE.md, D25).
 - **RDP mode batching**: `rdpq_set_mode_standard()` is expensive — it resets the entire RDP pipeline. Only called when the material **type** changes between groups, not per-group. For a mesh where all groups share the same type (e.g., all textured), mode is set exactly once.
 - **Per-group lighting**: Normal transform + `lighting_calculate()` computed once per group. An early version computed these per-triangle, which doubled the lighting work for no visual difference in flat shading.
 - **Bounding sphere scale**: Uses squared column lengths with a single `sqrtf` at the end, rather than 3 separate `sqrtf` calls. `sqrtf` is expensive on the N64's MIPS FPU.

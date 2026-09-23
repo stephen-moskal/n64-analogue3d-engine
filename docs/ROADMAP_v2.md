@@ -52,9 +52,9 @@ Long-term vision (unchanged from v1): an action-RPG engine supporting souls-like
 |---|---|---|---|
 | D1 | Leak on Reset Scene: `texture_init()` re-loads slots 0–5 without freeing; `demo_cleanup` never calls `texture_cleanup()`. **Measured on the A3D: Reset Soak (S0) +134,880 B over 10 resets = 13.5 KB per reset** (P1.4 had estimated ~20 KB including a warm-up reset); the six sprites explain ~12 KB | `src/render/texture.c:17-26`, `src/scenes/demo_scene.c:1299-1324` | fixed S1 (Reset Soak ×10: 0 B) |
 | D2 | Flat-color materials drawn with `TRIFMT_ZBUF_TEX`. Found by the RDP validator's first hardware run (~41,000 warnings, which also made the first debug build crawl) | `src/render/mesh.c` | **fixed** fad76ab |
-| D3 | Lighting and back-face culling use one normal per face group (the group's first vertex) and the object-centre view direction: spheres shade wrong, near/large meshes cull wrong faces. Visible symptom: see D24 | `src/render/mesh.c:170-177, 243-265` | open → S2 |
+| D3 | Lighting and back-face culling use one normal per face group (the group's first vertex) and the object-centre view direction: spheres shade wrong, near/large meshes cull wrong faces. Visible symptom: see D24 | `src/render/mesh.c:170-177, 243-265` | fixed S2 (flat groups: exact plane test; curved groups: per-triangle winding cull and lighting) |
 | D4 | Texture upload happened before the group cull (wasted TMEM loads, `U:` over-reported) | `src/render/mesh.c` | **fixed** 907754d |
-| D5 | `rdpq_mode_alphacompare(1)` is never cleared; state leaks to later groups/draws | `src/render/mesh.c:233-235` | open → S2 |
+| D5 | `rdpq_mode_alphacompare(1)` is never cleared; state leaks to later groups/draws | `src/render/mesh.c:233-235` | fixed S2 (mode reset when alpha cutout changes) |
 | D6 | `camera.dirty = true` forced every frame defeats the dirty flag (6 `sqrtf` + trig per frame) | `src/scenes/demo_scene.c:1000`, `benchmark_scene.c:336` | open → S3 |
 | D7 | HUD raycast and visible-object scan ran with the HUD hidden | `src/scenes/demo_scene.c` | **fixed** f4628e0 |
 | D8 | Every `Mesh` mallocs full capacity (16,384 + 2,048 B) regardless of size | `src/render/mesh.c:46-49, 61-63` | open → S4 |
@@ -73,7 +73,9 @@ Long-term vision (unchanged from v1): an action-RPG engine supporting souls-like
 | D21 | `texture_init()` resets `slot_count` to 6; if billboard slots were loaded first, `texture_upload` would assert | `src/render/texture.c:17-29` | fixed S1 |
 | D22 | `assets/grass_tex.png` is unused but still packed into the ROM (2.9 KB) | `Makefile` wildcard, `assets/` | open → S12 |
 | D23 | The demo re-applies point lights, control bindings, background colour and Environ item states every frame instead of on change | `src/scenes/demo_scene.c:1047-1135` | open → S3 |
-| D24 | Spheres vanish when seen from their −Z side, which in the demo is usually a view with the pillars or cube in front, so it looks like a Z-buffer fault. Cause is D3: every latitude-band group of the UV sphere starts at longitude 0 (+Z), so the group back-face test culls almost the whole sphere. Reported on the A3D 2026-09-23 | `src/render/mesh.c:243-265`, `src/render/mesh_defs.c:279-365` | open → S2 |
+| D24 | Spheres vanish when seen from their −Z side, which in the demo is usually a view with the pillars or cube in front, so it looks like a Z-buffer fault. Cause is D3: every latitude-band group of the UV sphere starts at longitude 0 (+Z), so the group back-face test culls almost the whole sphere. Reported on the A3D 2026-09-23 | `src/render/mesh.c:243-265`, `src/render/mesh_defs.c:279-365` | fixed S2 (A3D 2026-09-23) |
+| D25 | Render-loop speed depends on code placement. The VR4300 I-cache is 16 KB and direct-mapped: the first S2 triangle loop shared all 46 cache lines of `rdpq_triangle_rsp`, costing ~1,100 cycles per triangle (+38 % CPU in a same-ROM A/B), and unrelated edits moved benchmark CPU by ~6 % between builds. libdragon's `-ftrivial-auto-var-init=pattern` also memset the triangle scratch arrays on every triangle | `Makefile`, `src/engine/hot_text.ld`, `src/render/*.c` | fixed S2 (hot-text block, `tools/hot_text.py` in CI, `ENGINE_NOINIT`) |
+| D26 | Data layout moves render timings by up to ~9 %: identical `mesh_draw` code on two copies of the same pillar data differed by 9 % in one ROM (Mesh A/B), most likely 8 KB direct-mapped D-cache aliasing between vertex data and stack scratch | `src/render/mesh.c`, mesh heap allocations | open → S3 (log addresses; candidates: one arena for mesh data, S4 `mesh_finalize`) |
 
 ## 3. Phase overview
 
@@ -455,7 +457,7 @@ Scope decisions (2026-09-23): a text/menu performance stage is added (P2.12, the
 |---|---|---|---|---|---|
 | S0 | P2.0 **Measurement prep** | ✔ verified-hw 2026-09-23 | New benchmark kind `OVERLOAD` (CPU burn stepping 12 → 25 ms plus a text-heavy page) to reproduce D18 **without** the validator. New Debug item **Reset Soak** (10 scene resets in a row, MEM rows before/after, prints heap delta). Record demo-view dumps (quiet / menu / particles) as the Phase 2 start rows. | `benchmark_scene.c`, `debug_menu.c`, `main.c`, BENCHMARKS.md | Soak reproduces D1 (~20 KB/reset); OVERLOAD answers "does a late frame flicker without the validator?" |
 | S1 | P2.1 **Resource lifecycle** (D1, D21, part of D11) | ✔ verified-hw 2026-09-23 | `texture_init()` frees before loading and preserves `slot_count`; `demo_cleanup` calls `texture_cleanup()`; the demo loads billboard textures through `Scene.texture_paths` (first real use of the scene texture manager); `billboard_data_count` reset in init; account for the ~8 KB the sprites don't explain. | `texture.c`, `demo_scene.c`, `scene.c` | Reset Soak ×10 → heap delta **0 B** |
-| S2 | P2.2 **Renderer correctness** (D3, D5, D24) | planned | Per-triangle back-face cull by screen-space winding (exact, no `sqrtf`), replacing the object-centre group test; group lighting normal = average of the group's vertex normals, precomputed when the mesh is built; alpha compare set **or cleared** on every material change. Counter `tris_culled_backface`. | `mesh.c/h`, `stats.h` | Sphere and pillars shade correctly (A3D photo vs ares); RDP Log capture validates with 0 warnings; OBJECTS bench CPU within +5 % of the start reference |
+| S2 | P2.2 **Renderer correctness** (D3, D5, D24, D25) | ✔ verified-hw 2026-09-23 | Per-triangle back-face cull by screen-space winding (exact, no `sqrtf`), replacing the object-centre group test; group lighting normal = average of the group's vertex normals, precomputed when the mesh is built; alpha compare set **or cleared** on every material change. Counter `tris_culled_backface`. | `mesh.c/h`, `stats.h` | Sphere and pillars shade correctly (A3D photo vs ares); RDP Log capture validates with 0 warnings; OBJECTS bench CPU within +5 % of the start reference |
 | S3 | P2.3 **CPU hot paths** (D6, D14, D23) | planned | Camera dirty only on change (follow mode marks dirty when its target moves); projected shadows transform each vertex once and frustum-test the caster; `Particle` stores its emitter index (removes the O(particles × emitters) scan); collision loops bounded by the highest active slot; skip the colour clear when the sky covers the screen; demo applies menu settings only when they change. | `demo_scene.c`, `shadow.c`, `particle.c`, `collision.c`, `scene.c` | SHADOWS projected CPU −40 %; PARTICLES 128 CPU −20 %; demo `update` −20 %; no other step regresses |
 | S4 | P2.4 **Mesh right-sizing** (D8) | planned | `mesh_finalize()` reallocs vertices and indices to their exact size; every builder calls it (cube, mesh_defs, billboard, benchmark boxes). | `mesh.c/h`, `cube.c`, `mesh_defs.c`, `billboard.c`, `benchmark_scene.c` | heap_used after demo init −90 KB |
 | S5 | P2.12 **Text & menu performance** (new; D18 root) | planned | `text_draw` sets the font style only when the colour changes; the demo HUD becomes one cached paragraph rebuilt at 4 Hz (the overlay's `text_build` pattern); the menu caches its layout and rebuilds only when the cursor, tab or a value changes. | `text.c/h`, `demo_scene.c` (HUD), `menu.c` | `hud` ≤ 0.4 ms (from 1.1); `menu` avg ≤ 1.5 ms, peak ≤ 3 ms with the validator off; menu frames stay under 16.7 ms with the validator on |
@@ -483,10 +485,10 @@ S0 first so every later claim can be measured, and so D18 is reproduced without 
 ### 6.4 Hardening test plan
 
 **Stage gate** (every stage, before its commit):
-1. `libdragon exec bash tools/ci_build.sh` passes: both ROMs, host tests, ROM/RAM budgets.
+1. `libdragon exec bash tools/ci_build.sh` passes: both ROMs, host tests, ROM/RAM budgets, hot-text layout (`tools/hot_text.py`, D25).
 2. ares smoke test: boots, menu works, the change is visible where applicable.
 3. A3D checklist (§11.2) for the areas touched; the user runs it on the console and reports.
-4. Benchmark compare: run the affected bench kinds (or All) and `python tools/bench_compare.py <previous>.csv <new>.csv`. No regression above 5 % unless the stage intends it; the compare output goes into the commit message.
+4. Benchmark compare: run the affected bench kinds (or All) and `python tools/bench_compare.py <previous>.csv <new>.csv`. No regression above 5 % unless the stage intends it; the compare output goes into the commit message. Timings move with code and data layout (D25, D26): when a render change lands near the limit, compare old and new code inside one ROM (the S2 Mesh A/B, commit 44203e6) before drawing conclusions.
 5. The stage-specific proof from the matrix below, recorded as a BENCHMARKS row.
 
 **Test matrix:**
@@ -495,7 +497,7 @@ S0 first so every later claim can be measured, and so D18 is reproduced without 
 |---|---|---|---|
 | S0 | — | OVERLOAD bench; Reset Soak | flicker with the validator **off**? |
 | S1 | — | Reset Soak delta 0; Memory page | textures intact after resets |
-| S2 | winding-cull test on the projection math | RDP Log capture → `rdpvalidate` 0 warnings; Stats `tris_culled_backface` | sphere/pillar shading photo vs ares |
+| S2 | `test_mesh.c`: winding of every built-in mesh, group planarity, sphere visible from 8 sides; `hot_text.py` | Stats `tris_culled_backface`; Objects bench + same-ROM Mesh A/B | sphere visible from every side; shading vs ares |
 | S3 | collision with sparse slots; particle update | SHADOWS / PARTICLES / OBJECTS benches; Profiler page | shadows unchanged |
 | S4 | mesh builder keeps data after `mesh_finalize()` | Memory page heap after init | scene unchanged |
 | S5 | — | Profiler `hud` and `menu` slots; menu open with RDP Check on | text identical; no flicker |

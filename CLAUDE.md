@@ -3,7 +3,7 @@
 ## Project Overview
 Nintendo 64 homebrew game engine built on libdragon (`preview` branch, vendored as the `libdragon/` git submodule pinned at `10f3bd43e`, 2026-02-27). Verified on real hardware (Analogue 3D via SummerCart64) and in the ares emulator. Long-term goal: an action-RPG engine supporting souls-like combat and Final Fantasy Tactics-style battles, general enough for other genres.
 
-Current state (2026-09-23): engine features from v1 (mesh system, multi-object scenes, camera, collision, physics, lighting + shadows, billboards, particles, fog/atmosphere, audio, action-mapped input, tabbed menu, text) plus the Phase 1 developer tooling in `src/debug/` (profiler, stats, memory, frame time, overlay pages, RDP counters, RDP capture, crash test), a benchmark scene, host unit tests and CI. Planning lives in `docs/ROADMAP_v2.md`: Phases 0 and 1 are done; Phase 2 (engine hardening, defect register D1–D19) is next, then CPU-path graphics features and Tiny3D. The engine is CPU-bound (see `docs/BENCHMARKS.md`).
+Current state (2026-09-23): engine features from v1 (mesh system, multi-object scenes, camera, collision, physics, lighting + shadows, billboards, particles, fog/atmosphere, audio, action-mapped input, tabbed menu, text) plus the Phase 1 developer tooling in `src/debug/` (profiler, stats, memory, frame time, overlay pages, RDP counters, RDP capture, crash test), a benchmark scene, host unit tests and CI. Planning lives in `docs/ROADMAP_v2.md`: Phases 0 and 1 are done; Phase 2 (engine hardening, stages S0–S13) is in progress with S0–S2 verified on the A3D, then CPU-path graphics features and Tiny3D. The engine is CPU-bound (see `docs/BENCHMARKS.md`).
 
 ## Build & Deploy
 Development happens on Windows 11 (PowerShell) and macOS. The `libdragon` npm CLI runs `make` inside the Docker container `ghcr.io/dragonminded/libdragon:latest` (config in `.libdragon/config.json`, vendor strategy = submodule). Full setup: `docs/SETUP.md`.
@@ -30,6 +30,8 @@ VS Code tasks (`.vscode/tasks.json`) wrap the same commands with per-OS variants
 - The RDP validator is off at boot and toggled from the Debug tab (it costs CPU and causes flicker on the A3D when frames overrun, D18); it must be toggled at a frame boundary (`rspq_wait()` first).
 - `sc64deployer debug` holds the COM port (stop it before `upload`) and exits when stdin closes.
 - New `.c` files: add a profiler slot / stats counter where they do per-frame work; new Debug tab items go at the end of `DebugMenuItem`.
+- **Render-path code placement matters.** The VR4300 I-cache is 16 KB direct-mapped; a triangle loop that collides with `rdpq_triangle_rsp` costs ~1,100 cycles per triangle. Per-triangle code is `ENGINE_HOT` (`src/engine/hot.h`) and linked in the hot-text block (`src/engine/hot_text.ld`, inserted into libdragon's `n64.ld` as `build/<variant>/engine.ld`); `tools/hot_text.py` runs in CI and must stay clean. Per-triangle scratch arrays take `ENGINE_NOINIT` (libdragon's `-ftrivial-auto-var-init=pattern` memsets them otherwise). See `docs/HARDWARE.md`.
+- Mesh winding: front faces are counter-clockwise seen from outside (the curved-group cull depends on it; `tests/host/test_mesh.c` checks the built-in meshes).
 - Particle emitters keep the `ParticleEmitterDef` pointer: definitions must have static storage.
 
 ## Architecture
@@ -54,14 +56,15 @@ src/debug/                 engine_debug.h (build switches), debug_menu (Debug ta
                            profiler (+ RDP counters), memstats, frametime, overlay, rdp_debug
 src/scenes/benchmark_scene.c   26-step stress test, BENCH CSV rows
 tests/host/                host unit tests with a libdragon shim (libdragon exec make -C tests/host run)
-tools/                     bench_compare.py, rdp_log_to_hex.py, rom_budget.py, ci_build.sh, rspq_profile.ps1
+src/engine/                hot.h (ENGINE_HOT, ENGINE_NOINIT), hot_text.ld (I-cache placement of the render path)
+tools/                     bench_compare.py, hot_text.py, rdp_log_to_hex.py, rom_budget.py, ci_build.sh, rspq_profile.ps1
 assets/                    source PNGs and WAVs; filesystem/ holds the generated outputs (ignored)
 tools/gen_placeholder_audio.py   regenerates the placeholder WAVs
 ```
 
 ### Rendering Pipeline
 CPU software transform + hardware RDP rasterization, hardware 16-bit Z-buffer (no painter's sort):
-1. CPU (`mesh_draw()`): bounding-sphere frustum cull, MVP transform per vertex, per-face-group Blinn-Phong lighting and backface cull, near-plane/guard-band clipping, viewport map.
+1. CPU (`mesh_draw()`): bounding-sphere frustum cull, MVP transform per vertex, Blinn-Phong lighting and back-face cull once per flat face group (per triangle for curved groups such as sphere bands), near-plane/guard-band clipping, viewport map.
 2. RDP: `rdpq_triangle()` with `TRIFMT_ZBUF_TEX` / `TRIFMT_ZBUF_SHADE(_TEX)` (fog uses shade alpha), per-frame TMEM uploads (32x32 RGBA16 sprites), fill rectangles for the sky gradient and UI panels.
 
 ### Critical Hardware Rules

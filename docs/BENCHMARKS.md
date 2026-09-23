@@ -131,6 +131,8 @@ python tools/bench_compare.py docs/benchmarks/2026-09-23-baseline-debug-a3d.csv 
 # exit 0 = OK, 1 = regression (CPU +5 % and +0.15 ms, or a step that held 60 FPS no longer does)
 ```
 
+Timings depend on code and data layout (D25, D26): compare runs of the same day where possible, and compare renderer changes inside one ROM when a result is close to the limit.
+
 With the profiler on (the debug default), each step also prints a `BENCH_PROF` row: the moving-average µs of `update`, `draw`, `objects`, `mesh_cull`, `mesh_light` and `mesh_tris`, to pin a CPU regression to a stage of `mesh_draw`. `bench_compare.py` ignores these rows.
 
 The tests, all on a dark background without floor, sky or fog (demo settings are restored afterwards):
@@ -235,3 +237,47 @@ The demo now declares its eight textures (six cube faces, two billboards) in `Sc
 | Reset Soak, run 2 (after the scene switch) | 946,992 → 946,992 B: **0 B** |
 
 Heap after the warm-up reset is 13.5 KB lower than in S0 (960,488 B), because the stale cube sprites are gone.
+
+## Phase 2 · S2 renderer correctness (2026-09-23, debug build, Analogue 3D)
+
+Spheres no longer vanish (D24). Flat face groups are culled by one exact plane test and lit once; curved groups (sphere bands) are culled per triangle by screen winding and lit per triangle. With the sphere in view the Stats page shows 30–34 triangles culled by the winding test (`bf`).
+
+**The first S2 build was 17–20 % slower in the Objects benchmark**, with the same triangle counts and RDP time. Separate ROMs could not say why:
+
+| Build | Objects CPU ms, 8 / 64 pillars |
+|---|---|
+| Phase 1 baseline | 4.53 / 36.21 |
+| S2, first build | 5.33 / 42.54 |
+| S1, rebuilt the same day | 4.37 / 34.82 |
+| S1 plus the `BENCH_PROF` logging only | 4.64 / 36.91 |
+
+The last two builds differ only in benchmark logging, yet CPU time moved 6 %: timings depend on code layout. A same-ROM A/B (Mesh A/B: the new renderer, the S1 renderer, and the new renderer on a second copy of the pillar data, interleaved) settled it. CPU ms:
+
+| Pillars | New | S1 renderer | New, other data copy |
+|---|---|---|---|
+| 16 | 11.36 | 8.36 | 10.70 |
+| 32 | 24.72 | 17.66 | 23.26 |
+| 64 | 49.07 | 35.54 | 46.10 |
+
+`BENCH_PROF` put the loss in the triangle loop (33.2 vs 21.2 ms at 64 pillars for the same triangles). The link map explained it: the new loop sat a multiple of 16 KB away from `rdpq_triangle_rsp` and shared all 46 of its I-cache lines, so each evicted the other on every triangle (D25). After the hot-text fix (HARDWARE.md), same ROM:
+
+| Pillars | New | S1 renderer | New, other data copy |
+|---|---|---|---|
+| 16 | 8.49 | 8.19 | 7.79 |
+| 32 | 18.78 | 17.25 | 16.90 |
+| 64 | 37.41 | 34.82 | 34.07 |
+
+The triangle loops now cost the same (20.9 vs 20.4 ms at 64 pillars). What remains is per-group work plus data layout: identical code on two copies of the same data differs by up to 9 % (D26, S3).
+
+**Gate** against the Phase 1 baseline, `bench_compare.py`: 0 regressions. This run is the comparison point for S3 (`docs/benchmarks/2026-09-23-p2-s2-objects-debug-a3d.csv`).
+
+| Pillars | CPU ms, baseline → S2 | FPS |
+|---|---|---|
+| 8 | 4.53 → 4.65 (+2.6 %) | 60 |
+| 16 | 7.88 → 8.08 (+2.5 %) | 60 |
+| 24 | 11.35 → 11.65 (+2.6 %) | 60 |
+| 32 | 18.09 → 18.45 (+2.0 %) | 54.6 → 53.4 |
+| 48 | 27.27 → 27.90 (+2.3 %) | 36.7 → 35.8 |
+| 64 | 36.21 → 37.12 (+2.5 %) | 27.6 → 26.9 |
+
+The Mesh A/B runs are in `2026-09-23-p2-s2-meshab-collision-debug-a3d.csv` (before the fix) and `...-meshab-hottext-...` (after). The A/B code itself is in commit 44203e6, so the measured build can be rebuilt.
