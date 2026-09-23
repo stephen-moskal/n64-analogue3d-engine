@@ -323,16 +323,50 @@ static void page_frametime(float budget_ms) {
     queue_bar(mx, base_y - hist_h - 2, 1, hist_h + 2, COL_MARK);
 }
 
-static void page_rsp(void) {
-    panel(bar_col_x(TEXT_COLS), 4);
-    line(0, COL_HEAD, "RSP / RDP");
-#if defined(RSPQ_PROFILE) && RSPQ_PROFILE
-    line(1, COL_TEXT, "RSP profiling build");
-#else
-    line(1, COL_TEXT, "Not in this build.");
-    line(2, COL_DIM,  "Needs RSPQ_PROFILE=1");
-    line(3, COL_DIM,  "(ROADMAP P1.7)");
-#endif
+static void page_rsp(float budget_ms) {
+    const RdpCounters *c = profiler_rdp_get();
+    const RspProfile *p = profiler_rsp_get();
+    int bx = bar_col_x(LABEL_COLS);
+    int budget_px = (int)(budget_ms * PX_PER_MS + 0.5f);
+
+    int shown = 0;
+    if (p->available && p->valid)
+        for (int i = 0; i < p->slot_count; i++) if (p->slot_ms[i] >= 0.01f) shown++;
+    int rows = 6 + (p->available ? shown + 1 : 1);
+    panel(bx + budget_px + 2 * PAD + 6, rows);
+
+    int r = 0;
+    line(r++, COL_HEAD, "RDP (hw counters) ms");
+    if (!c->available) {
+        line(r++, COL_DIM, "counters unavailable");
+    } else {
+        line(r, COL_TEXT, "%-11s%6.2f", "busy", c->busy_ms);
+        queue_bar(bx, row_y(r) + 2, (int)(c->busy_ms * PX_PER_MS + 0.5f), 5, load_color(c->busy_ms, budget_ms));
+        r++;
+        line(r, COL_TEXT, "%-11s%6.2f", " pipe", c->pipe_ms);
+        queue_bar(bx, row_y(r) + 2, (int)(c->pipe_ms * PX_PER_MS + 0.5f), 5, load_color(c->pipe_ms, budget_ms));
+        r++;
+        line(r, COL_TEXT, "%-11s%6.2f", " tmem", c->tmem_ms);
+        queue_bar(bx, row_y(r) + 2, (int)(c->tmem_ms * PX_PER_MS + 0.5f), 5, load_color(c->tmem_ms, budget_ms));
+        r++;
+        line(r++, COL_DIM, "busy %.0f%% peak %.1f", c->busy_pct, c->busy_peak_ms);
+        queue_bar(bx + budget_px, row_y(1), 1, 3 * line_h, COL_MARK);
+    }
+    line(r++, COL_DIM, "frame %.2f ms", c->clock_ms);
+
+    if (!p->available) {
+        line(r++, COL_DIM, "RSP split: n/a (P1.7)");
+        return;
+    }
+    line(r++, COL_HEAD, "RSP ms (%d fr avg)", RSP_WINDOW_FRAMES);
+    if (!p->valid) return;
+    for (int i = 0; i < p->slot_count; i++) {
+        if (p->slot_ms[i] < 0.01f) continue;
+        line(r, COL_TEXT, " %-10.10s%6.2f", p->slot_name[i], p->slot_ms[i]);
+        queue_bar(bx, row_y(r) + 2, (int)(p->slot_ms[i] * PX_PER_MS + 0.5f), 5,
+                  load_color(p->slot_ms[i], budget_ms));
+        r++;
+    }
 }
 
 void overlay_draw(float budget_ms) {
@@ -353,7 +387,7 @@ void overlay_draw(float budget_ms) {
         case OVERLAY_PROFILER:  page_profiler(budget_ms);  break;
         case OVERLAY_MEMORY:    page_memory();             break;
         case OVERLAY_FRAMETIME: page_frametime(budget_ms); break;
-        case OVERLAY_RSP:       page_rsp();                break;
+        case OVERLAY_RSP:       page_rsp(budget_ms);       break;
         default: break;
         }
         text_build();

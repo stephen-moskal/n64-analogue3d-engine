@@ -98,3 +98,20 @@ Findings:
 - Text costs roughly 15–20 µs per glyph on the A3D with the builtin outlined debug font, and **most of it is not layout**: caching the built paragraph saved only ~0.4 ms. The cost is in issuing the glyphs (texture-rectangle commands and atlas loads), so the CPU is probably stalling on a full RSP command queue while the RDP draws. P1.7 (RSP/RDP profiling) is needed to separate CPU from RDP time.
 - The same cost explains the demo HUD (1.1 ms for 6 lines) and the menu (D18). Candidate Phase 2 fixes: a non-outlined font for dense debug text, fewer glyphs, drawing the overlay at a lower rate into a cached surface, or blitting pre-rendered static labels.
 - With a page up the demo still holds 60 FPS (CPU 10–11 ms); Overlay Off costs nothing.
+
+## RDP load from hardware counters (2026-09-23, P1.7, debug build, Analogue 3D)
+
+The RSP page reads the RDP's cycle counters (`DP_CLOCK`, `DP_BUSY`, `DP_PIPE_BUSY`, `DP_TMEM_BUSY`) every loop and scales them by the measured counter rate. **On the Analogue 3D the counters tick at 93.75 MHz** (1.5× the 62.5 MHz RCP clock); percentages are rate-independent. `RDP` rows in the CSV dump.
+
+| Case | CPU ms | RDP busy ms | RDP pipe ms | TMEM ms | RDP busy % |
+|---|---|---|---|---|---|
+| Quiet view, overlay off | 8.8 | 5.4 | 1.7 | 0.10 | 32 |
+| Profiler page up | 11.6 | 7.2 | 2.2 | 0.11 | 44 |
+| RSP page up | 11.0 | 6.3 | 1.9 | 0.11 | 38 |
+| Particle burst (39 alive, 387 tris) + RSP page | 14.7 | 6.9 | 2.0 | 0.11 | 41 |
+| Menu open (then closed) + RSP page | 13.3 | 6.9 | 2.2 | 0.16 | 42 |
+
+Findings:
+- **The engine is CPU-bound, not RDP-bound.** RDP busy never exceeds ~7 ms of the 16.7 ms frame; CPU work is what approaches the budget. Phase 2/3 optimisation should target CPU: text issue (overlay +4 ms CPU vs +1.8 ms RDP), the floor, particles.
+- `pipe` (pixel pipeline active) is only ~30 % of `busy`: most RDP busy time is command/memory overhead rather than filling pixels, so fill rate has lots of headroom.
+- TMEM loading is negligible (~0.1 ms) at the demo's 6 uploads per frame.

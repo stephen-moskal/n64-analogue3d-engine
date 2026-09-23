@@ -209,6 +209,7 @@ int main(void) {
             float budget_ms = (engine_target_fps == 30) ? 33.33f : 16.67f;
             stats_dump_csv(frame_index);
             profiler_dump_csv();
+            profiler_rsp_dump_csv(frame_index);
             frametime_dump_csv(frame_index, budget_ms);
             memstats_dump_csv(frame_index);
         }
