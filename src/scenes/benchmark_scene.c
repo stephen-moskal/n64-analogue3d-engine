@@ -289,6 +289,18 @@ static void finish_step(void) {
            ft.p99_ms, ft.low1_fps, ft.cpu_avg_ms, ft.cpu_max_ms,
            rdp->available ? rdp->busy_ms : -1.0f, rdp->available ? rdp->busy_pct : -1.0f,
            tris, ups, mem->heap_used / 1024);
+
+    // CPU breakdown of the step (profiler moving averages, ~32 frames), so a
+    // regression can be pinned to a stage of mesh_draw. Separate row type:
+    // BENCH rows and bench_compare.py are unchanged.
+    if (g_prof_on) {
+        const ProfilerFrame *pf = profiler_get();
+        (void)pf;
+        debugf("BENCH_PROF,%s,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f\n",
+               kind_names[st->kind], step_index, st->param,
+               pf->avg_us[PROF_UPDATE], pf->avg_us[PROF_DRAW], pf->avg_us[PROF_OBJECTS],
+               pf->avg_us[PROF_MESH_CULL], pf->avg_us[PROF_MESH_LIGHT], pf->avg_us[PROF_MESH_TRIS]);
+    }
 }
 
 // ------------------------------------------------------------------------
@@ -326,6 +338,8 @@ static void bench_init(Scene *scene) {
            kind_names[configured_kind], step_count, WARMUP_FRAMES, MEASURE_FRAMES);
     debugf("BENCH_HDR,kind,step,param,frames,fps,avg_ms,p99_ms,low1_fps,cpu_avg_ms,cpu_max_ms,"
            "rdp_busy_ms,rdp_busy_pct,tris,tex_uploads,heap_kb\n");
+    debugf("BENCH_PROF_HDR,kind,step,param,update_us,draw_us,objects_us,mesh_cull_us,"
+           "mesh_light_us,mesh_tris_us\n");
     setup_step(scene);
 }
 

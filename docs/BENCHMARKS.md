@@ -131,6 +131,8 @@ python tools/bench_compare.py docs/benchmarks/2026-09-23-baseline-debug-a3d.csv 
 # exit 0 = OK, 1 = regression (CPU +5 % and +0.15 ms, or a step that held 60 FPS no longer does)
 ```
 
+With the profiler on (the debug default), each step also prints a `BENCH_PROF` row: the moving-average µs of `update`, `draw`, `objects`, `mesh_cull`, `mesh_light` and `mesh_tris`, to pin a CPU regression to a stage of `mesh_draw`. `bench_compare.py` ignores these rows.
+
 The tests, all on a dark background without floor, sky or fog (demo settings are restored afterwards):
 
 | Bench | Steps | Load |
