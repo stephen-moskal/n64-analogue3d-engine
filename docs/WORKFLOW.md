@@ -10,10 +10,10 @@ Daily loop for this engine on Windows 11 or macOS. Environment setup is in [SETU
 libdragon make
 
 # 3. Test in the emulator
-ares .\hello_cube.z64             # macOS: open -a ares hello_cube.z64
+ares .\engine-debug.z64             # macOS: open -a ares engine-debug.z64
 
 # 4. Test on hardware (Analogue 3D + SummerCart64 over USB)
-sc64deployer upload .\hello_cube.z64
+sc64deployer upload .\engine-debug.z64
 # then power on / reset the console — the cart is set to boot the ROM directly
 ```
 
@@ -107,8 +107,8 @@ Line endings are forced to LF by `.gitattributes`; on Windows also set `core.aut
 
 ```bash
 git checkout -b feature/thing
-libdragon make && ares hello_cube.z64      # iterate
-sc64deployer upload hello_cube.z64         # verify on hardware before merging
+libdragon make && ares engine-debug.z64      # iterate
+sc64deployer upload engine-debug.z64         # verify on hardware before merging
 git commit -am "Feature: thing"
 ```
 
@@ -116,7 +116,7 @@ git commit -am "Feature: thing"
 
 1. Build: `libdragon make`
 2. Connect the cart (USB); the console may be off during upload.
-3. Upload: `sc64deployer upload hello_cube.z64` (sets boot mode to "Bootloader → ROM").
+3. Upload: `sc64deployer upload engine-debug.z64` (sets boot mode to "Bootloader → ROM").
 4. Start `sc64deployer debug` in another terminal, then power on / reset the console.
 5. Check the HUD FPS and exercise the feature; note anything that differs from ares.
 

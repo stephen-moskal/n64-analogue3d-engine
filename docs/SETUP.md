@@ -3,7 +3,7 @@
 This guide sets up the N64 homebrew toolchain for this engine on **Windows 11** (primary, verified 2026-09-12) and **macOS** (the original development platform). Both use the same build path: the `libdragon` CLI runs `make` inside a Docker container that holds the MIPS toolchain and the vendored libdragon submodule.
 
 ```
-edit src/ -> libdragon make -> hello_cube.z64 -> ares (emulator)
+edit src/ -> libdragon make -> engine-debug.z64 -> ares (emulator)
                                               -> sc64deployer upload -> reset the console (Analogue 3D + SummerCart64)
 ```
 
@@ -104,7 +104,8 @@ git -C libdragon ls-files --eol n64.mk         # want: i/lf  w/lf
 ```powershell
 libdragon init      # existing project: pulls ghcr.io/dragonminded/libdragon:latest, creates the
                     # container, and compiles the vendored libdragon submodule into it (~1 min on 16 cores)
-libdragon make      # builds hello_cube.z64 (~5 s warm)
+libdragon make                  # debug build   -> engine-debug.z64 (~5 s warm)
+libdragon make BUILD=release    # release build -> engine.z64
 ```
 
 Expected tail of the build output:
@@ -112,11 +113,11 @@ Expected tail of the build output:
 ```
     [CC] src/main.c
     ... (22 modules) ...
-    [LD] build/hello_cube.elf
+    [LD] build/debug/engine-debug.elf
       text       data        bss      total filename
-    285720      82360      34400     402480 build/hello_cube.elf
-    [DFS] build/hello_cube.dfs
-    [Z64] hello_cube.z64
+    311992      95640      35320     442952 build/debug/engine-debug.elf
+    [DFS] build/debug/engine-debug.dfs
+    [Z64] engine-debug.z64
 ```
 
 `libdragon make` does **not** rebuild libdragon itself; after changing the submodule (or its commit) run `libdragon install`, then `libdragon make clean` so the generated assets are rebuilt with the matching tools.
@@ -124,8 +125,8 @@ Expected tail of the build output:
 ### 8. Run
 
 ```powershell
-ares .\hello_cube.z64                       # emulator
-sc64deployer upload .\hello_cube.z64        # cart (0.2 s); then power on / reset the console
+ares .\engine-debug.z64                       # emulator
+sc64deployer upload .\engine-debug.z64        # cart (0.2 s); then power on / reset the console
 sc64deployer debug                          # in a second terminal: shows debugf()/usblog output from the ROM
 ```
 
@@ -151,8 +152,8 @@ mv sc64deployer /usr/local/bin/ && chmod +x /usr/local/bin/sc64deployer
 
 git clone --recurse-submodules <repo> && cd n64-analogue3d-engine
 libdragon init && libdragon make
-open -a ares hello_cube.z64
-sc64deployer upload hello_cube.z64   # then reset the console
+open -a ares engine-debug.z64
+sc64deployer upload engine-debug.z64   # then reset the console
 ```
 
 Apple Silicon: the image is linux/amd64 and runs under Rosetta; builds are a little slower but work.

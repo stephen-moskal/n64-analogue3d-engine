@@ -1,49 +1,53 @@
-BUILD_DIR = build
+# SMozN64 Engine
+#
+#   make                  debug build   -> engine-debug.z64  (asserts, RDP validator, profiler)
+#   make BUILD=release    release build -> engine.z64        (debug code compiled out)
+#
+# Via the Docker toolchain: `libdragon make` / `libdragon make BUILD=release`.
+
+BUILD ?= debug
+ifeq ($(filter $(BUILD),debug release),)
+$(error BUILD must be 'debug' or 'release' (got '$(BUILD)'))
+endif
+
+BUILD_DIR  = build/$(BUILD)
 SOURCE_DIR = src
 
 include $(N64_INST)/include/n64.mk
 
-N64_ROM_TITLE = "Hello Cube"
+ifeq ($(BUILD),release)
+ROM_NAME = engine
+CFLAGS  += -DNDEBUG -DLIBDRAGON_PROFILE=0 -DENGINE_DEBUG=0 -DENGINE_PROFILE=0
+else
+ROM_NAME = engine-debug
+CFLAGS  += -DENGINE_DEBUG=1 -DENGINE_PROFILE=1
+endif
+
+N64_ROM_TITLE    = "SMozN64 Engine"
 N64_ROM_SAVETYPE = none
 
 CFLAGS += -I$(SOURCE_DIR)
 
+# All sources under src/ (one directory level deep)
+SRCS := $(wildcard $(SOURCE_DIR)/*.c $(SOURCE_DIR)/*/*.c)
+OBJS := $(SRCS:$(SOURCE_DIR)/%.c=$(BUILD_DIR)/%.o)
+
 # Asset conversion — sprites
-assets_png = $(wildcard assets/*.png)
+assets_png  = $(wildcard assets/*.png)
 assets_conv = $(addprefix filesystem/,$(notdir $(assets_png:%.png=%.sprite)))
 
 MKSPRITE_FLAGS ?= --format RGBA16
 
 # Asset conversion — audio
-assets_sfx_wav   = $(wildcard assets/audio/sfx/*.wav)
-assets_music_wav = $(wildcard assets/audio/music/*.wav)
-assets_music_xm  = $(wildcard assets/audio/music/*.xm)
+assets_sfx_wav     = $(wildcard assets/audio/sfx/*.wav)
+assets_music_wav   = $(wildcard assets/audio/music/*.wav)
+assets_music_xm    = $(wildcard assets/audio/music/*.xm)
 assets_sfx_wav64   = $(addprefix filesystem/audio/sfx/,$(notdir $(assets_sfx_wav:%.wav=%.wav64)))
 assets_music_wav64 = $(addprefix filesystem/audio/music/,$(notdir $(assets_music_wav:%.wav=%.wav64)))
 assets_music_xm64  = $(addprefix filesystem/audio/music/,$(notdir $(assets_music_xm:%.xm=%.xm64)))
 
-OBJS = $(BUILD_DIR)/main.o \
-       $(BUILD_DIR)/render/mesh.o \
-       $(BUILD_DIR)/render/mesh_defs.o \
-       $(BUILD_DIR)/render/cube.o \
-       $(BUILD_DIR)/render/lighting.o \
-       $(BUILD_DIR)/render/texture.o \
-       $(BUILD_DIR)/render/camera.o \
-       $(BUILD_DIR)/render/floor.o \
-       $(BUILD_DIR)/render/billboard.o \
-       $(BUILD_DIR)/render/shadow.o \
-       $(BUILD_DIR)/render/particle.o \
-       $(BUILD_DIR)/render/atmosphere.o \
-       $(BUILD_DIR)/physics/physics.o \
-       $(BUILD_DIR)/input/input.o \
-       $(BUILD_DIR)/input/action.o \
-       $(BUILD_DIR)/ui/text.o \
-       $(BUILD_DIR)/ui/menu.o \
-       $(BUILD_DIR)/collision/collision.o \
-       $(BUILD_DIR)/scene/scene.o \
-       $(BUILD_DIR)/scenes/demo_scene.o \
-       $(BUILD_DIR)/audio/audio.o \
-       $(BUILD_DIR)/audio/sound_bank.o
+all: $(ROM_NAME).z64
+.DEFAULT_GOAL := all
 
 # Sprite conversion rule: assets/*.png -> filesystem/*.sprite
 filesystem/%.sprite: assets/%.png
@@ -67,13 +71,15 @@ filesystem/audio/music/%.xm64: assets/audio/music/%.xm
 	@echo "    [XM64] $@"
 	@$(N64_AUDIOCONV) -o $(dir $@) "$<"
 
-hello_cube.z64: N64_ROM_TITLE = "Hello Cube"
-hello_cube.z64: $(BUILD_DIR)/hello_cube.dfs
+$(ROM_NAME).z64: $(BUILD_DIR)/$(ROM_NAME).dfs
 
-$(BUILD_DIR)/hello_cube.dfs: $(assets_conv) $(assets_sfx_wav64) $(assets_music_wav64) $(assets_music_xm64)
-$(BUILD_DIR)/hello_cube.elf: $(OBJS)
+$(BUILD_DIR)/$(ROM_NAME).dfs: $(assets_conv) $(assets_sfx_wav64) $(assets_music_wav64) $(assets_music_xm64)
+$(BUILD_DIR)/$(ROM_NAME).elf: $(OBJS)
+
+# Header dependency tracking (n64.mk compiles with -MMD)
+-include $(wildcard $(BUILD_DIR)/*.d $(BUILD_DIR)/*/*.d)
 
 clean:
-	rm -rf $(BUILD_DIR) *.z64 *.elf *.dfs filesystem/*.sprite filesystem/audio
+	rm -rf build *.z64 *.elf *.dfs filesystem/*.sprite filesystem/audio
 
-.PHONY: clean
+.PHONY: all clean

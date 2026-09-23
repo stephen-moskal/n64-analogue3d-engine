@@ -9,12 +9,13 @@ Current state (2026-09-12): 22 source modules (~7.6k LOC) — mesh system, multi
 Development happens on Windows 11 (PowerShell) and macOS. The `libdragon` npm CLI runs `make` inside the Docker container `ghcr.io/dragonminded/libdragon:latest` (config in `.libdragon/config.json`, vendor strategy = submodule). Full setup: `docs/SETUP.md`.
 
 ```powershell
-libdragon make                    # build -> hello_cube.z64 (~5 s warm)
+libdragon make                    # debug build -> engine-debug.z64 (validator, asserts, profiler)
+libdragon make BUILD=release      # release build -> engine.z64 (debug code compiled out)
 libdragon make clean              # also deletes generated filesystem/ assets; next make regenerates them
 libdragon install                 # rebuild libdragon into the container after touching the submodule
 
-ares .\hello_cube.z64             # emulator (macOS: open -a ares hello_cube.z64); Homebrew Mode on
-sc64deployer upload .\hello_cube.z64   # cart over USB, then power on / reset the console
+ares .\engine-debug.z64             # emulator (macOS: open -a ares engine-debug.z64); Homebrew Mode on
+sc64deployer upload .\engine-debug.z64   # cart over USB, then power on / reset the console
 sc64deployer debug                # second terminal: debugf()/usblog output from the ROM
 ```
 
@@ -24,8 +25,8 @@ VS Code tasks (`.vscode/tasks.json`) wrap the same commands with per-OS variants
 - **Line endings must be LF.** The container reads `Makefile`/`n64.mk`/`build.sh` from the bind mount. `.gitattributes` forces LF; on Windows the repo and the `libdragon/` submodule also need `core.autocrlf=false` + `core.eol=lf` (SETUP.md step 6).
 - **Generated assets are not committed.** `filesystem/*.sprite` and `filesystem/audio/**` are built from `assets/` by `mksprite`/`audioconv64`; their format depends on the libdragon version (a stale `.wav64` asserts `invalid version` at boot). Run `libdragon make clean` after changing the submodule.
 - `libdragon make` does not rebuild libdragon; `libdragon install` does.
-- The Makefile lists `OBJS` by hand (add new `.c` files there) and does not include the generated `.d` dependency files, so header edits need `libdragon make clean` until ROADMAP_v2 P1.1 lands.
-- `debug_init_isviewer()` + `debug_init_usblog()` are on; `rdpq_debug_start()` is commented out in `src/main.c`.
+- The Makefile compiles every `src/*.c` and `src/*/*.c` automatically, per variant into `build/debug/` or `build/release/`, and includes the generated `.d` files so header edits rebuild dependents.
+- `debug_init_isviewer()` + `debug_init_usblog()` are on; `rdpq_debug_start()` runs in debug builds only (`ENGINE_DEBUG`, see `src/debug/engine_debug.h`).
 
 ## Architecture
 

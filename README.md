@@ -72,10 +72,10 @@ cd n64-analogue3d-engine
 # Windows only: set core.autocrlf=false / core.eol=lf in the repo and libdragon/ (SETUP.md step 6)
 
 libdragon init                       # first time: create the container and build libdragon into it
-libdragon make                       # -> hello_cube.z64
+libdragon make                       # -> engine-debug.z64
 
-ares .\hello_cube.z64                # emulator      (macOS: open -a ares hello_cube.z64)
-sc64deployer upload .\hello_cube.z64 # cart, then power on / reset the console
+ares .\engine-debug.z64                # emulator      (macOS: open -a ares engine-debug.z64)
+sc64deployer upload .\engine-debug.z64 # cart, then power on / reset the console
 sc64deployer debug                   # optional: live debugf() log from the console
 ```
 

@@ -8,6 +8,7 @@
 #include "scenes/demo_scene.h"
 #include "audio/audio.h"
 #include "render/atmosphere.h"
+#include "debug/engine_debug.h"
 
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
@@ -77,7 +78,9 @@ int main(void) {
 
     // Initialize RDP command queue
     rdpq_init();
-    // rdpq_debug_start();  // Uncomment for RDP validation debugging
+#if ENGINE_DEBUG
+    rdpq_debug_start();     // RDP command validator (debug builds only; catches hardware-only faults)
+#endif
 
     // Initialize DFS (required before sprite_load)
     dfs_init(DFS_DEFAULT_LOCATION);
@@ -152,7 +155,7 @@ int main(void) {
     scene_manager_init(&scene_mgr);
     scene_manager_switch(&scene_mgr, demo_scene_get(), TRANSITION_CUT, 0);
 
-    debugf("SMozN64 Dev Engine\n");
+    debugf("SMozN64 Dev Engine [%s build, %s %s]\n", ENGINE_BUILD_NAME, __DATE__, __TIME__);
 
     // Main game loop — variable timestep (logic runs once per render frame)
     uint32_t last_ticks = TICKS_READ();
