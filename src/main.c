@@ -170,7 +170,8 @@ int main(void) {
     scene_manager_init(&scene_mgr);
     testbed_init(&scene_mgr, &start_menu);
 #if defined(ENGINE_BOOT_BENCHMARK) && ENGINE_BOOT_BENCHMARK
-    // Unattended benchmark run: make BUILD=release BENCH=1
+    // Unattended benchmark run: make BENCH=1 -> engine-debug-bench.z64 (the
+    // debug build: release compiles debugf out and prints no CSV)
     benchmark_scene_configure(BENCH_ALL);
     debug_menu_set_active_scene(1);
     scene_manager_switch(&scene_mgr, benchmark_scene_get(), TRANSITION_CUT, 0);

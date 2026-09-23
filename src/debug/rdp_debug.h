@@ -4,9 +4,10 @@
 /*
  * RDP command capture and crash test (ROADMAP_v2 P1.10). Debug builds only.
  *
- * One-frame capture: Debug tab > RDP Log > Capture! logs every RDP command of
- * the next frame (address, 64-bit word, disassembly) to the debug log between
- * "RDPLOG_BEGIN" and "RDPLOG_END" lines. If the validator is off it is started
+ * Capture: Debug tab > RDP Log > Capture! logs every RDP command of the next
+ * two frames (address, 64-bit word, disassembly) to the debug log between
+ * "RDPLOG_BEGIN" and "RDPLOG_END" lines; the trace starts part-way through the
+ * first frame, and tools/rdp_log_to_hex.py keeps the complete one. If the validator is off it is started
  * for that frame and stopped afterwards. Convert the capture for offline
  * validation with tools/rdp_log_to_hex.py, then run rdpvalidate in the
  * container (see docs/DEBUGGING.md).

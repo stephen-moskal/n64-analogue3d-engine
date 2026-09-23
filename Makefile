@@ -2,6 +2,8 @@
 #
 #   make                  debug build   -> engine-debug.z64  (asserts, RDP validator, profiler)
 #   make BUILD=release    release build -> engine.z64        (debug code compiled out)
+#   make BENCH=1          debug build that boots straight into the full benchmark
+#                         -> engine-debug-bench.z64 (own build dir: build/debug-bench)
 #
 # Via the Docker toolchain: `libdragon make` / `libdragon make BUILD=release`.
 
@@ -10,16 +12,21 @@ ifeq ($(filter $(BUILD),debug release),)
 $(error BUILD must be 'debug' or 'release' (got '$(BUILD)'))
 endif
 
-BUILD_DIR  = build/$(BUILD)
+# BENCH=1 boots straight into the full benchmark run (unattended capture). It
+# builds into its own directory and ROM: make does not track CFLAGS, so a
+# shared build directory would mix objects with and without the flag.
+BENCH_SUFFIX := $(if $(filter 1,$(BENCH)),-bench,)
+
+BUILD_DIR  = build/$(BUILD)$(BENCH_SUFFIX)
 SOURCE_DIR = src
 
 include $(N64_INST)/include/n64.mk
 
 ifeq ($(BUILD),release)
-ROM_NAME = engine
+ROM_NAME = engine$(BENCH_SUFFIX)
 CFLAGS  += -DNDEBUG -DLIBDRAGON_PROFILE=0 -DENGINE_DEBUG=0 -DENGINE_PROFILE=0
 else
-ROM_NAME = engine-debug
+ROM_NAME = engine-debug$(BENCH_SUFFIX)
 CFLAGS  += -DENGINE_DEBUG=1 -DENGINE_PROFILE=1
 endif
 
@@ -28,7 +35,6 @@ N64_ROM_SAVETYPE = none
 
 CFLAGS += -I$(SOURCE_DIR)
 
-# BENCH=1 boots straight into the full benchmark run (unattended capture)
 ifeq ($(BENCH),1)
 CFLAGS += -DENGINE_BOOT_BENCHMARK=1
 endif

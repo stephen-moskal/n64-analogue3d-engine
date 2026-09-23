@@ -34,8 +34,12 @@ bool testbed_busy(void) { return soak_active || sweep_active; }
 
 const char *testbed_status(void) {
     if (soak_active) {
-        snprintf(status_buf, sizeof(status_buf), "RESET SOAK %d/%d",
-                 SOAK_RESETS - soak_left, SOAK_RESETS);
+        if (soak_left > SOAK_RESETS) {
+            snprintf(status_buf, sizeof(status_buf), "RESET SOAK warm-up");
+        } else {
+            snprintf(status_buf, sizeof(status_buf), "RESET SOAK %d/%d",
+                     SOAK_RESETS - soak_left, SOAK_RESETS);
+        }
         return status_buf;
     }
     if (sweep_active) {

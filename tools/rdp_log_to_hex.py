@@ -21,6 +21,16 @@ import sys
 WORD = re.compile(r"^\[0x[0-9a-fA-F]+\]\s+([0-9a-fA-F]{16})\b(.*)$")
 
 
+def read_text(path):
+    """Read a capture as text: UTF-8, or UTF-16 as written by Windows
+    PowerShell 5.1 redirection (`>`, Tee-Object, Out-File)."""
+    with open(path, "rb") as fh:
+        data = fh.read()
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return data.decode("utf-16", errors="replace")
+    return data.decode("utf-8-sig", errors="replace")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("log")
@@ -30,19 +40,18 @@ def main():
     args = ap.parse_args()
 
     captures, cur = [], None
-    with open(args.log, encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            line = line.strip()
-            if line.startswith("RDPLOG_BEGIN"):
-                cur = []
-            elif line.startswith("RDPLOG_END"):
-                if cur is not None:
-                    captures.append(cur)
-                cur = None
-            elif cur is not None:
-                m = WORD.match(line)
-                if m:
-                    cur.append((m.group(1), m.group(2)))
+    for line in read_text(args.log).splitlines():
+        line = line.strip()
+        if line.startswith("RDPLOG_BEGIN"):
+            cur = []
+        elif line.startswith("RDPLOG_END"):
+            if cur is not None:
+                captures.append(cur)
+            cur = None
+        elif cur is not None:
+            m = WORD.match(line)
+            if m:
+                cur.append((m.group(1), m.group(2)))
 
     if not captures:
         print("error: no RDPLOG_BEGIN/RDPLOG_END capture found", file=sys.stderr)

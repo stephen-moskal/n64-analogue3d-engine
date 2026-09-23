@@ -24,24 +24,33 @@ FIELDS = ["kind", "step", "param", "frames", "fps", "avg_ms", "p99_ms", "low1_fp
           "tex_uploads", "heap_kb"]
 
 
+def read_text(path):
+    """Read a capture as text: UTF-8, or UTF-16 as written by Windows
+    PowerShell 5.1 redirection (`>`, Tee-Object, Out-File)."""
+    with open(path, "rb") as fh:
+        data = fh.read()
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return data.decode("utf-16", errors="replace")
+    return data.decode("utf-8-sig", errors="replace")
+
+
 def load(path):
     rows = {}
     meta = ""
-    with open(path, encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            line = line.strip()
-            if line.startswith("BENCH_META,"):
-                meta = line[len("BENCH_META,"):]
-                continue
-            if not line.startswith("BENCH,") or line.startswith(("BENCH,END", "BENCH,ABORTED")):
-                continue
-            parts = line.split(",")[1:]
-            if len(parts) != len(FIELDS):
-                continue
-            rec = dict(zip(FIELDS, parts))
-            for k in FIELDS[2:]:
-                rec[k] = float(rec[k])
-            rows[(rec["kind"], int(rec["param"]))] = rec
+    for line in read_text(path).splitlines():
+        line = line.strip()
+        if line.startswith("BENCH_META,"):
+            meta = line[len("BENCH_META,"):]
+            continue
+        if not line.startswith("BENCH,") or line.startswith(("BENCH,END", "BENCH,ABORTED")):
+            continue
+        parts = line.split(",")[1:]
+        if len(parts) != len(FIELDS):
+            continue
+        rec = dict(zip(FIELDS, parts))
+        for k in FIELDS[2:]:
+            rec[k] = float(rec[k])
+        rows[(rec["kind"], int(rec["param"]))] = rec
     if not rows:
         raise ValueError(f"no BENCH rows in {path}")
     return meta, rows
