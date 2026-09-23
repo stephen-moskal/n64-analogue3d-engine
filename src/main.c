@@ -12,6 +12,8 @@
 #include "debug/debug_menu.h"
 #include "debug/stats.h"
 #include "debug/profiler.h"
+#include "debug/memstats.h"
+#include "debug/frametime.h"
 
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
@@ -78,6 +80,9 @@ int main(void) {
 
     // Initialize display (320x240, 16-bit color, triple buffered)
     display_init(RESOLUTION_320x240, DEPTH_16_BPP, FB_COUNT, GAMMA_NONE, FILTERS_RESAMPLE);
+
+    // Memory stats: RDRAM size, heap, stack high-water mark (paints the stack now)
+    memstats_init(FB_COUNT, SCREEN_WIDTH, SCREEN_HEIGHT);
 
     // Initialize RDP command queue
     rdpq_init();
@@ -177,7 +182,14 @@ int main(void) {
         last_ticks = now;
 
         // Publish last frame's counters and timings, start this frame
-        if (frame_index > 0) profiler_frame_end(frame_ticks);
+        if (frame_index > 0) {
+            profiler_frame_end(frame_ticks);
+            const ProfilerFrame *pf = profiler_get();
+            uint32_t f_us = pf->last_us[PROF_FRAME];
+            uint32_t idle = pf->last_us[PROF_WAIT_DISPLAY] + pf->last_us[PROF_LIMITER];
+            frametime_record(f_us, f_us > idle ? f_us - idle : 0);
+        }
+        memstats_update();
         profiler_frame_begin();
         profiler_set_enabled(debug_profiler_enabled());
         stats_frame_begin();
@@ -193,11 +205,16 @@ int main(void) {
 
         debug_menu_update();
         if (debug_consume_dump_request()) {
+            float budget_ms = (engine_target_fps == 30) ? 33.33f : 16.67f;
             stats_dump_csv(frame_index);
             profiler_dump_csv();
+            frametime_dump_csv(frame_index, budget_ms);
+            memstats_dump_csv(frame_index);
         }
         if (debug_consume_reset_peaks_request()) {
             profiler_reset_peaks();
+            frametime_reset();
+            memstats_reset_baseline();
         }
 
         // Render

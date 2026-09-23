@@ -60,3 +60,26 @@ Takeaways for later phases:
 - The **floor** (2.8 ms for 200 flat triangles) is the most expensive CPU item. Candidate fixes: vertex cache (P3.1), fewer or larger tiles, or a textured floor.
 - **Text** is expensive: 1.1 ms for six HUD lines, and the menu costs several ms in a single frame. Text caching or fewer `rdpq_font_style` calls belong in Phase 2 (they are the root of D18's overrun).
 - **Audio** averages 1.3 ms with 6.7 ms peaks on the CPU; worth a look when music is replaced by XM (P2 / audio work).
+
+## Memory and frame pacing (2026-09-23, P1.4 / P1.5, debug build, Analogue 3D)
+
+| Measurement | Value |
+|---|---|
+| RDRAM | 8,388,608 bytes: the Analogue 3D reports an Expansion Pak |
+| Heap available to malloc | 7,860,744 bytes |
+| Heap in use, demo scene after boot | 913,544 bytes |
+| Heap after 5× Reset Scene | 1,014,432 bytes: **+101,616 B, ≈ 20 KB leaked per reset** (defect D1) |
+| Framebuffers (3 × 320×240×16-bit) / Z-buffer | 460,800 / 153,600 bytes |
+| Stack high-water mark | 3,096 bytes of 65,536 (4,520 with the RDP validator on) |
+
+Frame-time window (256 frames), columns `FT`:
+
+| Case | fps | CPU avg / max ms | Loop time histogram (1.5 ms buckets) |
+|---|---|---|---|
+| Quiet view | 60.1 | 7.3 / 11.7 | bimodal: 103 frames at 12–13.5 ms, 90 at 19.5–21 ms (avg 16.65) |
+| After 5 resets | 60.0 | 11.4 / 26.5 | reload frames up to 26.5 ms |
+| Menu open + RDP validator | 52.4 | 18.7 / 23.7 | CPU over budget in most frames (D18) |
+
+Notes:
+- The bimodal loop time at a steady 60 FPS is triple-buffer pacing: the loop waits for a free framebuffer, not for vsync, so iterations alternate short and long. Use `fps` and CPU time to judge load; the jitter itself is tracked as defect D19 because `dt` inherits it.
+- `over_budget` counts frames whose CPU work exceeds the budget by 10 % (changed after this run; the first run counted wall time and flagged 102 of 256 healthy frames).
