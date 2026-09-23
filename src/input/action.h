@@ -68,7 +68,7 @@ bool  action_released(GameAction action);  // Just released this frame
 // Analog stick (filtered by active context deadzone/sensitivity)
 // ============================================================
 
-float action_analog_x(void);    // Horizontal (-left, +right)
+float action_analog_x(void);    // Horizontal, INVERTED: stick right -> negative (orbit azimuth convention)
 float action_analog_y(void);    // Vertical (-down, +up)
 bool  action_has_analog(void);  // True if stick past deadzone
 

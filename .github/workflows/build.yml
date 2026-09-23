@@ -1,0 +1,48 @@
+name: build
+
+# Builds the debug and release ROMs, runs the host unit tests and the
+# ROM/RAM budget check, and uploads the ROMs + symbols (ROADMAP_v2 P1.9).
+# Hardware verification (Analogue 3D) and benchmark captures stay manual:
+# see docs/BENCHMARKS.md and tools/bench_compare.py.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Same image as .libdragon/config.json; it provides the MIPS toolchain.
+    container: ghcr.io/dragonminded/libdragon:latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout (with the libdragon submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Trust the workspace (container runs as root)
+        run: git config --global --add safe.directory '*'
+
+      - name: Build and install libdragon + tools from the submodule
+        run: |
+          cd libdragon
+          make -j"$(nproc)" install-mk
+          make -j"$(nproc)" libdragon tools
+          make install tools-install
+
+      - name: Build ROMs, run host tests, check budgets
+        run: bash tools/ci_build.sh
+
+      - name: Upload ROMs and symbols
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: roms-${{ github.sha }}
+          path: |
+            engine.z64
+            engine-debug.z64
+            build/*/*.elf.sym
+            build/*/*.map
+          if-no-files-found: warn
