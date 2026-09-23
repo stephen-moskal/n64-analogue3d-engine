@@ -196,3 +196,28 @@ Phase 2 (engine hardening, ROADMAP_v2 §6) is measured against these start refer
 | Menu (validator on) | `menu_draw` peaks 6–9 ms |
 
 Each Phase 2 stage commits its own CSV as `docs/benchmarks/<date>-p2-s<N>-debug-a3d.csv`; it becomes the comparison point for the next stage (moving baseline). The exit comparison (S13) is against the 2026-09-23 baseline.
+
+## Phase 2 · S0 measurement prep (2026-09-23, debug build, Analogue 3D)
+
+New tools: **Reset Soak** and **Menu Sweep** (Debug tab, `src/debug/testbed.c`), the **Overload** benchmark kind, and a static sphere in the demo (the S2 shading test object; it adds ~1 ms of CPU for its 60 triangles).
+
+| Check | Result |
+|---|---|
+| Reset Soak (1 warm-up + 10 resets) | heap 960,488 → 1,095,368 B: **+134,880 B, 13.5 KB per reset** (D1) |
+| Menu Sweep with RDP Check on | 24 items, 123 options, no crash; no validator warnings except the known 15 start-up artifacts |
+| Demo dumps with the sphere | objects 3.05 ms (was 2.0), floor 2.87, HUD 1.4, menu 2.6 avg while open; heap after boot 913,552 B |
+
+Overload (`docs/benchmarks/2026-09-23-p2-s0-overload-debug-a3d.csv`, validator off; a validator-on run is in `...-overload-validator-debug-a3d.csv`): floor + 16 pillars + a fixed CPU burn.
+
+| Burn | FPS | CPU avg / max ms | RDP busy ms | Flicker on the A3D |
+|---|---|---|---|---|
+| 0 | 60.0 | 11.2 / 17.1 | 5.9 | no |
+| +10 ms | 46.3 | 21.6 / 27.0 | 6.0 | no |
+| +14 ms | 39.1 | 25.6 / 30.9 | 6.0 | no |
+| +17 ms | 34.8 | 28.7 / 34.0 | 5.9 | no |
+| +20 ms | 30.9 | 32.4 / 37.1 | 6.0 | no |
+| +25 ms | 26.4 | 37.8 / 42.0 | 6.0 | no |
+
+Findings:
+- **Frame overruns alone do not flicker** on the A3D, with or without the validator. D18 needs the menu to be on screen during the overrun, so the menu drawing path (translucent background triangles, text) is the suspect, not the frame loop.
+- Under overload the frame rate degrades smoothly (46 → 26 FPS) instead of snapping to 30/20: with triple buffering the loop never waits for vsync. Relevant to D19 and the S6 pacing work.

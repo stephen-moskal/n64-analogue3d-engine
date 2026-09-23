@@ -30,6 +30,7 @@ typedef enum {
     BENCH_TEXTURES,
     BENCH_SHADOWS,
     BENCH_FILLRATE,
+    BENCH_OVERLOAD,     // deliberate CPU overrun (not part of "All"); reproduces D18
     BENCH_KIND_COUNT
 } BenchKind;
 

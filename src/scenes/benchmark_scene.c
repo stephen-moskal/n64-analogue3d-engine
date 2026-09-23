@@ -35,7 +35,7 @@ typedef struct {
 } BenchStep;
 
 static const char *kind_names[BENCH_KIND_COUNT] = {
-    "all", "objects", "particles", "lights", "textures", "shadows", "fillrate",
+    "all", "objects", "particles", "lights", "textures", "shadows", "fillrate", "overload",
 };
 
 // One-line description shown under the status line (param is substituted)
@@ -47,6 +47,7 @@ static const char *kind_desc[BENCH_KIND_COUNT] = {
     "16 boxes, %d distinct textures",
     "16 pillars, shadow mode %d:off/blob/proj",
     "%d full-screen blended layers",
+    "+%d ms CPU burn, floor + 16 pillars",
 };
 
 static BenchKind  configured_kind = BENCH_ALL;
@@ -69,6 +70,8 @@ static vec3_t     instance_pos[MAX_INSTANCES];
 static int        emitters[4] = {-1, -1, -1, -1};
 static int        fill_layers;
 static bool       saved_fog, saved_sky;
+static int        burn_ms;             // OVERLOAD: extra CPU time per frame
+static bool       draw_floor;
 
 // ------------------------------------------------------------------------
 // Helpers
@@ -116,6 +119,12 @@ static void build_steps(BenchKind which) {
     if (all || which == BENCH_FILLRATE) {
         static const int n[] = {1, 2, 4, 8};
         for (unsigned i = 0; i < sizeof(n) / sizeof(n[0]); i++) add_step(BENCH_FILLRATE, n[i]);
+    }
+    if (which == BENCH_OVERLOAD) {
+        // Deliberate overruns: the demo-like load is ~8 ms, so +10 stays under
+        // 16.7 ms, +14/+17 straddle it, +20/+25 always overrun.
+        static const int n[] = {0, 10, 14, 17, 20, 25};
+        for (unsigned i = 0; i < sizeof(n) / sizeof(n[0]); i++) add_step(BENCH_OVERLOAD, n[i]);
     }
 }
 
@@ -202,6 +211,8 @@ static void setup_step(Scene *scene) {
     destroy_emitters();
     fill_layers = 0;
     instance_count = 0;
+    burn_ms = 0;
+    draw_floor = false;
     lighting_init(L);
     L->point_light_count = 0;
     for (int i = 0; i < MAX_POINT_LIGHTS; i++) L->point_lights[i].active = false;
@@ -248,6 +259,11 @@ static void setup_step(Scene *scene) {
         break;
     case BENCH_FILLRATE:
         fill_layers = st->param;
+        break;
+    case BENCH_OVERLOAD:
+        layout_grid(16);
+        draw_floor = true;
+        burn_ms = st->param;
         break;
     default:
         break;   // BENCH_ALL step 0: empty reference scene
@@ -331,6 +347,13 @@ static void bench_update(Scene *scene, float dt) {
     particle_update(1.0f / 60.0f);   // fixed step: identical load on every run
     PROF_END(PROF_PARTICLE_UPDATE);
 
+    // OVERLOAD: burn CPU time to push the frame past the budget on purpose
+    if (burn_ms > 0) {
+        uint32_t t0 = TICKS_READ();
+        uint32_t burn = (uint32_t)burn_ms * (TICKS_PER_SECOND / 1000);
+        while ((uint32_t)TICKS_DISTANCE(t0, TICKS_READ()) < burn) { }
+    }
+
     // Frame-locked camera path: identical on every run regardless of dt
     scene->camera.azimuth = step_frame * (CAMERA_SPIN / 60.0f);
     scene->camera.dirty = true;
@@ -365,6 +388,12 @@ static void bench_draw(Scene *scene) {
     const Mesh *pillar = mesh_defs_get_pillar();
     vec3_t pillar_scale = {40.0f, 100.0f, 40.0f};
     vec3_t box_scale    = {40.0f, 40.0f, 40.0f};
+
+    if (draw_floor) {
+        PROF_BEGIN(PROF_FLOOR);
+        floor_draw(cam, L);
+        PROF_END(PROF_FLOOR);
+    }
 
     // Shadows go down first (Z-read, no Z-write), like the demo
     if (L->shadow.mode != SHADOW_OFF) {

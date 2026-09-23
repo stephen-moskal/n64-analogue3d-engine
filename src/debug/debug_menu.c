@@ -2,6 +2,7 @@
 #include "engine_debug.h"
 #include "../input/action.h"
 #include "rdp_debug.h"
+#include "testbed.h"
 
 static const char *overlay_options[] = {"Off", "Stats", "Profiler", "Memory", "Frame", "RSP"};
 static const char *on_off_options[]  = {"On", "Off"};
@@ -9,7 +10,8 @@ static const char *off_on_options[]  = {"Off", "On"};
 static const char *dump_options[]    = {"---", "Dump!"};
 static const char *reset_options[]   = {"---", "Reset!"};
 static const char *scene_options[]   = {"Demo", "Benchmark"};
-static const char *bench_options[]   = {"All", "Objects", "Particles", "Lights", "Textures", "Shadows", "Fillrate"};
+static const char *bench_options[]   = {"All", "Objects", "Particles", "Lights", "Textures", "Shadows", "Fillrate", "Overload"};
+static const char *run_options[]     = {"---", "Run!"};
 static const char *capture_options[] = {"---", "Capture!"};
 static const char *crash_options[]   = {"---", "Assert!"};
 
@@ -39,9 +41,11 @@ void debug_menu_init(Menu *menu, int tab) {
     menu_add_item(menu, tab, "Dump CSV",    dump_options,   2, 0);
     menu_add_item(menu, tab, "Reset Peaks", reset_options,  2, 0);
     menu_add_item(menu, tab, "Scene",       scene_options,  2, 0);
-    menu_add_item(menu, tab, "Bench",       bench_options,  7, 0);
+    menu_add_item(menu, tab, "Bench",       bench_options,  8, 0);
     menu_add_item(menu, tab, "RDP Log",     capture_options, 2, 0);
     menu_add_item(menu, tab, "Crash Test",  crash_options,  2, 0);
+    menu_add_item(menu, tab, "Reset Soak",  run_options,    2, 0);
+    menu_add_item(menu, tab, "Menu Sweep",  run_options,    2, 0);
 
 #if !ENGINE_DEBUG
     // Validator and profiler are compiled out of release builds
@@ -133,6 +137,16 @@ void debug_menu_update(void) {
         item_set(DBG_ITEM_RDP_LOG, 0);
         rdp_debug_request_capture();
         ENGINE_LOG("[debug] one-frame RDP capture requested\n");
+    }
+    if (item_value(DBG_ITEM_RESET_SOAK) == 1) {
+        item_set(DBG_ITEM_RESET_SOAK, 0);
+        testbed_request_reset_soak();
+        ENGINE_LOG("[debug] reset soak requested\n");
+    }
+    if (item_value(DBG_ITEM_MENU_SWEEP) == 1) {
+        item_set(DBG_ITEM_MENU_SWEEP, 0);
+        testbed_request_menu_sweep();
+        ENGINE_LOG("[debug] menu sweep requested\n");
     }
     if (item_value(DBG_ITEM_CRASH_TEST) == 1) {
         item_set(DBG_ITEM_CRASH_TEST, 0);

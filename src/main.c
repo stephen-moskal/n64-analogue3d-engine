@@ -17,6 +17,7 @@
 #include "debug/frametime.h"
 #include "debug/overlay.h"
 #include "debug/rdp_debug.h"
+#include "debug/testbed.h"
 
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
@@ -167,6 +168,7 @@ int main(void) {
     // Initialize scene manager and load demo scene
     SceneManager scene_mgr;
     scene_manager_init(&scene_mgr);
+    testbed_init(&scene_mgr, &start_menu);
 #if defined(ENGINE_BOOT_BENCHMARK) && ENGINE_BOOT_BENCHMARK
     // Unattended benchmark run: make BUILD=release BENCH=1
     benchmark_scene_configure(BENCH_ALL);
@@ -214,6 +216,7 @@ int main(void) {
         PROF_END(PROF_UPDATE);
 
         debug_menu_update();
+        testbed_update();
         if (debug_consume_dump_request()) {
             float budget_ms = (engine_target_fps == 30) ? 33.33f : 16.67f;
             stats_dump_csv(frame_index);
@@ -259,6 +262,12 @@ int main(void) {
         // Debug overlay page (hidden while the menu is open)
         if (!start_menu.is_open) {
             overlay_draw((engine_target_fps == 30) ? 33.33f : 16.67f);
+        }
+        const char *tb = testbed_status();
+        if (tb) {
+            TextBoxConfig tbc = { .x = 12, .y = 30, .font_id = FONT_DEBUG_MONO,
+                                  .color = RGBA32(0xFF, 0x80, 0x40, 0xFF) };
+            text_draw(&tbc, tb);
         }
         rdpq_detach_show();
         rdp_debug_frame_end();

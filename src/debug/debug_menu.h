@@ -24,6 +24,8 @@ typedef enum {
     DBG_ITEM_BENCH,         // which benchmark: All / Objects / ... (see BenchKind)
     DBG_ITEM_RDP_LOG,       // --- / Capture!  one-frame RDP command log (debug only)
     DBG_ITEM_CRASH_TEST,    // --- / Assert!   trigger assertf() (debug only)
+    DBG_ITEM_RESET_SOAK,    // --- / Run!      10 scene resets, heap delta (testbed.h)
+    DBG_ITEM_MENU_SWEEP,    // --- / Run!      step every menu option (testbed.h)
     DBG_ITEM_COUNT
 } DebugMenuItem;
 

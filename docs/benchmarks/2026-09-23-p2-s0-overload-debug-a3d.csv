@@ -1,0 +1,9 @@
+BENCH_META,build=debug,date=Sep 23 2026 17:32:41,rdram=8388608,benchmark=overload,steps=6,warmup=60,measure=240
+BENCH_HDR,kind,step,param,frames,fps,avg_ms,p99_ms,low1_fps,cpu_avg_ms,cpu_max_ms,rdp_busy_ms,rdp_busy_pct,tris,tex_uploads,heap_kb
+BENCH,overload,0,0,239,60.0,16.67,22.11,45.2,11.18,17.05,5.91,35.6,456,0.0,1203
+BENCH,overload,1,10,239,46.3,21.61,26.87,37.1,21.60,26.95,6.04,27.9,456,0.0,1203
+BENCH,overload,2,14,239,39.1,25.58,29.14,33.1,25.57,30.92,6.04,23.5,456,0.0,1203
+BENCH,overload,3,17,239,34.8,28.71,33.77,29.5,28.70,34.01,5.90,20.6,456,0.0,1203
+BENCH,overload,4,20,239,30.9,32.40,37.02,27.0,32.39,37.14,6.02,18.4,456,0.0,1203
+BENCH,overload,5,25,239,26.4,37.84,41.82,23.9,37.83,41.96,6.02,15.9,456,0.0,1203
+BENCH,END,6,48.8

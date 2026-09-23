@@ -585,6 +585,17 @@ static void demo_init(Scene *scene) {
             COLLISION_LAYER_DEFAULT, COLLISION_LAYER_DEFAULT, NULL);
     }
 
+    // 5: Sphere (static) — curved surface for checking lighting / back-face
+    //    culling fixes (ROADMAP_v2 S2); the physics ball only exists after B.
+    idx = spawn_object(scene, "Sphere", mesh_defs_get_sphere(),
+        (vec3_t){280, -50, 280}, (vec3_t){50, 50, 50},
+        false, 0, 0);
+    if (idx >= 0) {
+        obj_colliders[obj_collider_count++] = collision_add_sphere(
+            &scene->collision, (vec3_t){280, -50, 280}, 55.0f,
+            COLLISION_LAYER_DEFAULT, COLLISION_LAYER_DEFAULT, NULL);
+    }
+
     // Ground collider (static, covers floor area)
     ground_collider = collision_add_aabb(&scene->collision,
         (vec3_t){-1500, -180, -1500}, (vec3_t){1500, -100, 1500},
