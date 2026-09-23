@@ -1,12 +1,13 @@
 #include "lighting.h"
+#include "../engine/hot.h"
 #include <math.h>
 #include <string.h>
 
-static float dot3(const float *a, const float *b) {
+static ENGINE_HOT float dot3(const float *a, const float *b) {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
-static float clamp(float x, float min, float max) {
+static ENGINE_HOT float clamp(float x, float min, float max) {
     if (x < min) return min;
     if (x > max) return max;
     return x;
@@ -14,7 +15,7 @@ static float clamp(float x, float min, float max) {
 
 // Fast integer power via binary exponentiation.
 // For shininess=32, only 5 multiplications (vs powf using log/exp).
-static float fast_pow_int(float base, int exp) {
+static ENGINE_HOT float fast_pow_int(float base, int exp) {
     float result = 1.0f;
     while (exp > 0) {
         if (exp & 1) result *= base;
@@ -58,8 +59,8 @@ void lighting_init(LightConfig *config) {
     config->shadow.blob_radius = 80.0f;
 }
 
-color_t lighting_calculate(const LightConfig *config, float normal[3],
-                           float view_dir[3], const float *world_pos) {
+ENGINE_HOT color_t lighting_calculate(const LightConfig *config, float normal[3],
+                                      float view_dir[3], const float *world_pos) {
     // Ambient component
     float r = config->ambient[0];
     float g = config->ambient[1];

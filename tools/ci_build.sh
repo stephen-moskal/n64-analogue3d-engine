@@ -27,4 +27,9 @@ python3 tools/rom_budget.py --rom engine.z64 --elf build/release/engine.elf \
     --max-rom-kb 4096 --max-ram-kb 1024
 echo "::endgroup::"
 
+echo "::group::Hot text (I-cache layout)"
+python3 tools/hot_text.py build/debug/engine-debug.elf
+python3 tools/hot_text.py build/release/engine.elf
+echo "::endgroup::"
+
 echo "CI build OK"

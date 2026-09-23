@@ -1,0 +1,269 @@
+#include "mesh.h"
+#include "texture.h"
+#include "../debug/engine_debug.h"
+#include "../debug/stats.h"
+#include "../debug/profiler.h"
+#include "atmosphere.h"
+#include "../engine/hot.h"
+#include <math.h>
+
+// TEMPORARY (Phase 2 S2): the pre-S2 mesh_draw, verbatim, so the Mesh A/B
+// benchmark can compare old and new renderers inside one ROM (build-to-build
+// code-layout noise is ~6 %, as large as the regression gate). Debug builds
+// only. Delete together with BENCH_MESH_AB once S2 is closed.
+#if ENGINE_DEBUG
+// Guard band: vertices outside these screen-space bounds overflow
+// RDP 12.2 fixed-point math and cause rendering artifacts.
+#define LEGACY_GUARD_X_MIN  -1024.0f
+#define LEGACY_GUARD_X_MAX   1344.0f
+#define LEGACY_GUARD_Y_MIN  -1024.0f
+#define LEGACY_GUARD_Y_MAX   1264.0f
+
+ENGINE_HOT void mesh_draw_legacy(const Mesh *mesh, const mat4_t *model,
+                      const Camera *cam, const LightConfig *light) {
+    if (mesh->vertex_count == 0 || mesh->index_count == 0) return;
+    STATS_INC(mesh_draws);
+
+    // 1. Transform bounding sphere center to world space for frustum cull
+    PROF_BEGIN(PROF_MESH_CULL);
+    vec4_t world_center_h;
+    mat4_mul_vec3(&world_center_h, model, &mesh->bound_center);
+    vec3_t world_center = {world_center_h.x, world_center_h.y, world_center_h.z};
+
+    // Scale bounding radius by max column length of model matrix.
+    // Use squared lengths to find the max, only one sqrtf at the end.
+    float sx_sq = model->m[0][0] * model->m[0][0] +
+                  model->m[0][1] * model->m[0][1] +
+                  model->m[0][2] * model->m[0][2];
+    float sy_sq = model->m[1][0] * model->m[1][0] +
+                  model->m[1][1] * model->m[1][1] +
+                  model->m[1][2] * model->m[1][2];
+    float sz_sq = model->m[2][0] * model->m[2][0] +
+                  model->m[2][1] * model->m[2][1] +
+                  model->m[2][2] * model->m[2][2];
+    float max_sq = sx_sq > sy_sq ? (sx_sq > sz_sq ? sx_sq : sz_sq)
+                                 : (sy_sq > sz_sq ? sy_sq : sz_sq);
+    float world_radius = mesh->bound_radius * sqrtf(max_sq);
+
+    bool visible = camera_sphere_visible(cam, &world_center, world_radius);
+    PROF_END(PROF_MESH_CULL);
+    if (!visible) {
+        STATS_INC(mesh_culled_frustum);
+        return;
+    }
+
+    // 2. Build MVP = VP * Model
+    mat4_t mvp;
+    mat4_mul(&mvp, &cam->vp, model);
+
+    // 3. Camera direction (for backface culling)
+    float tcx = cam->position.x - world_center.x;
+    float tcy = cam->position.y - world_center.y;
+    float tcz = cam->position.z - world_center.z;
+    float tc_len = sqrtf(tcx * tcx + tcy * tcy + tcz * tcz);
+    if (tc_len > 0.001f) {
+        float inv = 1.0f / tc_len;
+        tcx *= inv; tcy *= inv; tcz *= inv;
+    }
+
+    // 4. View direction (for lighting)
+    float view_dir[3] = {cam->view_dir.x, cam->view_dir.y, cam->view_dir.z};
+
+    int total_tris = 0;
+
+    // 5. Query fog state once per draw call
+    const FogConfig *fog = atmosphere_get_fog();
+    bool use_fog = fog->enabled;
+    if (use_fog) {
+        rdpq_set_fog_color(fog->color);
+    }
+
+    // 6. Set RDP mode ONCE before all groups.
+    //    Only change texture/color per group — avoid repeated mode resets.
+    //    If a mesh mixes material types, mode is reset only at the boundary.
+    int last_mat_type = -1;
+
+    for (int g = 0; g < mesh->group_count; g++) {
+        const MeshFaceGroup *group = &mesh->groups[g];
+        if (group->index_count == 0) continue;
+
+        const Material *mat = &mesh->materials[group->material_index];
+
+        // Only reset RDP mode when material type changes
+        if ((int)mat->type != last_mat_type) {
+            rdpq_set_mode_standard();
+            STATS_INC(mode_changes);
+            rdpq_mode_zbuf(true, true);
+
+            if (use_fog) {
+                switch (mat->type) {
+                case MATERIAL_TEXTURED:
+                    rdpq_mode_combiner(RDPQ_COMBINER_TEX_SHADE);
+                    rdpq_mode_persp(true);
+                    rdpq_mode_filter(FILTER_BILINEAR);
+                    break;
+                case MATERIAL_FLAT_COLOR:
+                    rdpq_mode_combiner(RDPQ_COMBINER_SHADE);
+                    break;
+                }
+                rdpq_mode_fog(RDPQ_FOG_STANDARD);
+            } else {
+                switch (mat->type) {
+                case MATERIAL_TEXTURED:
+                    rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
+                    rdpq_mode_persp(true);
+                    rdpq_mode_filter(FILTER_BILINEAR);
+                    break;
+                case MATERIAL_FLAT_COLOR:
+                    rdpq_mode_combiner(RDPQ_COMBINER_FLAT);
+                    break;
+                }
+            }
+
+            if (mat->alpha_cutout) {
+                rdpq_mode_alphacompare(1);
+            }
+
+            last_mat_type = (int)mat->type;
+        }
+
+        // Compute group normal + lighting ONCE per group.
+        // In flat shading, all triangles in a group share the same normal
+        // (all vertices were built with the same face normal).
+        const MeshVertex *gv0 = &mesh->vertices[mesh->indices[group->index_start]];
+        float nx = model->m[0][0] * gv0->normal[0] +
+                   model->m[1][0] * gv0->normal[1] +
+                   model->m[2][0] * gv0->normal[2];
+        float ny = model->m[0][1] * gv0->normal[0] +
+                   model->m[1][1] * gv0->normal[1] +
+                   model->m[2][1] * gv0->normal[2];
+        float nz = model->m[0][2] * gv0->normal[0] +
+                   model->m[1][2] * gv0->normal[1] +
+                   model->m[2][2] * gv0->normal[2];
+
+        // Re-normalize (model matrix may include scale)
+        float nlen = sqrtf(nx * nx + ny * ny + nz * nz);
+        if (nlen > 0.001f) {
+            float inv = 1.0f / nlen;
+            nx *= inv; ny *= inv; nz *= inv;
+        }
+
+        // Backface cull entire group
+        if (mesh->backface_cull) {
+            float facing = nx * tcx + ny * tcy + nz * tcz;
+            if (facing < 0.0f) { STATS_INC(groups_culled_backface); continue; }
+        }
+
+        // Upload the texture only for groups that survive the cull
+        // (texture changes per group, mode doesn't; roadmap defect D4)
+        if (mat->type == MATERIAL_TEXTURED && mat->texture_slot >= 0) {
+            texture_upload(mat->texture_slot, TILE0);
+        }
+        STATS_INC(groups_drawn);
+
+        // Compute world position of group's representative vertex (for point lights)
+        vec3_t gv0_pos = {gv0->position[0], gv0->position[1], gv0->position[2]};
+        vec4_t wp_h;
+        mat4_mul_vec3(&wp_h, model, &gv0_pos);
+        float world_pos[3] = {wp_h.x, wp_h.y, wp_h.z};
+
+        // Lighting — once per group
+        float normal_f[3] = {nx, ny, nz};
+        PROF_BEGIN(PROF_MESH_LIGHT);
+        color_t lit_color = lighting_calculate(light, normal_f, view_dir, world_pos);
+        PROF_END(PROF_MESH_LIGHT);
+        uint8_t r = (uint8_t)((mat->base_color[0] * lit_color.r) / 255);
+        uint8_t g_col = (uint8_t)((mat->base_color[1] * lit_color.g) / 255);
+        uint8_t b = (uint8_t)((mat->base_color[2] * lit_color.b) / 255);
+        // When fog on: shade RGB carries lit color, shade A carries fog factor
+        // When fog off: prim_color carries lit color (current path)
+        float shade_r = r / 255.0f;
+        float shade_g = g_col / 255.0f;
+        float shade_b = b / 255.0f;
+        if (!use_fog) {
+            rdpq_set_prim_color(RGBA32(r, g_col, b, 255));
+        }
+
+        // Select triangle format for this group
+        const rdpq_trifmt_t *trifmt;
+        if (use_fog) {
+            trifmt = (mat->type == MATERIAL_TEXTURED)
+                ? &TRIFMT_ZBUF_SHADE_TEX : &TRIFMT_ZBUF_SHADE;
+        } else {
+            // Flat materials must not use a textured format: the combiner
+            // ignores TEX0, and the RDP validator flags it (roadmap defect D2).
+            trifmt = (mat->type == MATERIAL_TEXTURED)
+                ? &TRIFMT_ZBUF_TEX : &TRIFMT_ZBUF;
+        }
+
+        // Draw all triangles in this group
+        PROF_BEGIN(PROF_MESH_TRIS);
+        for (int i = group->index_start;
+             i < group->index_start + group->index_count;
+             i += 3) {
+            const MeshVertex *v0 = &mesh->vertices[mesh->indices[i]];
+            const MeshVertex *v1 = &mesh->vertices[mesh->indices[i + 1]];
+            const MeshVertex *v2 = &mesh->vertices[mesh->indices[i + 2]];
+
+            const MeshVertex *tri_verts[3] = {v0, v1, v2};
+            float screen[3][10] ENGINE_NOINIT;  // Max: {X,Y,Z,R,G,B,A,S,T,INV_W}
+            bool reject = false;
+
+            for (int v = 0; v < 3; v++) {
+                vec3_t pos = {tri_verts[v]->position[0],
+                              tri_verts[v]->position[1],
+                              tri_verts[v]->position[2]};
+                vec4_t clip;
+                mat4_mul_vec3(&clip, &mvp, &pos);
+
+                // Near-plane rejection
+                if (clip.w < 1.0f) { reject = true; STATS_INC(tris_rejected_near); break; }
+
+                float inv_w = 1.0f / clip.w;
+                float ndc_x = clip.x * inv_w;
+                float ndc_y = clip.y * inv_w;
+                float ndc_z = clip.z * inv_w;
+
+                screen[v][0] = (ndc_x * 0.5f + 0.5f) * 320.0f;
+                screen[v][1] = (1.0f - (ndc_y * 0.5f + 0.5f)) * 240.0f;
+
+                // Guard band check
+                if (screen[v][0] < LEGACY_GUARD_X_MIN || screen[v][0] > LEGACY_GUARD_X_MAX ||
+                    screen[v][1] < LEGACY_GUARD_Y_MIN || screen[v][1] > LEGACY_GUARD_Y_MAX) {
+                    reject = true; STATS_INC(tris_rejected_guard); break;
+                }
+
+                float depth = ndc_z * 0.5f + 0.5f;
+                if (depth < 0.0f) depth = 0.0f;
+                if (depth > 1.0f) depth = 1.0f;
+                screen[v][2] = depth;
+
+                if (use_fog) {
+                    float fog_t = fog_calculate_factor(clip.w);
+                    screen[v][3] = shade_r;
+                    screen[v][4] = shade_g;
+                    screen[v][5] = shade_b;
+                    screen[v][6] = 1.0f - fog_t;  // 1.0=visible, 0.0=full fog
+                    if (mat->type == MATERIAL_TEXTURED) {
+                        screen[v][7] = tri_verts[v]->uv[0];
+                        screen[v][8] = tri_verts[v]->uv[1];
+                        screen[v][9] = inv_w;
+                    }
+                } else {
+                    screen[v][3] = tri_verts[v]->uv[0];
+                    screen[v][4] = tri_verts[v]->uv[1];
+                    screen[v][5] = inv_w;
+                }
+            }
+
+            if (reject) continue;
+
+            rdpq_triangle(trifmt, screen[0], screen[1], screen[2]);
+            total_tris++;
+        }
+        PROF_END(PROF_MESH_TRIS);
+    }
+
+    STATS_ADD(tris_mesh, total_tris);
+}
+#endif

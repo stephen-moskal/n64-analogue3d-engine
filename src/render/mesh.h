@@ -42,6 +42,11 @@ typedef struct {
     int material_index;         // Index into Mesh.materials[]
     int index_start;            // First index in Mesh.indices[]
     int index_count;            // Number of indices (must be multiple of 3)
+
+    // Filled by mesh_compute_bounds() (mesh_analyze_group)
+    float center[3];            // Average vertex position (local space)
+    float normal[3];            // Shared normal if planar, else normalised average
+    bool  planar;               // One normal, one plane: cull/light the group once
 } MeshFaceGroup;
 
 // --- Mesh ---
@@ -81,11 +86,24 @@ int  mesh_add_vertex(Mesh *mesh, MeshVertex vert);
 void mesh_add_triangle(Mesh *mesh, uint16_t i0, uint16_t i1, uint16_t i2);
 int  mesh_begin_group(Mesh *mesh, int material_index);
 void mesh_end_group(Mesh *mesh);
-void mesh_compute_bounds(Mesh *mesh);
+void mesh_compute_bounds(Mesh *mesh);   // also analyses every face group
+void mesh_analyze_group(const Mesh *mesh, MeshFaceGroup *group);
+
+// Twice the signed area of a screen-space triangle (x right, y down).
+// Front faces are wound counter-clockwise seen from outside the mesh, which
+// after the viewport's Y flip gives a NEGATIVE area; >= 0 is a back face or
+// degenerate. Used by mesh_draw's per-triangle cull.
+static inline float mesh_screen_area2(const float a[2], const float b[2],
+                                      const float c[2]) {
+    return (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]);
+}
 
 // --- Rendering ---
 
 void mesh_draw(const Mesh *mesh, const mat4_t *model,
                const Camera *cam, const LightConfig *light);
+// Debug builds only, temporary: pre-S2 renderer for the Mesh A/B benchmark
+void mesh_draw_legacy(const Mesh *mesh, const mat4_t *model,
+                      const Camera *cam, const LightConfig *light);
 
 #endif

@@ -1,6 +1,7 @@
 #include "shadow.h"
 #include "texture.h"
 #include "../debug/stats.h"
+#include "../engine/hot.h"
 #include <math.h>
 
 // Shadow sits slightly above floor to avoid Z-fighting.
@@ -15,13 +16,13 @@
 #define GUARD_Y_MAX   1264.0f
 
 // Compute shadow color from darkness setting
-static color_t shadow_color_from_darkness(float darkness) {
+static ENGINE_HOT color_t shadow_color_from_darkness(float darkness) {
     // darkness 0.0 = very light shadow, 1.0 = nearly black
     uint8_t v = (uint8_t)((1.0f - darkness) * 40.0f + 5.0f);
     return RGBA32(v, v, v + 4, 255);
 }
 
-void shadow_begin(const Camera *cam, const LightConfig *light) {
+ENGINE_HOT void shadow_begin(const Camera *cam, const LightConfig *light) {
     (void)cam;
 
     // Set up RDP for shadow rendering:
@@ -46,8 +47,8 @@ void shadow_end(void) {
 // Blob Shadows — dark quad under each object
 // ============================================================
 
-void shadow_draw_blob(const Camera *cam, const LightConfig *light,
-                      const ShadowCaster *caster) {
+ENGINE_HOT void shadow_draw_blob(const Camera *cam, const LightConfig *light,
+                                 const ShadowCaster *caster) {
     float floor_y = light->shadow.floor_y;
     float sy = floor_y + SHADOW_Y_OFFSET;
 
@@ -78,7 +79,7 @@ void shadow_draw_blob(const Camera *cam, const LightConfig *light,
     };
 
     // Project each vertex through VP to screen
-    float screen[4][3];
+    float screen[4][3] ENGINE_NOINIT;
     for (int i = 0; i < 4; i++) {
         vec3_t pos = {verts[i][0], verts[i][1], verts[i][2]};
         vec4_t clip;
@@ -111,8 +112,8 @@ void shadow_draw_blob(const Camera *cam, const LightConfig *light,
 // Projected Shadows — mesh silhouette flattened onto floor
 // ============================================================
 
-void shadow_draw_projected(const Camera *cam, const LightConfig *light,
-                           const ShadowCaster *caster) {
+ENGINE_HOT void shadow_draw_projected(const Camera *cam, const LightConfig *light,
+                                      const ShadowCaster *caster) {
     const Mesh *mesh = caster->mesh;
     const mat4_t *model = caster->model;
     float floor_y = light->shadow.floor_y;
@@ -139,7 +140,7 @@ void shadow_draw_projected(const Camera *cam, const LightConfig *light,
              i < group->index_start + group->index_count;
              i += 3) {
 
-            float screen[3][3];  // {X, Y, Z} per vertex
+            float screen[3][3] ENGINE_NOINIT;  // {X, Y, Z} per vertex
             bool reject = false;
 
             for (int v = 0; v < 3; v++) {

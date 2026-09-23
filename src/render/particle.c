@@ -2,6 +2,7 @@
 #include "texture.h"
 #include "../debug/stats.h"
 #include "atmosphere.h"
+#include "../engine/hot.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -300,7 +301,7 @@ void particle_update(float dt) {
 
 // --- Renderer ---
 
-void particle_draw(const Camera *cam) {
+ENGINE_HOT void particle_draw(const Camera *cam) {
     if (!initialized) return;
     STATS_SET(particles_alive, particle_alive_count());
 
@@ -393,7 +394,7 @@ void particle_draw(const Camera *cam) {
         //   BL = pos + (-right - up) * scale
         //   BR = pos + ( right - up) * scale
         float s = p->scale;
-        float corners[4][3];
+        float corners[4][3] ENGINE_NOINIT;
 
         corners[0][0] = p->position.x + (-cam_right.x + cam_up.x) * s;
         corners[0][1] = p->position.y + (-cam_right.y + cam_up.y) * s;
@@ -412,7 +413,7 @@ void particle_draw(const Camera *cam) {
         corners[3][2] = p->position.z + ( cam_right.z - cam_up.z) * s;
 
         // Transform each corner through VP → screen space
-        float screen[4][3];  // {X, Y, Z}
+        float screen[4][3] ENGINE_NOINIT;  // {X, Y, Z}
         bool reject = false;
 
         for (int v = 0; v < 4; v++) {

@@ -2,6 +2,7 @@
 #include "texture.h"
 #include "../debug/stats.h"
 #include "atmosphere.h"
+#include "../engine/hot.h"
 #include <math.h>
 
 #define FLOOR_HALF_SIZE  500.0f
@@ -35,7 +36,7 @@
 // Compute additive point light contribution for a floor tile.
 // Returns 0-255 intensity per channel (modulate with tile base color before adding).
 // Floor normal = (0,1,0) so ndotl simplifies to just the Y component.
-static color_t floor_point_light_add(const LightConfig *light, float wx, float wz) {
+static ENGINE_HOT color_t floor_point_light_add(const LightConfig *light, float wx, float wz) {
     float r = 0, g = 0, b = 0;
     float pos_y = FLOOR_Y;
 
@@ -82,7 +83,7 @@ static float grid[VERT_COUNT][VERT_COUNT][3];
 static float grid_depth[VERT_COUNT][VERT_COUNT];  // clip.w for CPU fog
 static bool  grid_valid[VERT_COUNT][VERT_COUNT];
 
-void floor_draw(const Camera *cam, const LightConfig *light) {
+ENGINE_HOT void floor_draw(const Camera *cam, const LightConfig *light) {
     // Compute lighting for floor (normal faces up)
     float normal[3] = {0.0f, 1.0f, 0.0f};
     float view_dir[3] = {cam->view_dir.x, cam->view_dir.y, cam->view_dir.z};

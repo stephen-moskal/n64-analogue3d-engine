@@ -215,8 +215,9 @@ static void page_stats(void) {
          (unsigned long)stats_tris_total(s), (unsigned long)s->tris_mesh, (unsigned long)s->tris_floor);
     line(r++, COL_TEXT, " shd %lu prt %lu ui %lu",
          (unsigned long)s->tris_shadow, (unsigned long)s->tris_particle, (unsigned long)s->tris_ui);
-    line(r++, COL_TEXT, " rejected near %lu grd %lu",
-         (unsigned long)s->tris_rejected_near, (unsigned long)s->tris_rejected_guard);
+    line(r++, COL_TEXT, " rej near %lu grd %lu bf %lu",
+         (unsigned long)s->tris_rejected_near, (unsigned long)s->tris_rejected_guard,
+         (unsigned long)s->tris_culled_backface);
     line(r++, COL_TEXT, "Mesh %lu cull %lu grp %lu/%lu",
          (unsigned long)s->mesh_draws, (unsigned long)s->mesh_culled_frustum,
          (unsigned long)s->groups_drawn, (unsigned long)s->groups_culled_backface);

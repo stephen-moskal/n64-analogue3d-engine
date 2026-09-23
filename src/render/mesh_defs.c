@@ -63,8 +63,9 @@ static void build_pillar(void) {
             .normal = {nx, 0, nz}, .uv = {0, 0}
         });
 
-        mesh_add_triangle(&pillar_mesh, base, base + 1, base + 2);
-        mesh_add_triangle(&pillar_mesh, base, base + 2, base + 3);
+        // Counter-clockwise seen from outside (a grows from +X toward +Z)
+        mesh_add_triangle(&pillar_mesh, base, base + 2, base + 1);
+        mesh_add_triangle(&pillar_mesh, base, base + 3, base + 2);
         mesh_end_group(&pillar_mesh);
     }
 
@@ -84,7 +85,7 @@ static void build_pillar(void) {
     }
     for (int i = 0; i < SIDES; i++) {
         int next = (i + 1) % SIDES;
-        mesh_add_triangle(&pillar_mesh, top_center, top_center + 1 + i, top_center + 1 + next);
+        mesh_add_triangle(&pillar_mesh, top_center, top_center + 1 + next, top_center + 1 + i);
     }
     mesh_end_group(&pillar_mesh);
 
@@ -104,8 +105,8 @@ static void build_pillar(void) {
     }
     for (int i = 0; i < SIDES; i++) {
         int next = (i + 1) % SIDES;
-        // Reversed winding for bottom face (normal points down)
-        mesh_add_triangle(&pillar_mesh, bot_center, bot_center + 1 + next, bot_center + 1 + i);
+        // Reversed winding for the bottom face (normal points down)
+        mesh_add_triangle(&pillar_mesh, bot_center, bot_center + 1 + i, bot_center + 1 + next);
     }
     mesh_end_group(&pillar_mesh);
 

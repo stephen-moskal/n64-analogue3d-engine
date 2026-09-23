@@ -1,5 +1,6 @@
 #include "camera.h"
 #include "../collision/collision.h"
+#include "../engine/hot.h"
 #include <math.h>
 #include <string.h>
 
@@ -71,7 +72,7 @@ void mat4_lookat(mat4_t *out, const vec3_t *eye, const vec3_t *target,
     out->m[3][3] =  1.0f;
 }
 
-void mat4_mul(mat4_t *out, const mat4_t *a, const mat4_t *b) {
+ENGINE_HOT void mat4_mul(mat4_t *out, const mat4_t *a, const mat4_t *b) {
     mat4_t tmp;
     for (int col = 0; col < 4; col++) {
         for (int row = 0; row < 4; row++) {
@@ -84,7 +85,7 @@ void mat4_mul(mat4_t *out, const mat4_t *a, const mat4_t *b) {
     *out = tmp;
 }
 
-void mat4_mul_vec3(vec4_t *out, const mat4_t *m, const vec3_t *v) {
+ENGINE_HOT void mat4_mul_vec3(vec4_t *out, const mat4_t *m, const vec3_t *v) {
     // Treat vec3 as vec4 with w=1
     out->x = m->m[0][0] * v->x + m->m[1][0] * v->y + m->m[2][0] * v->z + m->m[3][0];
     out->y = m->m[0][1] * v->x + m->m[1][1] * v->y + m->m[2][1] * v->z + m->m[3][1];
@@ -356,8 +357,8 @@ void camera_update(Camera *cam) {
     cam->dirty = false;
 }
 
-bool camera_sphere_visible(const Camera *cam, const vec3_t *center,
-                           float radius) {
+ENGINE_HOT bool camera_sphere_visible(const Camera *cam, const vec3_t *center,
+                                      float radius) {
     for (int i = 0; i < 6; i++) {
         float dist = cam->frustum[i][0] * center->x +
                      cam->frustum[i][1] * center->y +

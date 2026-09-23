@@ -3,124 +3,10 @@
 #include "../debug/stats.h"
 #include "../debug/profiler.h"
 #include "atmosphere.h"
-#include <stdlib.h>
-#include <string.h>
+#include "../engine/hot.h"
 #include <math.h>
 
-// --- Lifecycle ---
-
-void mesh_init(Mesh *mesh) {
-    memset(mesh, 0, sizeof(Mesh));
-    mesh->vertices = NULL;
-    mesh->indices = NULL;
-    mesh->backface_cull = true;
-}
-
-void mesh_cleanup(Mesh *mesh) {
-    if (mesh->vertices) {
-        free(mesh->vertices);
-        mesh->vertices = NULL;
-    }
-    if (mesh->indices) {
-        free(mesh->indices);
-        mesh->indices = NULL;
-    }
-    mesh->vertex_count = 0;
-    mesh->index_count = 0;
-    mesh->material_count = 0;
-    mesh->group_count = 0;
-}
-
-// --- Building ---
-
-int mesh_add_material(Mesh *mesh, Material mat) {
-    if (mesh->material_count >= MESH_MAX_MATERIALS) return -1;
-    int idx = mesh->material_count++;
-    mesh->materials[idx] = mat;
-    return idx;
-}
-
-int mesh_add_vertex(Mesh *mesh, MeshVertex vert) {
-    if (mesh->vertex_count >= MESH_MAX_VERTICES) return -1;
-
-    // Lazy allocation: allocate full capacity on first vertex
-    if (!mesh->vertices) {
-        mesh->vertices = malloc(sizeof(MeshVertex) * MESH_MAX_VERTICES);
-        if (!mesh->vertices) return -1;
-    }
-
-    int idx = mesh->vertex_count++;
-    mesh->vertices[idx] = vert;
-    return idx;
-}
-
-void mesh_add_triangle(Mesh *mesh, uint16_t i0, uint16_t i1, uint16_t i2) {
-    if (mesh->index_count + 3 > MESH_MAX_INDICES) return;
-
-    // Lazy allocation
-    if (!mesh->indices) {
-        mesh->indices = malloc(sizeof(uint16_t) * MESH_MAX_INDICES);
-        if (!mesh->indices) return;
-    }
-
-    mesh->indices[mesh->index_count++] = i0;
-    mesh->indices[mesh->index_count++] = i1;
-    mesh->indices[mesh->index_count++] = i2;
-
-    // Auto-update current group's index count
-    if (mesh->group_count > 0) {
-        mesh->groups[mesh->group_count - 1].index_count += 3;
-    }
-}
-
-int mesh_begin_group(Mesh *mesh, int material_index) {
-    if (mesh->group_count >= MESH_MAX_GROUPS) return -1;
-
-    int idx = mesh->group_count++;
-    mesh->groups[idx].material_index = material_index;
-    mesh->groups[idx].index_start = mesh->index_count;
-    mesh->groups[idx].index_count = 0;
-    return idx;
-}
-
-void mesh_end_group(Mesh *mesh) {
-    // No-op — group's index_count is tracked by mesh_add_triangle.
-    // Exists for symmetry with mesh_begin_group and future use.
-}
-
-void mesh_compute_bounds(Mesh *mesh) {
-    if (mesh->vertex_count == 0) {
-        mesh->bound_center = (vec3_t){0, 0, 0};
-        mesh->bound_radius = 0;
-        return;
-    }
-
-    // Compute centroid
-    float cx = 0, cy = 0, cz = 0;
-    for (int i = 0; i < mesh->vertex_count; i++) {
-        cx += mesh->vertices[i].position[0];
-        cy += mesh->vertices[i].position[1];
-        cz += mesh->vertices[i].position[2];
-    }
-    float inv_n = 1.0f / mesh->vertex_count;
-    cx *= inv_n;
-    cy *= inv_n;
-    cz *= inv_n;
-    mesh->bound_center = (vec3_t){cx, cy, cz};
-
-    // Compute radius (max distance from centroid)
-    float max_dist_sq = 0;
-    for (int i = 0; i < mesh->vertex_count; i++) {
-        float dx = mesh->vertices[i].position[0] - cx;
-        float dy = mesh->vertices[i].position[1] - cy;
-        float dz = mesh->vertices[i].position[2] - cz;
-        float dist_sq = dx * dx + dy * dy + dz * dz;
-        if (dist_sq > max_dist_sq) max_dist_sq = dist_sq;
-    }
-    mesh->bound_radius = sqrtf(max_dist_sq);
-}
-
-// --- Rendering ---
+// Mesh rendering. Building and bounds live in mesh_build.c.
 
 // Guard band: vertices outside these screen-space bounds overflow
 // RDP 12.2 fixed-point math and cause rendering artifacts.
@@ -129,8 +15,58 @@ void mesh_compute_bounds(Mesh *mesh) {
 #define GUARD_Y_MIN  -1024.0f
 #define GUARD_Y_MAX   1264.0f
 
-void mesh_draw(const Mesh *mesh, const mat4_t *model,
-               const Camera *cam, const LightConfig *light) {
+// Local point -> world (model is column-major: m[col][row])
+static inline ENGINE_HOT void model_point(const mat4_t *m, const float p[3], float out[3]) {
+    for (int r = 0; r < 3; r++) {
+        out[r] = m->m[0][r] * p[0] + m->m[1][r] * p[1] + m->m[2][r] * p[2] + m->m[3][r];
+    }
+}
+
+// Local normal -> world unit normal through the cofactor matrix
+// (inverse transpose times det), so non-uniform scale keeps normals
+// perpendicular to their faces. cof[k] = column_{k+1} x column_{k+2}.
+static inline ENGINE_HOT void model_normal(const float cof[3][3], const float n[3], float out[3]) {
+    for (int r = 0; r < 3; r++) {
+        out[r] = cof[0][r] * n[0] + cof[1][r] * n[1] + cof[2][r] * n[2];
+    }
+    float len = sqrtf(out[0] * out[0] + out[1] * out[1] + out[2] * out[2]);
+    if (len > 1e-6f) {
+        float inv = 1.0f / len;
+        out[0] *= inv; out[1] *= inv; out[2] *= inv;
+    }
+}
+
+static ENGINE_HOT void cofactor3(const mat4_t *m, float cof[3][3]) {
+    for (int k = 0; k < 3; k++) {
+        const float *a = m->m[(k + 1) % 3];
+        const float *b = m->m[(k + 2) % 3];
+        cof[k][0] = a[1] * b[2] - a[2] * b[1];
+        cof[k][1] = a[2] * b[0] - a[0] * b[2];
+        cof[k][2] = a[0] * b[1] - a[1] * b[0];
+    }
+}
+
+// Light a material and set the colour: prim colour when unfogged, or return
+// it in shade[] (0..1) for the shade-RGB channels when fog is on.
+static inline ENGINE_HOT void light_material(const Material *mat, const LightConfig *light,
+                                  float nrm[3], float view_dir[3],
+                                  const float world_pos[3], bool use_fog,
+                                  float shade[3]) {
+    color_t lit = lighting_calculate(light, nrm, view_dir, world_pos);
+    uint8_t r = (uint8_t)((mat->base_color[0] * lit.r) / 255);
+    uint8_t g = (uint8_t)((mat->base_color[1] * lit.g) / 255);
+    uint8_t b = (uint8_t)((mat->base_color[2] * lit.b) / 255);
+    if (use_fog) {
+        shade[0] = r / 255.0f;
+        shade[1] = g / 255.0f;
+        shade[2] = b / 255.0f;
+    } else {
+        rdpq_set_prim_color(RGBA32(r, g, b, 255));
+    }
+}
+
+ENGINE_HOT void mesh_draw(const Mesh *mesh, const mat4_t *model,
+                          const Camera *cam, const LightConfig *light) {
     if (mesh->vertex_count == 0 || mesh->index_count == 0) return;
     STATS_INC(mesh_draws);
 
@@ -162,36 +98,29 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
         return;
     }
 
-    // 2. Build MVP = VP * Model
+    // 2. Build MVP = VP * Model, and the normal matrix
     mat4_t mvp;
     mat4_mul(&mvp, &cam->vp, model);
+    float cof[3][3];
+    cofactor3(model, cof);
 
-    // 3. Camera direction (for backface culling)
-    float tcx = cam->position.x - world_center.x;
-    float tcy = cam->position.y - world_center.y;
-    float tcz = cam->position.z - world_center.z;
-    float tc_len = sqrtf(tcx * tcx + tcy * tcy + tcz * tcz);
-    if (tc_len > 0.001f) {
-        float inv = 1.0f / tc_len;
-        tcx *= inv; tcy *= inv; tcz *= inv;
-    }
-
-    // 4. View direction (for lighting)
+    // 3. View direction (for lighting) and camera position (for culling)
     float view_dir[3] = {cam->view_dir.x, cam->view_dir.y, cam->view_dir.z};
+    float cam_pos[3] = {cam->position.x, cam->position.y, cam->position.z};
 
     int total_tris = 0;
 
-    // 5. Query fog state once per draw call
+    // 4. Query fog state once per draw call
     const FogConfig *fog = atmosphere_get_fog();
     bool use_fog = fog->enabled;
     if (use_fog) {
         rdpq_set_fog_color(fog->color);
     }
 
-    // 6. Set RDP mode ONCE before all groups.
-    //    Only change texture/color per group — avoid repeated mode resets.
-    //    If a mesh mixes material types, mode is reset only at the boundary.
-    int last_mat_type = -1;
+    // 5. Set the RDP mode only when the material type or alpha cutout changes.
+    //    rdpq_set_mode_standard() clears alpha compare, so a material without
+    //    cutout never inherits it from the previous one (roadmap defect D5).
+    int last_mode_key = -1;
 
     for (int g = 0; g < mesh->group_count; g++) {
         const MeshFaceGroup *group = &mesh->groups[g];
@@ -199,8 +128,8 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
 
         const Material *mat = &mesh->materials[group->material_index];
 
-        // Only reset RDP mode when material type changes
-        if ((int)mat->type != last_mat_type) {
+        int mode_key = (int)mat->type * 2 + (mat->alpha_cutout ? 1 : 0);
+        if (mode_key != last_mode_key) {
             rdpq_set_mode_standard();
             STATS_INC(mode_changes);
             rdpq_mode_zbuf(true, true);
@@ -234,34 +163,29 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
                 rdpq_mode_alphacompare(1);
             }
 
-            last_mat_type = (int)mat->type;
+            last_mode_key = mode_key;
         }
 
-        // Compute group normal + lighting ONCE per group.
-        // In flat shading, all triangles in a group share the same normal
-        // (all vertices were built with the same face normal).
-        const MeshVertex *gv0 = &mesh->vertices[mesh->indices[group->index_start]];
-        float nx = model->m[0][0] * gv0->normal[0] +
-                   model->m[1][0] * gv0->normal[1] +
-                   model->m[2][0] * gv0->normal[2];
-        float ny = model->m[0][1] * gv0->normal[0] +
-                   model->m[1][1] * gv0->normal[1] +
-                   model->m[2][1] * gv0->normal[2];
-        float nz = model->m[0][2] * gv0->normal[0] +
-                   model->m[1][2] * gv0->normal[1] +
-                   model->m[2][2] * gv0->normal[2];
-
-        // Re-normalize (model matrix may include scale)
-        float nlen = sqrtf(nx * nx + ny * ny + nz * nz);
-        if (nlen > 0.001f) {
-            float inv = 1.0f / nlen;
-            nx *= inv; ny *= inv; nz *= inv;
-        }
-
-        // Backface cull entire group
-        if (mesh->backface_cull) {
-            float facing = nx * tcx + ny * tcy + nz * tcz;
-            if (facing < 0.0f) { STATS_INC(groups_culled_backface); continue; }
+        // Planar groups (cube faces, pillar sides) are culled and lit once,
+        // exactly: the camera is either in front of the group's plane or not.
+        // Curved groups (sphere bands) face every way at once, so they are
+        // culled by screen winding and lit per triangle below (D3, D24).
+        bool planar = group->planar;
+        float shade[3] = {0, 0, 0};   // lit colour 0..1 (shade RGB when fogged)
+        if (planar) {
+            PROF_BEGIN(PROF_MESH_LIGHT);
+            float world_pos[3], nrm[3];
+            model_point(model, group->center, world_pos);
+            model_normal(cof, group->normal, nrm);
+            bool culled = mesh->backface_cull &&
+                (nrm[0] * (cam_pos[0] - world_pos[0]) +
+                 nrm[1] * (cam_pos[1] - world_pos[1]) +
+                 nrm[2] * (cam_pos[2] - world_pos[2])) <= 0.0f;
+            if (!culled) {
+                light_material(mat, light, nrm, view_dir, world_pos, use_fog, shade);
+            }
+            PROF_END(PROF_MESH_LIGHT);
+            if (culled) { STATS_INC(groups_culled_backface); continue; }
         }
 
         // Upload the texture only for groups that survive the cull
@@ -270,29 +194,6 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
             texture_upload(mat->texture_slot, TILE0);
         }
         STATS_INC(groups_drawn);
-
-        // Compute world position of group's representative vertex (for point lights)
-        vec3_t gv0_pos = {gv0->position[0], gv0->position[1], gv0->position[2]};
-        vec4_t wp_h;
-        mat4_mul_vec3(&wp_h, model, &gv0_pos);
-        float world_pos[3] = {wp_h.x, wp_h.y, wp_h.z};
-
-        // Lighting — once per group
-        float normal_f[3] = {nx, ny, nz};
-        PROF_BEGIN(PROF_MESH_LIGHT);
-        color_t lit_color = lighting_calculate(light, normal_f, view_dir, world_pos);
-        PROF_END(PROF_MESH_LIGHT);
-        uint8_t r = (uint8_t)((mat->base_color[0] * lit_color.r) / 255);
-        uint8_t g_col = (uint8_t)((mat->base_color[1] * lit_color.g) / 255);
-        uint8_t b = (uint8_t)((mat->base_color[2] * lit_color.b) / 255);
-        // When fog on: shade RGB carries lit color, shade A carries fog factor
-        // When fog off: prim_color carries lit color (current path)
-        float shade_r = r / 255.0f;
-        float shade_g = g_col / 255.0f;
-        float shade_b = b / 255.0f;
-        if (!use_fog) {
-            rdpq_set_prim_color(RGBA32(r, g_col, b, 255));
-        }
 
         // Select triangle format for this group
         const rdpq_trifmt_t *trifmt;
@@ -311,12 +212,13 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
         for (int i = group->index_start;
              i < group->index_start + group->index_count;
              i += 3) {
-            const MeshVertex *v0 = &mesh->vertices[mesh->indices[i]];
-            const MeshVertex *v1 = &mesh->vertices[mesh->indices[i + 1]];
-            const MeshVertex *v2 = &mesh->vertices[mesh->indices[i + 2]];
-
-            const MeshVertex *tri_verts[3] = {v0, v1, v2};
-            float screen[3][10];  // Max: {X,Y,Z,R,G,B,A,S,T,INV_W}
+            const MeshVertex *tri_verts[3] = {
+                &mesh->vertices[mesh->indices[i]],
+                &mesh->vertices[mesh->indices[i + 1]],
+                &mesh->vertices[mesh->indices[i + 2]],
+            };
+            float screen[3][10] ENGINE_NOINIT;  // Max: {X,Y,Z,R,G,B,A,S,T,INV_W}
+            float inv_ws[3] ENGINE_NOINIT, fog_ts[3] ENGINE_NOINIT;
             bool reject = false;
 
             for (int v = 0; v < 3; v++) {
@@ -347,26 +249,52 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
                 if (depth < 0.0f) depth = 0.0f;
                 if (depth > 1.0f) depth = 1.0f;
                 screen[v][2] = depth;
+                inv_ws[v] = inv_w;
+                if (use_fog) fog_ts[v] = fog_calculate_factor(clip.w);
+            }
 
+            if (reject) continue;
+
+            if (!planar) {
+                // Exact per-triangle back-face test on the projected winding
+                if (mesh->backface_cull &&
+                    mesh_screen_area2(screen[0], screen[1], screen[2]) >= 0.0f) {
+                    STATS_INC(tris_culled_backface);
+                    continue;
+                }
+                // Flat-shade this triangle with the average of its vertex normals
+                PROF_BEGIN(PROF_MESH_LIGHT);
+                float n_obj[3] ENGINE_NOINIT, c_obj[3] ENGINE_NOINIT;
+                float nrm[3] ENGINE_NOINIT, world_pos[3] ENGINE_NOINIT;
+                for (int k = 0; k < 3; k++) {
+                    n_obj[k] = tri_verts[0]->normal[k] + tri_verts[1]->normal[k] +
+                               tri_verts[2]->normal[k];
+                    c_obj[k] = (tri_verts[0]->position[k] + tri_verts[1]->position[k] +
+                                tri_verts[2]->position[k]) * (1.0f / 3.0f);
+                }
+                model_normal(cof, n_obj, nrm);
+                model_point(model, c_obj, world_pos);
+                light_material(mat, light, nrm, view_dir, world_pos, use_fog, shade);
+                PROF_END(PROF_MESH_LIGHT);
+            }
+
+            for (int v = 0; v < 3; v++) {
                 if (use_fog) {
-                    float fog_t = fog_calculate_factor(clip.w);
-                    screen[v][3] = shade_r;
-                    screen[v][4] = shade_g;
-                    screen[v][5] = shade_b;
-                    screen[v][6] = 1.0f - fog_t;  // 1.0=visible, 0.0=full fog
+                    screen[v][3] = shade[0];
+                    screen[v][4] = shade[1];
+                    screen[v][5] = shade[2];
+                    screen[v][6] = 1.0f - fog_ts[v];  // 1.0=visible, 0.0=full fog
                     if (mat->type == MATERIAL_TEXTURED) {
                         screen[v][7] = tri_verts[v]->uv[0];
                         screen[v][8] = tri_verts[v]->uv[1];
-                        screen[v][9] = inv_w;
+                        screen[v][9] = inv_ws[v];
                     }
                 } else {
                     screen[v][3] = tri_verts[v]->uv[0];
                     screen[v][4] = tri_verts[v]->uv[1];
-                    screen[v][5] = inv_w;
+                    screen[v][5] = inv_ws[v];
                 }
             }
-
-            if (reject) continue;
 
             rdpq_triangle(trifmt, screen[0], screen[1], screen[2]);
             total_tris++;

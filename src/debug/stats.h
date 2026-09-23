@@ -33,6 +33,7 @@ typedef struct {
     uint32_t tris_ui;                // menu background, transitions
     uint32_t tris_rejected_near;     // mesh triangles dropped at the near plane
     uint32_t tris_rejected_guard;    // mesh triangles dropped by the guard band
+    uint32_t tris_culled_backface;   // mesh triangles dropped by the per-triangle winding test
 
     // RDP state traffic
     uint32_t mode_changes;           // rdpq_set_mode_standard() in mesh_draw

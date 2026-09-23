@@ -76,10 +76,28 @@ filesystem/audio/music/%.xm64: assets/audio/music/%.xm
 	@echo "    [XM64] $@"
 	@$(N64_AUDIOCONV) -o $(dir $@) "$<"
 
+# Hot text (ROADMAP_v2 D25): the per-triangle render path is linked as one
+# contiguous block so it never collides with itself in the 16 KB direct-mapped
+# I-cache. The link script is libdragon's n64.ld with src/engine/hot_text.ld
+# inserted after the boot code; it is regenerated when either changes, and the
+# build fails if the anchor is missing. tools/hot_text.py checks the result.
+ENGINE_LD    := $(BUILD_DIR)/engine.ld
+HOT_TEXT_LD  := $(SOURCE_DIR)/engine/hot_text.ld
+N64_LDFLAGS  := $(subst -Tn64.ld,-T$(ENGINE_LD),$(N64_LDFLAGS))
+
+$(ENGINE_LD): $(N64_LIBDIR)/n64.ld $(HOT_TEXT_LD)
+	@mkdir -p $(dir $@)
+	@echo "    [LDSCRIPT] $@"
+	@awk -v frag="$(HOT_TEXT_LD)" '{ print } \
+		/\*\(\.boot\)/ { boot = 1; next } \
+		boot == 1 && /ALIGN\(16\)/ { while ((getline line < frag) > 0) print line; boot = 2 } \
+		END { if (boot != 2) { print "engine.ld: *(.boot) + ALIGN(16) anchor not found in n64.ld" > "/dev/stderr"; exit 1 } }' \
+		$(N64_LIBDIR)/n64.ld > $@.tmp && mv $@.tmp $@
+
 $(ROM_NAME).z64: $(BUILD_DIR)/$(ROM_NAME).dfs
 
 $(BUILD_DIR)/$(ROM_NAME).dfs: $(assets_conv) $(assets_sfx_wav64) $(assets_music_wav64) $(assets_music_xm64)
-$(BUILD_DIR)/$(ROM_NAME).elf: $(OBJS)
+$(BUILD_DIR)/$(ROM_NAME).elf: $(OBJS) $(ENGINE_LD)
 
 # Header dependency tracking (n64.mk compiles with -MMD)
 -include $(wildcard $(BUILD_DIR)/*.d $(BUILD_DIR)/*/*.d)

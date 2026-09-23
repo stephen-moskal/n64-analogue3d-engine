@@ -56,6 +56,7 @@ Per-frame counters written with `STATS_INC(field)`, `STATS_ADD(field, n)` and `S
 | `tris_rejected_near / guard` | mesh triangles dropped at the near plane / guard band |
 | `mesh_draws`, `mesh_culled_frustum` | `mesh_draw()` calls and those rejected by the bounding-sphere test |
 | `groups_drawn`, `groups_culled_backface` | face groups submitted / skipped as back-facing |
+| `tris_culled_backface` | curved-group triangles skipped by the per-triangle winding test (CSV column `tris_backface`, last) |
 | `mode_changes` | `rdpq_set_mode_standard()` in `mesh_draw` |
 | `tex_uploads`, `tex_upload_bytes` | texture loads issued (only for groups that survive culling) |
 | `fill_rects` | fill rectangles (sky, benchmark layers) |

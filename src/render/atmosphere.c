@@ -1,4 +1,5 @@
 #include "atmosphere.h"
+#include "../engine/hot.h"
 #include "../debug/stats.h"
 #include <string.h>
 
@@ -224,7 +225,7 @@ void atmosphere_init(void) {
 // ============================================================
 
 void atmosphere_set_fog_enabled(bool enabled) { g_fog.enabled = enabled; }
-bool atmosphere_get_fog_enabled(void) { return g_fog.enabled; }
+ENGINE_HOT bool atmosphere_get_fog_enabled(void) { return g_fog.enabled; }
 
 void atmosphere_set_fog_color(color_t color) { g_fog.color = color; }
 
@@ -234,7 +235,7 @@ float atmosphere_get_fog_near(void) { return g_fog.near_distance; }
 void atmosphere_set_fog_far(float far_dist) { g_fog.far_distance = far_dist; }
 float atmosphere_get_fog_far(void) { return g_fog.far_distance; }
 
-const FogConfig *atmosphere_get_fog(void) { return &g_fog; }
+ENGINE_HOT const FogConfig *atmosphere_get_fog(void) { return &g_fog; }
 
 // ============================================================
 // Sky Getters/Setters
@@ -269,7 +270,7 @@ void atmosphere_apply_preset(AtmospherePresetID id) {
 // Fog Utility Functions
 // ============================================================
 
-float fog_calculate_factor(float camera_depth) {
+ENGINE_HOT float fog_calculate_factor(float camera_depth) {
     if (!g_fog.enabled) return 0.0f;
 
     float range = g_fog.far_distance - g_fog.near_distance;
@@ -282,7 +283,7 @@ float fog_calculate_factor(float camera_depth) {
     return t;
 }
 
-color_t fog_blend_color(color_t original, float camera_depth) {
+ENGINE_HOT color_t fog_blend_color(color_t original, float camera_depth) {
     if (!g_fog.enabled) return original;
 
     float fog_t = fog_calculate_factor(camera_depth);

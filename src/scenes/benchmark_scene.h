@@ -31,6 +31,7 @@ typedef enum {
     BENCH_SHADOWS,
     BENCH_FILLRATE,
     BENCH_OVERLOAD,     // deliberate CPU overrun (not part of "All"); reproduces D18
+    BENCH_MESH_AB,      // temporary S2 A/B: new vs legacy mesh_draw in one ROM (not in "All")
     BENCH_KIND_COUNT
 } BenchKind;
 

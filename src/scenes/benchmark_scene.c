@@ -35,7 +35,7 @@ typedef struct {
 } BenchStep;
 
 static const char *kind_names[BENCH_KIND_COUNT] = {
-    "all", "objects", "particles", "lights", "textures", "shadows", "fillrate", "overload",
+    "all", "objects", "particles", "lights", "textures", "shadows", "fillrate", "overload", "meshab",
 };
 
 // One-line description shown under the status line (param is substituted)
@@ -48,6 +48,7 @@ static const char *kind_desc[BENCH_KIND_COUNT] = {
     "16 pillars, shadow mode %d:off/blob/proj",
     "%d full-screen blended layers",
     "+%d ms CPU burn, floor + 16 pillars",
+    "%d: variant*1000 + pillars (0 new 1 old 2 oldwind)",
 };
 
 static BenchKind  configured_kind = BENCH_ALL;
@@ -72,6 +73,8 @@ static int        fill_layers;
 static bool       saved_fog, saved_sky;
 static int        burn_ms;             // OVERLOAD: extra CPU time per frame
 static bool       draw_floor;
+static int        mesh_variant;        // MESH_AB: 0 new, 1 legacy draw, 2 new + old winding
+static Mesh       pillar_oldwind;      // MESH_AB: pillar copy with the pre-S2 winding
 
 // ------------------------------------------------------------------------
 // Helpers
@@ -126,6 +129,12 @@ static void build_steps(BenchKind which) {
         static const int n[] = {0, 10, 14, 17, 20, 25};
         for (unsigned i = 0; i < sizeof(n) / sizeof(n[0]); i++) add_step(BENCH_OVERLOAD, n[i]);
     }
+    if (which == BENCH_MESH_AB) {
+        // Interleaved so drift (heat, background load) hits every variant alike
+        static const int n[] = {16, 32, 64};
+        for (unsigned i = 0; i < sizeof(n) / sizeof(n[0]); i++)
+            for (int v = 0; v < 3; v++) add_step(BENCH_MESH_AB, v * 1000 + n[i]);
+    }
 }
 
 // Lay out n instances on a square grid centred on the origin
@@ -172,6 +181,25 @@ static void build_tex_box(Mesh *m, int slot) {
         mesh_end_group(m);
     }
     mesh_compute_bounds(m);
+}
+
+// MESH_AB: copy of the pillar with every triangle's winding reversed (the
+// pre-S2 pillar data), to separate a winding effect from the code change
+static void build_pillar_oldwind(void) {
+    const Mesh *src = mesh_defs_get_pillar();
+    mesh_init(&pillar_oldwind);
+    pillar_oldwind.backface_cull = src->backface_cull;
+    for (int i = 0; i < src->material_count; i++) mesh_add_material(&pillar_oldwind, src->materials[i]);
+    for (int i = 0; i < src->vertex_count; i++) mesh_add_vertex(&pillar_oldwind, src->vertices[i]);
+    for (int g = 0; g < src->group_count; g++) {
+        const MeshFaceGroup *sg = &src->groups[g];
+        mesh_begin_group(&pillar_oldwind, sg->material_index);
+        for (int i = sg->index_start; i < sg->index_start + sg->index_count; i += 3) {
+            mesh_add_triangle(&pillar_oldwind, src->indices[i], src->indices[i + 2], src->indices[i + 1]);
+        }
+        mesh_end_group(&pillar_oldwind);
+    }
+    mesh_compute_bounds(&pillar_oldwind);
 }
 
 static const ParticleEmitterDef bench_particles = {
@@ -265,6 +293,10 @@ static void setup_step(Scene *scene) {
         draw_floor = true;
         burn_ms = st->param;
         break;
+    case BENCH_MESH_AB:
+        layout_grid(st->param % 1000);
+        mesh_variant = st->param / 1000;
+        break;
     default:
         break;   // BENCH_ALL step 0: empty reference scene
     }
@@ -318,6 +350,7 @@ static void bench_init(Scene *scene) {
     texture_load_slot(7, "rom:/tree.sprite");
     for (int i = 0; i < NUM_TEX_BOXES; i++) build_tex_box(&tex_boxes[i], i);
     mesh_defs_init();
+    build_pillar_oldwind();
     particle_init();
 
     // Fog and sky off for comparable numbers; restored on exit
@@ -437,6 +470,10 @@ static void bench_draw(Scene *scene) {
             mesh_draw(m, &model, cam, L);
         } else {
             mat4_from_srt(&model, &pillar_scale, 0, 0, 0, &instance_pos[i]);
+#if ENGINE_DEBUG
+            if (st->kind == BENCH_MESH_AB && mesh_variant == 1) { mesh_draw_legacy(pillar, &model, cam, L); continue; }
+            if (st->kind == BENCH_MESH_AB && mesh_variant == 2) { mesh_draw(&pillar_oldwind, &model, cam, L); continue; }
+#endif
             mesh_draw(pillar, &model, cam, L);
         }
     }
@@ -486,6 +523,7 @@ static void bench_cleanup(Scene *scene) {
     destroy_emitters();
     particle_cleanup();
     for (int i = 0; i < NUM_TEX_BOXES; i++) mesh_cleanup(&tex_boxes[i]);
+    mesh_cleanup(&pillar_oldwind);
     mesh_defs_cleanup();
     texture_cleanup();
     atmosphere_set_fog_enabled(saved_fog);
