@@ -1,5 +1,6 @@
 #include "particle.h"
 #include "texture.h"
+#include "../debug/stats.h"
 #include "atmosphere.h"
 #include <stdlib.h>
 #include <string.h>
@@ -301,6 +302,7 @@ void particle_update(float dt) {
 
 void particle_draw(const Camera *cam) {
     if (!initialized) return;
+    STATS_SET(particles_alive, particle_alive_count());
 
     // Count alive particles to early-out
     int alive = 0;
@@ -450,7 +452,8 @@ void particle_draw(const Camera *cam) {
         tri_count += 2;
     }
 
-    texture_stats_add_triangles(tri_count);
+    STATS_ADD(tris_particle, tri_count);
+    STATS_ADD(particles_drawn, tri_count / 2);
 }
 
 // --- Stats ---

@@ -1,4 +1,5 @@
 #include "atmosphere.h"
+#include "../debug/stats.h"
 #include <string.h>
 
 // ============================================================
@@ -306,6 +307,7 @@ void sky_draw(void) {
     if (g_sky.band_count == 1) {
         rdpq_set_mode_fill(g_sky.band_colors[0]);
         rdpq_fill_rectangle(0, 0, 320, 240);
+        STATS_INC(fill_rects);
         return;
     }
 
@@ -342,5 +344,6 @@ void sky_draw(void) {
 
         rdpq_set_mode_fill(c);
         rdpq_fill_rectangle(0, y0, 320, y1);
+        STATS_INC(fill_rects);
     }
 }

@@ -10,6 +10,7 @@
 #include "render/atmosphere.h"
 #include "debug/engine_debug.h"
 #include "debug/debug_menu.h"
+#include "debug/stats.h"
 
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
@@ -164,7 +165,13 @@ int main(void) {
     // Main game loop — variable timestep (logic runs once per render frame)
     uint32_t last_ticks = TICKS_READ();
 
+    uint32_t frame_index = 0;
+
     while (1) {
+        // Publish last frame's counters, start counting this frame
+        stats_frame_begin();
+        frame_index++;
+
         // Measure real elapsed time since last frame
         uint32_t now = TICKS_READ();
         float dt = (float)TICKS_DISTANCE(last_ticks, now) / (float)TICKS_PER_SECOND;
@@ -176,6 +183,9 @@ int main(void) {
         // Update game logic once per frame with actual elapsed time
         scene_manager_update(&scene_mgr, dt);
         debug_menu_update();
+        if (debug_consume_dump_request()) {
+            stats_dump_csv(frame_index);
+        }
 
         // Render
         surface_t *fb = display_get();

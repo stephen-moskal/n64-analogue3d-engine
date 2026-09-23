@@ -1,4 +1,5 @@
 #include "scene.h"
+#include "../debug/stats.h"
 #include "../render/texture.h"
 #include <string.h>
 
@@ -48,6 +49,8 @@ void scene_update(Scene *scene, float dt) {
 
     // Run collision tests
     collision_test_all(&scene->collision);
+    STATS_SET(colliders, scene->collision.count);
+    STATS_SET(collision_pairs, scene->collision.result_count);
 }
 
 void scene_draw(Scene *scene) {
@@ -238,6 +241,7 @@ void scene_manager_draw(SceneManager *mgr) {
             float v3[] = {  0.0f, 240.0f};
             rdpq_triangle(&TRIFMT_FILL, v0, v1, v2);
             rdpq_triangle(&TRIFMT_FILL, v0, v2, v3);
+            STATS_ADD(tris_ui, 2);
         }
     }
 }

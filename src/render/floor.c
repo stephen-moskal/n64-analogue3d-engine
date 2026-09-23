@@ -1,5 +1,6 @@
 #include "floor.h"
 #include "texture.h"
+#include "../debug/stats.h"
 #include "atmosphere.h"
 #include <math.h>
 
@@ -220,5 +221,5 @@ void floor_draw(const Camera *cam, const LightConfig *light) {
         }
     }
 
-    texture_stats_add_triangles(tri_count);
+    STATS_ADD(tris_floor, tri_count);
 }

@@ -1,4 +1,5 @@
 #include "menu.h"
+#include "../debug/stats.h"
 #include "text.h"
 #include <string.h>
 
@@ -197,6 +198,7 @@ static void draw_bg(int y0, int y1) {
 
     rdpq_triangle(&TRIFMT_FILL, tl, br, bl);
     rdpq_triangle(&TRIFMT_FILL, tl, tr, br);
+    STATS_ADD(tris_ui, 2);
 }
 
 void menu_draw(const Menu *menu) {

@@ -1,9 +1,9 @@
 #include "texture.h"
 #include <assert.h>
+#include "../debug/stats.h"
 
 static sprite_t *slots[TEX_MAX_SLOTS];
 static int slot_count = 0;
-static TextureStats stats;
 
 static const char *cube_face_paths[] = {
     "rom:/face_front.sprite",
@@ -23,7 +23,6 @@ void texture_init(void) {
                slots[i]->width, slots[i]->height);
     }
     slot_count = 6;
-    texture_stats_reset();
 }
 
 int texture_upload(int slot, rdpq_tile_t tile) {
@@ -36,23 +35,9 @@ int texture_upload(int slot, rdpq_tile_t tile) {
     // rdpq_sprite_upload can be 0 due to internal caching)
     surface_t surf = sprite_get_pixels(slots[slot]);
     int bytes = surf.stride * slots[slot]->height;
-    stats.upload_count++;
-    stats.tmem_bytes_used += bytes;
+    STATS_INC(tex_uploads);
+    STATS_ADD(tex_upload_bytes, bytes);
     return bytes;
-}
-
-void texture_stats_reset(void) {
-    stats.tmem_bytes_used = 0;
-    stats.upload_count = 0;
-    stats.triangle_count = 0;
-}
-
-void texture_stats_add_triangles(int count) {
-    stats.triangle_count += count;
-}
-
-const TextureStats *texture_stats_get(void) {
-    return &stats;
 }
 
 void texture_cleanup(void) {

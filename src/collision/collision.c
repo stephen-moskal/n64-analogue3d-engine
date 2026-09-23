@@ -1,4 +1,5 @@
 #include "collision.h"
+#include "../debug/stats.h"
 #include <string.h>
 #include <math.h>
 
@@ -502,6 +503,7 @@ int collision_test_all(CollisionWorld *world) {
 
 bool collision_raycast(const CollisionWorld *world, const Ray *ray,
                        uint16_t mask, CollisionResult *out) {
+    STATS_INC(raycasts);
     bool any_hit = false;
     float closest = ray->max_distance;
 

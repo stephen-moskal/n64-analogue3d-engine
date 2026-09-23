@@ -1,4 +1,5 @@
 #include "physics.h"
+#include "../debug/stats.h"
 #include <math.h>
 #include <string.h>
 
@@ -188,6 +189,9 @@ void physics_world_update(PhysicsWorld *world, float dt) {
         world->accumulator -= PHYSICS_DT;
         steps++;
     }
+    STATS_ADD(physics_steps, steps);
+    STATS_SET(physics_bodies, world->body_count);
+
     // Clamp leftover to prevent drift after stalls
     if (world->accumulator > PHYSICS_DT) {
         world->accumulator = PHYSICS_DT;

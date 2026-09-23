@@ -1,5 +1,6 @@
 #include "shadow.h"
 #include "texture.h"
+#include "../debug/stats.h"
 #include <math.h>
 
 // Shadow sits slightly above floor to avoid Z-fighting.
@@ -103,7 +104,7 @@ void shadow_draw_blob(const Camera *cam, const LightConfig *light,
     rdpq_triangle(&TRIFMT_ZBUF, screen[0], screen[1], screen[2]);
     rdpq_triangle(&TRIFMT_ZBUF, screen[0], screen[2], screen[3]);
 
-    texture_stats_add_triangles(2);
+    STATS_ADD(tris_shadow, 2);
 }
 
 // ============================================================
@@ -186,5 +187,5 @@ void shadow_draw_projected(const Camera *cam, const LightConfig *light,
         }
     }
 
-    texture_stats_add_triangles(tri_count);
+    STATS_ADD(tris_shadow, tri_count);
 }

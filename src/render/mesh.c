@@ -1,5 +1,6 @@
 #include "mesh.h"
 #include "texture.h"
+#include "../debug/stats.h"
 #include "atmosphere.h"
 #include <stdlib.h>
 #include <string.h>
@@ -130,6 +131,7 @@ void mesh_compute_bounds(Mesh *mesh) {
 void mesh_draw(const Mesh *mesh, const mat4_t *model,
                const Camera *cam, const LightConfig *light) {
     if (mesh->vertex_count == 0 || mesh->index_count == 0) return;
+    STATS_INC(mesh_draws);
 
     // 1. Transform bounding sphere center to world space for frustum cull
     vec4_t world_center_h;
@@ -152,6 +154,7 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
     float world_radius = mesh->bound_radius * sqrtf(max_sq);
 
     if (!camera_sphere_visible(cam, &world_center, world_radius)) {
+        STATS_INC(mesh_culled_frustum);
         return;
     }
 
@@ -195,6 +198,7 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
         // Only reset RDP mode when material type changes
         if ((int)mat->type != last_mat_type) {
             rdpq_set_mode_standard();
+            STATS_INC(mode_changes);
             rdpq_mode_zbuf(true, true);
 
             if (use_fog) {
@@ -229,11 +233,6 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
             last_mat_type = (int)mat->type;
         }
 
-        // Upload texture for this group (texture changes per group, mode doesn't)
-        if (mat->type == MATERIAL_TEXTURED && mat->texture_slot >= 0) {
-            texture_upload(mat->texture_slot, TILE0);
-        }
-
         // Compute group normal + lighting ONCE per group.
         // In flat shading, all triangles in a group share the same normal
         // (all vertices were built with the same face normal).
@@ -258,8 +257,15 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
         // Backface cull entire group
         if (mesh->backface_cull) {
             float facing = nx * tcx + ny * tcy + nz * tcz;
-            if (facing < 0.0f) continue;
+            if (facing < 0.0f) { STATS_INC(groups_culled_backface); continue; }
         }
+
+        // Upload the texture only for groups that survive the cull
+        // (texture changes per group, mode doesn't; roadmap defect D4)
+        if (mat->type == MATERIAL_TEXTURED && mat->texture_slot >= 0) {
+            texture_upload(mat->texture_slot, TILE0);
+        }
+        STATS_INC(groups_drawn);
 
         // Compute world position of group's representative vertex (for point lights)
         vec3_t gv0_pos = {gv0->position[0], gv0->position[1], gv0->position[2]};
@@ -314,7 +320,7 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
                 mat4_mul_vec3(&clip, &mvp, &pos);
 
                 // Near-plane rejection
-                if (clip.w < 1.0f) { reject = true; break; }
+                if (clip.w < 1.0f) { reject = true; STATS_INC(tris_rejected_near); break; }
 
                 float inv_w = 1.0f / clip.w;
                 float ndc_x = clip.x * inv_w;
@@ -327,7 +333,7 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
                 // Guard band check
                 if (screen[v][0] < GUARD_X_MIN || screen[v][0] > GUARD_X_MAX ||
                     screen[v][1] < GUARD_Y_MIN || screen[v][1] > GUARD_Y_MAX) {
-                    reject = true; break;
+                    reject = true; STATS_INC(tris_rejected_guard); break;
                 }
 
                 float depth = ndc_z * 0.5f + 0.5f;
@@ -360,5 +366,5 @@ void mesh_draw(const Mesh *mesh, const mat4_t *model,
         }
     }
 
-    texture_stats_add_triangles(total_tris);
+    STATS_ADD(tris_mesh, total_tris);
 }

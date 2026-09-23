@@ -9,6 +9,7 @@
 #include "../ui/text.h"
 #include "../ui/menu.h"
 #include "../debug/engine_debug.h"
+#include "../debug/stats.h"
 #include "../render/billboard.h"
 #include "../render/shadow.h"
 #include "../render/particle.h"
@@ -1151,8 +1152,6 @@ static void demo_update(Scene *scene, float dt) {
 // ============================================================
 
 static void demo_draw(Scene *scene) {
-    texture_stats_reset();
-
     // Draw sky gradient bands (behind all geometry)
     sky_draw();
 
@@ -1226,9 +1225,10 @@ static void demo_post_draw(Scene *scene) {
             scene->object_count, SCENE_MAX_OBJECTS, visible_count);
 
         // Left side: geometry stats
-        const TextureStats *ts = texture_stats_get();
-        text_draw_fmt(&geom_stats_text, "T:%d U:%d COL:%d RAY:%.0f",
-            ts->triangle_count, ts->upload_count,
+        // Last complete frame (see src/debug/stats.h)
+        const EngineStats *st = stats_get();
+        text_draw_fmt(&geom_stats_text, "T:%lu U:%lu COL:%d RAY:%.0f",
+            (unsigned long)stats_tris_total(st), (unsigned long)st->tex_uploads,
             scene->collision.result_count,
             ray_hit ? ray_result.distance : -1.0f);
 

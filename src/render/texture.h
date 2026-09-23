@@ -13,17 +13,8 @@
 #define TEX_CUBE_RIGHT  4
 #define TEX_CUBE_LEFT   5
 
-typedef struct {
-    int tmem_bytes_used;
-    int upload_count;
-    int triangle_count;
-} TextureStats;
-
 void texture_init(void);
 int  texture_upload(int slot, rdpq_tile_t tile);
-void texture_stats_reset(void);
-void texture_stats_add_triangles(int count);
-const TextureStats *texture_stats_get(void);
 void texture_cleanup(void);
 
 // Dynamic per-slot loading (for scene-based texture management)
