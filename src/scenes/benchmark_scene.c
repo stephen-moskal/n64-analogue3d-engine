@@ -72,6 +72,8 @@ static int        fill_layers;
 static bool       saved_fog, saved_sky;
 static int        burn_ms;             // OVERLOAD: extra CPU time per frame
 static bool       draw_floor;
+static void      *draw_frame;          // stack frame of bench_draw (data-layout row, D26)
+static bool       layout_logged;
 
 // ------------------------------------------------------------------------
 // Helpers
@@ -274,8 +276,22 @@ static void setup_step(Scene *scene) {
     acc_frames = 0;
 }
 
+// Addresses of the hot render data, once per run: with the 8 KB direct-mapped
+// D-cache, vertex data that aliases the render stack costs misses on every
+// triangle (roadmap D26). Index = address bits 4..12.
+static void log_layout(void) {
+    if (layout_logged || !draw_frame) return;
+    layout_logged = true;
+    const Mesh *pillar = mesh_defs_get_pillar();
+    (void)pillar;   // debugf is compiled out in release
+    debugf("BENCH_LAYOUT,draw_frame=%p,pillar_vtx=%p,pillar_vtx_bytes=%d,pillar_idx=%p,pillar_idx_bytes=%d\n",
+           draw_frame, (void *)pillar->vertices, (int)(pillar->vertex_count * sizeof(MeshVertex)),
+           (void *)pillar->indices, (int)(pillar->index_count * sizeof(uint16_t)));
+}
+
 static void finish_step(void) {
     const BenchStep *st = &steps[step_index];
+    log_layout();
     FrameTimeStats ft;
     frametime_get(&ft, BUDGET_MS);
     const RdpCounters *rdp = profiler_rdp_get();
@@ -310,6 +326,8 @@ static void finish_step(void) {
 static void bench_init(Scene *scene) {
     finished = false;
     aborted = false;
+    draw_frame = NULL;
+    layout_logged = false;
     build_steps(configured_kind);
     step_index = 0;
 
@@ -396,6 +414,7 @@ static void bench_update(Scene *scene, float dt) {
 }
 
 static void bench_draw(Scene *scene) {
+    if (!draw_frame) draw_frame = __builtin_frame_address(0);
     const BenchStep *st = &steps[step_index < step_count ? step_index : step_count - 1];
     const Camera *cam = &scene->camera;
     const LightConfig *L = &scene->lighting;

@@ -70,6 +70,7 @@ typedef struct {
 typedef struct CollisionWorld {
     Collider colliders[COLLISION_MAX_COLLIDERS];
     int count;
+    int high;           // one past the highest active slot: bound for every scan (D14)
     CollisionResult results[COLLISION_MAX_RESULTS];
     int result_count;
 } CollisionWorld;

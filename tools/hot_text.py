@@ -14,8 +14,10 @@ while one kind of geometry is drawn):
   * every phase function exists and lies inside the hot block;
   * no two functions of the phase share an I-cache line;
 
-and lists the phase roots' direct callees that live outside the block (each of
-those can evict hot code while the loop runs).
+Callees are followed transitively through the block, so code a phase reaches
+indirectly (mesh_draw -> texture_upload -> libdragon's sprite upload) is
+checked too. Callees outside the block are listed: each can evict hot code
+while the loop runs, unless it only runs on a rare path (COLD_OK).
 
 Usage:
     python3 tools/hot_text.py build/debug/engine-debug.elf [--verbose]
@@ -49,10 +51,23 @@ PHASES = {
     "particle":    ["particle_draw"],
 }
 
-# Callees that are allowed outside the block: rare (buffer switch, asserts)
-# or per-group work too large to pin (texture uploads).
-COLD_OK = {"rspq_next_buffer", "texture_upload", "__assert_func", "debugf",
-           "assertf", "__rdpq_debug_log"}
+# Callees allowed outside the block. Rare paths: command-buffer switches,
+# block recording, palettes, asserts and logging. And texture_upload: it runs
+# once per textured face group, but its libdragon path (~7 KB) does not fit in
+# the mesh phase's 16 KB window, so mesh_draw keeps uploads to a minimum
+# (a texture already in TMEM is not uploaded again).
+COLD_OK = {"texture_upload", "rspq_next_buffer", "__rdpq_block_next_buffer", "__rdpq_block_reserve",
+           "__rdpq_block_update", "rdpq_tex_upload_tlut", "rdpq_tex_reuse_sub",
+           "rdpq_tex_reuse", "sprite_get_palette", "sprite_get_palette_used_colors",
+           "tex_format_name", "memset",
+           "__assert_func", "__inspector_assertion", "debug_assert_func_f",
+           "debugf", "debugfv", "assertf", "abort", "raise", "_exit",
+           "disable_interrupts", "__rdpq_debug_log"}
+
+# Calls made through function pointers, which the disassembly scan cannot
+# follow: caller -> the targets this engine's data actually reaches (the
+# RGBA16 texture path loads with LOAD_BLOCK). Only matters for code in the block.
+INDIRECT = {"tex_loader_load": ["texload_block"]}
 
 
 def tool(name):
@@ -138,13 +153,20 @@ def main():
 
         members = set(present) | set(TRI_PATH) | set(GROUP_PATH)
         outside = set()
-        for r in present:
-            a, s = funcs[r]
-            for c in direct_callees(args.elf, a, s):
-                if c not in funcs or c in members:
+        queue, visited = sorted(members), set()
+        while queue:                                   # callees, transitively
+            f = queue.pop()
+            if f in visited or f not in funcs or not inside(f):
+                continue
+            visited.add(f)
+            a, s = funcs[f]
+            for c in sorted(direct_callees(args.elf, a, s)) + INDIRECT.get(f, []):
+                if c not in funcs:
                     continue
                 if inside(c):
-                    members.add(c)
+                    if c not in members:
+                        members.add(c)
+                        queue.append(c)
                 elif c not in COLD_OK:
                     outside.add(c)
 

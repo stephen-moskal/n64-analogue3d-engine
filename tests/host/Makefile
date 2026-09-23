@@ -19,11 +19,12 @@ ENGINE_SRCS := \
 	$(SRC)/render/camera.c \
 	$(SRC)/render/mesh_build.c \
 	$(SRC)/render/mesh_defs.c \
+	$(SRC)/render/particle.c \
 	$(SRC)/debug/frametime.c \
 	$(SRC)/debug/stats.c
 
 TEST_SRCS := test_main.c test_vec3.c test_collision.c test_physics.c \
-             test_action.c test_camera.c test_frametime.c test_mesh.c shim/shim.c
+             test_action.c test_camera.c test_frametime.c test_mesh.c test_particle.c shim/shim.c
 
 OBJS := $(patsubst %.c,$(BUILD)/%.o,$(notdir $(TEST_SRCS) $(ENGINE_SRCS)))
 vpath %.c . shim $(sort $(dir $(ENGINE_SRCS)))

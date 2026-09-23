@@ -237,7 +237,7 @@ static void apply_camera_collision(Camera *cam, const vec3_t *look_at) {
     if (cam->collision_radius > 0.0f) {
         ColliderSphere cam_sphere = {cam->position, cam->collision_radius};
 
-        for (int i = 0; i < COLLISION_MAX_COLLIDERS; i++) {
+        for (int i = 0; i < cam->collision_world->high; i++) {
             const Collider *c = &cam->collision_world->colliders[i];
             if (!c->active) continue;
             if (c->type != COLLIDER_SPHERE) continue;
@@ -283,12 +283,16 @@ void camera_set_collision(Camera *cam, const struct CollisionWorld *world, uint1
     cam->collision_world = world;
     cam->collision_mask = mask;
     cam->collision_enabled = (world != NULL);
+    cam->dirty = true;
 }
 
 // --- Update ---
 
 void camera_update(Camera *cam) {
-    if (!cam->dirty) return;
+    // Rebuild only when something changed (D6). Follow mode tracks a moving
+    // target and smooths toward it, so it updates every frame.
+    bool following = (cam->mode == CAMERA_MODE_FOLLOW && cam->follow_target);
+    if (!cam->dirty && !following) return;
 
     vec3_t look_at;
 

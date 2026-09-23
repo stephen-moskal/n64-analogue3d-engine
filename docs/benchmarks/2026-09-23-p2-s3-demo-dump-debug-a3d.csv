@@ -1,0 +1,10 @@
+STATS_HDR,frame,tris_total,tris_mesh,tris_floor,tris_shadow,tris_particle,tris_ui,rej_near,rej_guard,mesh_draws,mesh_culled,groups_drawn,groups_culled,mode_changes,tex_uploads,tex_bytes,fill_rects,particles_alive,particles_drawn,colliders,collision_pairs,raycasts,physics_bodies,physics_steps,tris_backface
+STATS,2168,174,26,148,0,0,0,0,0,9,4,13,20,5,3,6144,0,0,0,8,5,1,0,1,0
+PROF_HDR,frame,profiler_on,frame,wait_display,limiter,update,input,physics,particle_upd,scene_sys,draw,sky,floor,shadows,objects,mesh_cull,mesh_light,mesh_tris,particle_draw,hud,menu,overlay,audio
+PROF_AVG,2167,1,16733.8,9817.9,0.0,216.5,52.2,15.4,40.4,40.1,4835.5,0.0,2144.3,0.0,1318.5,33.6,187.8,645.5,25.5,1295.4,0.0,0.0,1563.3
+PROF_PEAK,2167,1,23190,11982,0,330,66,52,94,88,11594,0,3458,0,2002,57,341,1055,47,6225,0,0,6223
+RDP,2168,counter_mhz=93.75,frame_us=16734,busy_us=5501,pipe_us=1938,tmem_us=75,busy_pct=32.9,busy_peak_us=13463
+FT_HDR,frame,count,fps,avg_ms,min_ms,max_ms,p99_ms,low1_fps,cpu_avg_ms,cpu_max_ms,over_budget,hist_1.5ms_buckets...
+FT,2168,256,60.0,16.67,12.00,21.03,20.99,47.6,6.88,11.37,0,0,0,0,0,0,0,0,1,97,2,13,42,1,98,2,0,0,0,0,0,0,0,0,0
+MEM_HDR,frame,rdram,expansion_pak,heap_total,heap_used,heap_peak,heap_delta,fb_bytes,zbuf_bytes,stack_size,stack_used_peak
+MEM,2168,8388608,1,7805944,913552,913552,760,460800,153600,65536,3080

@@ -350,6 +350,10 @@ static int last_fog_near = 3;
 static int last_fog_far = 4;
 static int last_fog_color = 0;
 static int last_sky_toggle = 0;
+// Applied only when they change (roadmap D23); -1 forces the next update to apply
+static int last_pt_lights = -1, last_pt_color = -1, last_pt_int = -1, last_pt_rad = -1;
+static int environ_disabled_for = -1;          // atmosphere preset the Environ disabled states match
+static int last_binding[ACTION_COUNT];
 
 // Background color options
 static const color_t bg_colors[] = {
@@ -649,6 +653,9 @@ static void demo_init(Scene *scene) {
     last_fog_far = 4;
     last_fog_color = 0;
     last_sky_toggle = 0;
+    last_pt_lights = last_pt_color = last_pt_int = last_pt_rad = -1;
+    environ_disabled_for = -1;
+    for (int i = 0; i < ACTION_COUNT; i++) last_binding[i] = -1;
     hud_fps = 0.0f;
     hud_fps_ticks = 0;
     interaction_mode = MODE_NORMAL;
@@ -1007,8 +1014,6 @@ static void demo_update(Scene *scene, float dt) {
         last_shadow_dark = shadow_dk_idx;
     }
 
-    scene->camera.dirty = true;
-
     // --- Apply atmosphere settings from Environ tab ---
 
     int atmo_preset  = menu_get_value(&start_menu, TAB_ENVIRON, ITEM_ATMO_PRESET);
@@ -1052,13 +1057,16 @@ static void demo_update(Scene *scene, float dt) {
         atmosphere_set_sky_enabled(sky_toggle == 1);
     }
 
-    // Update disabled state for Environ sub-options
-    bool is_custom = (atmo_preset == 0);
-    menu_item_set_disabled(&start_menu, TAB_ENVIRON, ITEM_FOG_TOGGLE, !is_custom);
-    menu_item_set_disabled(&start_menu, TAB_ENVIRON, ITEM_FOG_NEAR, !is_custom);
-    menu_item_set_disabled(&start_menu, TAB_ENVIRON, ITEM_FOG_FAR, !is_custom);
-    menu_item_set_disabled(&start_menu, TAB_ENVIRON, ITEM_FOG_COLOR, !is_custom);
-    menu_item_set_disabled(&start_menu, TAB_ENVIRON, ITEM_SKY_TOGGLE, !is_custom);
+    // Disabled state for Environ sub-options (custom mode only), on change
+    if (atmo_preset != environ_disabled_for) {
+        bool is_custom = (atmo_preset == 0);
+        menu_item_set_disabled(&start_menu, TAB_ENVIRON, ITEM_FOG_TOGGLE, !is_custom);
+        menu_item_set_disabled(&start_menu, TAB_ENVIRON, ITEM_FOG_NEAR, !is_custom);
+        menu_item_set_disabled(&start_menu, TAB_ENVIRON, ITEM_FOG_FAR, !is_custom);
+        menu_item_set_disabled(&start_menu, TAB_ENVIRON, ITEM_FOG_COLOR, !is_custom);
+        menu_item_set_disabled(&start_menu, TAB_ENVIRON, ITEM_SKY_TOGGLE, !is_custom);
+        environ_disabled_for = atmo_preset;
+    }
 
     last_atmo_preset = atmo_preset;
     last_fog_toggle = fog_toggle;
@@ -1067,13 +1075,15 @@ static void demo_update(Scene *scene, float dt) {
     last_fog_color = fog_color_idx;
     last_sky_toggle = sky_toggle;
 
-    // --- Apply point lights unconditionally (survives atmosphere preset changes) ---
-    {
-        int pt_lights_idx = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_LIGHTS);
-        int pt_color_idx  = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_COLOR);
-        int pt_int_idx    = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_INTENSITY);
-        int pt_rad_idx    = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_RADIUS);
-
+    // --- Point lights and torch emitters, applied when their items change (D23) ---
+    // (Atmosphere presets and the lighting block never touch point lights;
+    // lighting_init on Reset Scene does, and demo_init resets the caches.)
+    int pt_lights_idx = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_LIGHTS);
+    int pt_color_idx  = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_COLOR);
+    int pt_int_idx    = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_INTENSITY);
+    int pt_rad_idx    = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_RADIUS);
+    if (pt_lights_idx != last_pt_lights || pt_color_idx != last_pt_color ||
+        pt_int_idx != last_pt_int || pt_rad_idx != last_pt_rad) {
         LightConfig *lc = &scene->lighting;
 
         if (pt_lights_idx == 1) {
@@ -1125,13 +1135,21 @@ static void demo_update(Scene *scene, float dt) {
         menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_COLOR, !pt_on);
         menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_INTENSITY, !pt_on);
         menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_RADIUS, !pt_on);
+
+        last_pt_lights = pt_lights_idx;
+        last_pt_color = pt_color_idx;
+        last_pt_int = pt_int_idx;
+        last_pt_rad = pt_rad_idx;
     }
 
-    // --- Apply control rebindings from Controls tab ---
+    // --- Apply control rebindings from Controls tab, on change (D23) ---
     // Menu item indices match GameAction enum; option indices match PhysicalButton enum
     for (int i = 0; i < ACTION_COUNT; i++) {
         int btn_idx = menu_get_value(&start_menu, TAB_CONTROLS, i);
-        action_set_binding((GameAction)i, (PhysicalButton)btn_idx);
+        if (btn_idx != last_binding[i]) {
+            action_set_binding((GameAction)i, (PhysicalButton)btn_idx);
+            last_binding[i] = btn_idx;
+        }
     }
 
     // Background color: atmosphere preset overrides Settings tab
@@ -1169,10 +1187,7 @@ static void demo_update(Scene *scene, float dt) {
 // ============================================================
 
 static void demo_draw(Scene *scene) {
-    // Draw sky gradient bands (behind all geometry)
-    PROF_BEGIN(PROF_SKY);
-    sky_draw();
-    PROF_END(PROF_SKY);
+    // The sky (when enabled) is drawn by scene_draw() as the background
 
     // Draw the checkered floor
     PROF_BEGIN(PROF_FLOOR);

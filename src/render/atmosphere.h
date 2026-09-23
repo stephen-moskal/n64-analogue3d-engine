@@ -99,7 +99,10 @@ color_t fog_blend_color(color_t original, float camera_depth);
 // Rendering
 // ============================================================
 
-// Draw sky gradient bands. Call from scene on_draw before floor/geometry.
+// Draw sky gradient bands. scene_draw() calls it as the frame background when
+// sky_covers_screen() (instead of the colour clear); scenes do not call it.
 void sky_draw(void);
+// True when sky_draw() paints every pixel (the frame needs no colour clear)
+bool sky_covers_screen(void);
 
 #endif

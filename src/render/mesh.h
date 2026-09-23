@@ -3,6 +3,7 @@
 
 #include <libdragon.h>
 #include <stdbool.h>
+#include <math.h>
 #include "../math/vec3.h"
 #include "camera.h"
 #include "lighting.h"
@@ -88,6 +89,38 @@ int  mesh_begin_group(Mesh *mesh, int material_index);
 void mesh_end_group(Mesh *mesh);
 void mesh_compute_bounds(Mesh *mesh);   // also analyses every face group
 void mesh_analyze_group(const Mesh *mesh, MeshFaceGroup *group);
+
+// World-space bounding sphere of a mesh under a model matrix: the centre is
+// transformed, the radius scaled by the largest axis scale (squared column
+// lengths compared, one sqrtf). For frustum culling.
+static inline void mesh_world_bounds(const Mesh *mesh, const mat4_t *model,
+                                     vec3_t *center, float *radius) {
+    vec4_t c;
+    mat4_mul_vec3(&c, model, &mesh->bound_center);
+    *center = (vec3_t){c.x, c.y, c.z};
+    float sx = model->m[0][0] * model->m[0][0] + model->m[0][1] * model->m[0][1] +
+               model->m[0][2] * model->m[0][2];
+    float sy = model->m[1][0] * model->m[1][0] + model->m[1][1] * model->m[1][1] +
+               model->m[1][2] * model->m[1][2];
+    float sz = model->m[2][0] * model->m[2][0] + model->m[2][1] * model->m[2][1] +
+               model->m[2][2] * model->m[2][2];
+    float m = sx > sy ? (sx > sz ? sx : sz) : (sy > sz ? sy : sz);
+    *radius = mesh->bound_radius * sqrtf(m);
+}
+
+// Normal matrix of a model matrix: its cofactor matrix (inverse transpose
+// times the determinant), so non-uniform scale keeps normals perpendicular to
+// their faces. cof[k] = column_{k+1} x column_{k+2}; a local normal n maps to
+// out[r] = cof[0][r]*n[0] + cof[1][r]*n[1] + cof[2][r]*n[2] (not unit length).
+static inline void mesh_normal_matrix(const mat4_t *m, float cof[3][3]) {
+    for (int k = 0; k < 3; k++) {
+        const float *a = m->m[(k + 1) % 3];
+        const float *b = m->m[(k + 2) % 3];
+        cof[k][0] = a[1] * b[2] - a[2] * b[1];
+        cof[k][1] = a[2] * b[0] - a[0] * b[2];
+        cof[k][2] = a[0] * b[1] - a[1] * b[0];
+    }
+}
 
 // Twice the signed area of a screen-space triangle (x right, y down).
 // Front faces are wound counter-clockwise seen from outside the mesh, which

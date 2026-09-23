@@ -301,8 +301,12 @@ ENGINE_HOT color_t fog_blend_color(color_t original, float camera_depth) {
 // Sky Renderer
 // ============================================================
 
+bool sky_covers_screen(void) {
+    return g_sky.enabled && g_sky.band_count >= 1;
+}
+
 void sky_draw(void) {
-    if (!g_sky.enabled || g_sky.band_count < 1) return;
+    if (!sky_covers_screen()) return;
 
     // Single color: fill entire screen
     if (g_sky.band_count == 1) {
@@ -319,6 +323,7 @@ void sky_draw(void) {
     const int num_strips = 240 / strip_h;
     const int stops = g_sky.band_count;
 
+    rdpq_set_mode_fill(g_sky.band_colors[0]);   // mode once; strips change only the colour
     for (int s = 0; s < num_strips; s++) {
         int y0 = s * strip_h;
         int y1 = (s == num_strips - 1) ? 240 : y0 + strip_h;
@@ -343,7 +348,7 @@ void sky_draw(void) {
             0xFF
         );
 
-        rdpq_set_mode_fill(c);
+        rdpq_set_fill_color(c);
         rdpq_fill_rectangle(0, y0, 320, y1);
         STATS_INC(fill_rects);
     }

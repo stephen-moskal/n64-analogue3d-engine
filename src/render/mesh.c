@@ -22,9 +22,9 @@ static inline ENGINE_HOT void model_point(const mat4_t *m, const float p[3], flo
     }
 }
 
-// Local normal -> world unit normal through the cofactor matrix
-// (inverse transpose times det), so non-uniform scale keeps normals
-// perpendicular to their faces. cof[k] = column_{k+1} x column_{k+2}.
+// Local normal -> world unit normal through the normal (cofactor) matrix
+// from mesh_normal_matrix(), so non-uniform scale keeps normals
+// perpendicular to their faces.
 static inline ENGINE_HOT void model_normal(const float cof[3][3], const float n[3], float out[3]) {
     for (int r = 0; r < 3; r++) {
         out[r] = cof[0][r] * n[0] + cof[1][r] * n[1] + cof[2][r] * n[2];
@@ -36,15 +36,6 @@ static inline ENGINE_HOT void model_normal(const float cof[3][3], const float n[
     }
 }
 
-static ENGINE_HOT void cofactor3(const mat4_t *m, float cof[3][3]) {
-    for (int k = 0; k < 3; k++) {
-        const float *a = m->m[(k + 1) % 3];
-        const float *b = m->m[(k + 2) % 3];
-        cof[k][0] = a[1] * b[2] - a[2] * b[1];
-        cof[k][1] = a[2] * b[0] - a[0] * b[2];
-        cof[k][2] = a[0] * b[1] - a[1] * b[0];
-    }
-}
 
 // Light a material and set the colour: prim colour when unfogged, or return
 // it in shade[] (0..1) for the shade-RGB channels when fog is on.
@@ -70,26 +61,11 @@ ENGINE_HOT void mesh_draw(const Mesh *mesh, const mat4_t *model,
     if (mesh->vertex_count == 0 || mesh->index_count == 0) return;
     STATS_INC(mesh_draws);
 
-    // 1. Transform bounding sphere center to world space for frustum cull
+    // 1. Frustum cull with the world-space bounding sphere
     PROF_BEGIN(PROF_MESH_CULL);
-    vec4_t world_center_h;
-    mat4_mul_vec3(&world_center_h, model, &mesh->bound_center);
-    vec3_t world_center = {world_center_h.x, world_center_h.y, world_center_h.z};
-
-    // Scale bounding radius by max column length of model matrix.
-    // Use squared lengths to find the max, only one sqrtf at the end.
-    float sx_sq = model->m[0][0] * model->m[0][0] +
-                  model->m[0][1] * model->m[0][1] +
-                  model->m[0][2] * model->m[0][2];
-    float sy_sq = model->m[1][0] * model->m[1][0] +
-                  model->m[1][1] * model->m[1][1] +
-                  model->m[1][2] * model->m[1][2];
-    float sz_sq = model->m[2][0] * model->m[2][0] +
-                  model->m[2][1] * model->m[2][1] +
-                  model->m[2][2] * model->m[2][2];
-    float max_sq = sx_sq > sy_sq ? (sx_sq > sz_sq ? sx_sq : sz_sq)
-                                 : (sy_sq > sz_sq ? sy_sq : sz_sq);
-    float world_radius = mesh->bound_radius * sqrtf(max_sq);
+    vec3_t world_center;
+    float world_radius;
+    mesh_world_bounds(mesh, model, &world_center, &world_radius);
 
     bool visible = camera_sphere_visible(cam, &world_center, world_radius);
     PROF_END(PROF_MESH_CULL);
@@ -102,7 +78,7 @@ ENGINE_HOT void mesh_draw(const Mesh *mesh, const mat4_t *model,
     mat4_t mvp;
     mat4_mul(&mvp, &cam->vp, model);
     float cof[3][3];
-    cofactor3(model, cof);
+    mesh_normal_matrix(model, cof);
 
     // 3. View direction (for lighting) and camera position (for culling)
     float view_dir[3] = {cam->view_dir.x, cam->view_dir.y, cam->view_dir.z};
@@ -121,6 +97,7 @@ ENGINE_HOT void mesh_draw(const Mesh *mesh, const mat4_t *model,
     //    rdpq_set_mode_standard() clears alpha compare, so a material without
     //    cutout never inherits it from the previous one (roadmap defect D5).
     int last_mode_key = -1;
+    int resident_slot = -1;   // texture slot uploaded since the last mode reset
 
     for (int g = 0; g < mesh->group_count; g++) {
         const MeshFaceGroup *group = &mesh->groups[g];
@@ -164,6 +141,7 @@ ENGINE_HOT void mesh_draw(const Mesh *mesh, const mat4_t *model,
             }
 
             last_mode_key = mode_key;
+            resident_slot = -1;   // the mode reset also cleared the sprite's mode bits
         }
 
         // Planar groups (cube faces, pillar sides) are culled and lit once,
@@ -188,10 +166,14 @@ ENGINE_HOT void mesh_draw(const Mesh *mesh, const mat4_t *model,
             if (culled) { STATS_INC(groups_culled_backface); continue; }
         }
 
-        // Upload the texture only for groups that survive the cull
-        // (texture changes per group, mode doesn't; roadmap defect D4)
-        if (mat->type == MATERIAL_TEXTURED && mat->texture_slot >= 0) {
+        // Upload the texture only for groups that survive the cull (D4), and
+        // only when it is not already in TMEM: consecutive faces of one draw
+        // that share a texture reuse the upload (every upload also runs ~7 KB
+        // of libdragon code between triangle batches, D25).
+        if (mat->type == MATERIAL_TEXTURED && mat->texture_slot >= 0 &&
+            mat->texture_slot != resident_slot) {
             texture_upload(mat->texture_slot, TILE0);
+            resident_slot = mat->texture_slot;
         }
         STATS_INC(groups_drawn);
 

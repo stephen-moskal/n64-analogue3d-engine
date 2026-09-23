@@ -2,6 +2,7 @@
 #include "../debug/stats.h"
 #include "../debug/profiler.h"
 #include "../render/texture.h"
+#include "../render/atmosphere.h"
 #include <string.h>
 
 // --- Scene lifecycle ---
@@ -59,8 +60,15 @@ void scene_update(Scene *scene, float dt) {
 void scene_draw(Scene *scene) {
     if (!scene->loaded) return;
 
-    // Clear background
-    rdpq_clear(scene->bg_color);
+    // Background: the sky when it covers the screen, otherwise a colour
+    // clear (never both: the clear would be overdrawn; D14)
+    if (sky_covers_screen()) {
+        PROF_BEGIN(PROF_SKY);
+        sky_draw();
+        PROF_END(PROF_SKY);
+    } else {
+        rdpq_clear(scene->bg_color);
+    }
     rdpq_clear_z(ZBUF_MAX);
 
     // Scene-level draw (main rendering)

@@ -1,12 +1,12 @@
 # Benchmarks
 
-Measured performance of the engine on real hardware and in ares. Every feature that changes performance adds a row here (ROADMAP_v2 principle 6: measure before and after). The benchmark scene and CSV compare tool arrive in ROADMAP_v2 P1.8; until then rows come from the in-engine profiler dump.
+Measured performance of the engine on real hardware and in ares. Every feature that changes performance adds a row here (ROADMAP_v2 principle 6: measure before and after). Comparable numbers come from the benchmark scene ([Benchmark scene](#benchmark-scene-p18)); demo-view measurements come from Dump CSV rows (below).
 
 ## How to capture
 
 1. Build and upload the debug ROM: `libdragon make`, `sc64deployer upload engine-debug.z64`.
-2. In a second terminal: `sc64deployer debug | Tee-Object capture.log` (PowerShell).
-3. Reset the console, set up the view, wait 2–3 seconds for the averages to settle, then press **D-Down** (or Start → Debug → Dump CSV).
+2. In a second terminal: `sc64deployer debug | Tee-Object capture.log` (PowerShell; Windows PowerShell 5.1 writes the file as UTF-16, which the Python tools in `tools/` read).
+3. Reset the console, set up the view, then press **D-Down** (or Start → Debug → Dump CSV). The dump is written 120 frames (~2 s) later, once the ~32-frame averages have settled without the menu; keep the view steady until it appears.
 4. Each dump writes one `STATS` row and `PROF_AVG` / `PROF_PEAK` rows (microseconds). Column names are in the `STATS_HDR` / `PROF_HDR` lines printed with the first dump.
 
 Definitions:
@@ -123,19 +123,20 @@ Findings:
 1. Build and upload the **debug** ROM (`engine-debug.z64`). Release builds compile `debugf` out, so they print no CSV. Both variants are `-O2`; the debug build adds asserts and profiler scopes, measured at ~0.1 ms, so its numbers stand for release.
 2. Start the capture: `sc64deployer debug | Tee-Object docs/benchmarks/<date>-<label>.log` (the SC64 must not be busy with another `debug` session).
 3. Reset the console, then Start → **Debug** → **Bench** (All or one test) → **Scene = Benchmark** → A. The scene fades in, runs every step (60 warm-up + 240 measured frames each, fixed camera path), and fades back to the demo. Start aborts.
-4. For unattended runs, `libdragon make BENCH=1` boots straight into "All".
-5. Keep only the `BENCH` lines (`Select-String '^BENCH' capture.log | % Line > file.csv`) and compare:
+4. For unattended runs, `libdragon make BENCH=1` builds a ROM that boots straight into "All": `engine-debug-bench.z64`, built in its own directory (`build/debug-bench/`), so the normal build and ROM are untouched and no clean is needed. Upload that ROM instead.
+5. Compare the capture with the baseline. `bench_compare.py` reads the `BENCH` step rows (and `BENCH_META` as a label) and ignores every other line, so a raw capture works; it reads UTF-8 and UTF-16 files. To keep just the benchmark rows: `Select-String '^BENCH' capture.log | % Line > new.csv`.
 
 ```powershell
-python tools/bench_compare.py docs/benchmarks/2026-09-23-baseline-debug-a3d.csv new.csv
-# exit 0 = OK, 1 = regression (CPU +5 % and +0.15 ms, or a step that held 60 FPS no longer does)
+py tools/bench_compare.py docs/benchmarks/2026-09-23-baseline-debug-a3d.csv new.csv
+# or without host Python: libdragon exec python3 tools/bench_compare.py <baseline> <new>
+# exit 0 = OK, 1 = regression (CPU +5 % and +0.15 ms, or a step that held 60 FPS no longer does), 2 = no BENCH rows / bad file
 ```
 
 Timings depend on code and data layout (D25, D26): compare runs of the same day where possible, and compare renderer changes inside one ROM when a result is close to the limit.
 
-With the profiler on (the debug default), each step also prints a `BENCH_PROF` row: the moving-average µs of `update`, `draw`, `objects`, `mesh_cull`, `mesh_light` and `mesh_tris`, to pin a CPU regression to a stage of `mesh_draw`. `bench_compare.py` ignores these rows.
+With the profiler on (the debug default), each step also prints a `BENCH_PROF` row: the moving-average µs of `update`, `draw`, `objects`, `mesh_cull`, `mesh_light` and `mesh_tris`, to pin a CPU regression to a stage of `mesh_draw`. Once per run a `BENCH_LAYOUT` row logs the addresses of `bench_draw`'s stack frame and of the pillar mesh's vertex and index arrays, to relate timing changes to D-cache aliasing (D26). `bench_compare.py` ignores both row types.
 
-The tests, all on a dark background without floor, sky or fog (demo settings are restored afterwards):
+The tests run with fog and sky off (restored afterwards) on the benchmark scene's dark background; only Overload draws the floor. "All" runs every kind except Overload, 26 steps:
 
 | Bench | Steps | Load |
 |---|---|---|
@@ -146,6 +147,7 @@ The tests, all on a dark background without floor, sky or fog (demo settings are
 | textures | 1, 2, 4, 8 | 16 boxes cycling through N distinct 32×32 RGBA16 textures |
 | shadows | 0, 1, 2 | 16 pillars with shadows off / blob / projected |
 | fillrate | 1, 2, 4, 8 | N full-screen blended rectangles (RDP read-modify-write) |
+| overload | 0, 10, 14, 17, 20, 25 | floor + 16 pillars + N ms of CPU busy-wait per frame: deliberate overruns, for the D18 flicker (not in All) |
 
 ### Baseline (2026-09-23, debug build, Analogue 3D, `docs/benchmarks/2026-09-23-baseline-debug-a3d.csv`)
 
@@ -281,3 +283,26 @@ The triangle loops now cost the same (20.9 vs 20.4 ms at 64 pillars). What remai
 | 64 | 36.21 → 37.12 (+2.5 %) | 27.6 → 26.9 |
 
 The Mesh A/B runs are in `2026-09-23-p2-s2-meshab-collision-debug-a3d.csv` (before the fix) and `...-meshab-hottext-...` (after). The A/B code itself is in commit 44203e6, so the measured build can be rebuilt.
+
+## Phase 2 · S3 CPU hot paths (2026-09-23, debug build, Analogue 3D)
+
+Full benchmark (All) against the Phase 1 baseline, `bench_compare.py`: **0 regressions**. `docs/benchmarks/2026-09-23-p2-s3-all-debug-a3d.csv` is the comparison point for S4.
+
+| Target | Baseline → S3 CPU ms | Change | Acceptance |
+|---|---|---|---|
+| Shadows, projected (16 casters) | 24.70 → 13.20 (40.5 → 60 FPS) | **−46.6 %**; the shadow pass itself 16.6 → 5.1 ms (−69 %) | −40 % ✓ |
+| Particles, 128 | 7.21 → 4.75 | **−34.1 %** (32/64/96: −14 / −24 / −31 %) | −20 % ✓ |
+| Demo `update` (quiet view) | 0.33 → 0.22 | **−34 %**; `scene_sys` (camera + collision) 0.17 → 0.04 | −20 % ✓ |
+| Textures, 1–8 | 7.54–7.72 → 5.80–6.04 | **−22 to −23 %** (uploads 48 → 16 per frame) | no regression ✓ |
+| Objects, 8–64 | | −0.2 to −3.3 % | no regression ✓ |
+| Everything else | | within ±2 % | ✓ |
+
+What made the difference:
+- **Projected shadows:** one composed matrix per caster (`VP × floor projection × model`), each vertex projected at most once, only light-facing faces drawn (flat groups tested once with their normal, curved groups by projected winding), and the whole shadow culled when off screen. Shadow triangles for 16 pillars: 512 → 256.
+- **Particles:** the update walks each emitter's own pool slice (no per-particle owner search, constants hoisted); the renderer projects each particle's centre once, since a camera-facing quad is a screen-aligned square at one depth.
+- **Demo update:** the camera rebuilds only when something changes (D6); collision scans stop at the highest active slot; menu settings are applied on change (D23).
+- **Textures:** the first S3 build measured the Textures bench **+15 %** (7.54 → 8.72 ms, `...-p2-s3-first-build-all-...`). Each textured face group ran libdragon's sprite upload (~7 KB of code) between triangle batches, evicting ~70 lines of `mesh_draw` and lighting from the I-cache, about 25 µs per upload. Pinning that code into the hot-text block does not fit (the mesh phase would need ~17 KB and collide with `rdpq_triangle_rsp`), so `mesh_draw` now skips a texture already uploaded earlier in the same draw. The same-texture faces of each box share one upload.
+
+Demo dump (`...-p2-s3-demo-dump-...`, taken with D-Down after boot): `update` 0.22 ms (input 0.05, physics 0.02, particles 0.04, scene_sys 0.04). The view at that moment drew 174 triangles instead of the usual 252 (the camera had moved), so its draw times are not compared with the baseline.
+
+**D26 (data layout), not resolved.** `BENCH_LAYOUT` rows: in the first S3 build the pillar's vertex and index arrays (`0x8016FAF0`, `0x80173AF8`) shared D-cache sets with the render stack (`0x807FFCF8` and below); in the final build (`0x8016EAA0`, `0x80172AA8`) they did not. The two builds' Objects results differ by at most 3 %, so stack/vertex aliasing does not explain the 9 % seen in the S2 Mesh A/B.

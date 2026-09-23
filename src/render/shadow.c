@@ -3,6 +3,7 @@
 #include "../debug/stats.h"
 #include "../engine/hot.h"
 #include <math.h>
+#include <string.h>
 
 // Shadow sits slightly above floor to avoid Z-fighting.
 // Floor uses Z_BIAS=0.005 pushing it deeper, so shadow at floor_y + small
@@ -112,6 +113,36 @@ ENGINE_HOT void shadow_draw_blob(const Camera *cam, const LightConfig *light,
 // Projected Shadows — mesh silhouette flattened onto floor
 // ============================================================
 
+// Shadow vertices of the current caster, each projected at most once (D14),
+// the first time a drawn triangle needs it. Static scratch: a mesh has at most
+// MESH_MAX_VERTICES vertices.
+static float   shadow_scr[MESH_MAX_VERTICES][3];   // {X, Y, Z} on screen
+static uint8_t shadow_state[MESH_MAX_VERTICES];    // 0 not yet, 1 on screen, 2 rejected
+
+// Project one vertex through M = VP * S * model; false when it is in front of
+// the near plane or outside the guard band.
+static inline ENGINE_HOT bool shadow_project(const mat4_t *m, const MeshVertex *mv,
+                                             float out[3]) {
+    vec3_t local = {mv->position[0], mv->position[1], mv->position[2]};
+    vec4_t clip;
+    mat4_mul_vec3(&clip, m, &local);
+    if (clip.w < 1.0f) return false;
+
+    float inv_w = 1.0f / clip.w;
+    float scr_x = (clip.x * inv_w * 0.5f + 0.5f) * 320.0f;
+    float scr_y = (1.0f - (clip.y * inv_w * 0.5f + 0.5f)) * 240.0f;
+    if (scr_x < GUARD_X_MIN || scr_x > GUARD_X_MAX ||
+        scr_y < GUARD_Y_MIN || scr_y > GUARD_Y_MAX) return false;
+
+    float depth = clip.z * inv_w * 0.5f + 0.5f;
+    if (depth < 0.0f) depth = 0.0f;
+    if (depth > 1.0f) depth = 1.0f;
+    out[0] = scr_x;
+    out[1] = scr_y;
+    out[2] = depth;
+    return true;
+}
+
 ENGINE_HOT void shadow_draw_projected(const Camera *cam, const LightConfig *light,
                                       const ShadowCaster *caster) {
     const Mesh *mesh = caster->mesh;
@@ -126,64 +157,79 @@ ENGINE_HOT void shadow_draw_projected(const Camera *cam, const LightConfig *ligh
 
     // Guard: light must have vertical component to cast ground shadows
     if (ly < 0.05f) return;
+    float kx = lx / ly, kz = lz / ly;
 
-    float inv_ly = 1.0f / ly;
+    // Cull the whole shadow when it is off screen. The shadow of the caster's
+    // bounding sphere (radius r) is an ellipse around the projected centre
+    // whose longest axis is r / ly, so a sphere of that radius contains it.
+    vec3_t wc;
+    float wr;
+    mesh_world_bounds(mesh, model, &wc, &wr);
+    vec3_t sc = {wc.x - kx * (wc.y - floor_y), sy, wc.z - kz * (wc.y - floor_y)};
+    if (!camera_sphere_visible(cam, &sc, wr / ly)) return;
+
+    // Projecting a world point along the light onto the plane y = sy is
+    // affine: x' = x - kx*(y - floor_y), y' = sy, z' = z - kz*(y - floor_y).
+    // So one matrix takes a local vertex straight to its shadow's clip
+    // position: M = VP * S * model (column-major m[col][row]).
+    mat4_t S = {{
+        {1.0f, 0.0f, 0.0f, 0.0f},
+        {-kx,  0.0f, -kz,  0.0f},
+        {0.0f, 0.0f, 1.0f, 0.0f},
+        {kx * floor_y, sy, kz * floor_y, 1.0f},
+    }};
+    mat4_t sm, m;
+    mat4_mul(&sm, &S, model);
+    mat4_mul(&m, &cam->vp, &sm);
+
+    // A closed mesh's shadow is exactly covered by its light-facing faces, so
+    // faces turned away from the light are skipped. A flat group is tested
+    // once with its normal (before any of its vertices is projected); a
+    // triangle of a curved group by its projected winding: seen from above
+    // the floor, a light-facing face keeps the front-face winding (negative
+    // screen area). Open or double-sided meshes (backface_cull off) project
+    // every face.
+    bool light_facing_only = mesh->backface_cull;
+    float orient = (cam->position.y >= sy) ? 1.0f : -1.0f;   // camera below the floor flips it
+    float cof[3][3];
+    mesh_normal_matrix(model, cof);
+
+    memset(shadow_state, 0, (size_t)mesh->vertex_count);
     int tri_count = 0;
 
-    // Iterate all mesh groups — NO backface culling for shadows
-    // (want all faces to project onto floor)
     for (int g = 0; g < mesh->group_count; g++) {
         const MeshFaceGroup *group = &mesh->groups[g];
         if (group->index_count == 0) continue;
 
-        for (int i = group->index_start;
-             i < group->index_start + group->index_count;
-             i += 3) {
-
-            float screen[3][3] ENGINE_NOINIT;  // {X, Y, Z} per vertex
-            bool reject = false;
-
-            for (int v = 0; v < 3; v++) {
-                const MeshVertex *mv = &mesh->vertices[mesh->indices[i + v]];
-
-                // Transform vertex to world space
-                vec3_t local = {mv->position[0], mv->position[1], mv->position[2]};
-                vec4_t world;
-                mat4_mul_vec3(&world, model, &local);
-
-                // Project along light direction to floor plane
-                float t = (world.y - floor_y) * inv_ly;
-                float sx = world.x - lx * t;
-                float sz = world.z - lz * t;
-
-                // Project shadow vertex through VP to screen
-                vec3_t shadow_pos = {sx, sy, sz};
-                vec4_t clip;
-                mat4_mul_vec3(&clip, &cam->vp, &shadow_pos);
-
-                if (clip.w < 1.0f) { reject = true; break; }
-
-                float inv_w = 1.0f / clip.w;
-                float scr_x = (clip.x * inv_w * 0.5f + 0.5f) * 320.0f;
-                float scr_y = (1.0f - (clip.y * inv_w * 0.5f + 0.5f)) * 240.0f;
-
-                if (scr_x < GUARD_X_MIN || scr_x > GUARD_X_MAX ||
-                    scr_y < GUARD_Y_MIN || scr_y > GUARD_Y_MAX) {
-                    reject = true; break;
-                }
-
-                float depth = clip.z * inv_w * 0.5f + 0.5f;
-                if (depth < 0.0f) depth = 0.0f;
-                if (depth > 1.0f) depth = 1.0f;
-
-                screen[v][0] = scr_x;
-                screen[v][1] = scr_y;
-                screen[v][2] = depth;
+        bool check_winding = light_facing_only;
+        if (light_facing_only && group->planar) {
+            const float *n = group->normal;
+            float facing = 0.0f;
+            for (int r = 0; r < 3; r++) {
+                facing += (cof[0][r] * n[0] + cof[1][r] * n[1] + cof[2][r] * n[2]) *
+                          light->direction[r];
             }
+            if (facing <= 0.0f) continue;          // away from the light: no shadow
+            check_winding = false;                 // the whole group faces the light
+        }
 
-            if (reject) continue;
+        for (int i = group->index_start; i < group->index_start + group->index_count; i += 3) {
+            int idx[3] = {mesh->indices[i], mesh->indices[i + 1], mesh->indices[i + 2]};
+            bool ok = true;
+            for (int k = 0; k < 3; k++) {
+                int v = idx[k];
+                if (shadow_state[v] == 0) {
+                    shadow_state[v] = shadow_project(&m, &mesh->vertices[v], shadow_scr[v]) ? 1 : 2;
+                }
+                if (shadow_state[v] != 1) ok = false;
+            }
+            if (!ok) continue;
+            if (check_winding &&
+                orient * mesh_screen_area2(shadow_scr[idx[0]], shadow_scr[idx[1]],
+                                           shadow_scr[idx[2]]) >= 0.0f)
+                continue;
 
-            rdpq_triangle(&TRIFMT_ZBUF, screen[0], screen[1], screen[2]);
+            rdpq_triangle(&TRIFMT_ZBUF, shadow_scr[idx[0]], shadow_scr[idx[1]], shadow_scr[idx[2]]);
             tri_count++;
         }
     }

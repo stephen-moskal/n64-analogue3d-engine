@@ -24,6 +24,9 @@ typedef struct { uint8_t r, g, b, a; } color_t;
 #define debugf(...)               ((void)0)
 #define assertf(cond, ...)        assert(cond)
 
+// --- Timer (seeds and profiling; the tests need no real time) ---
+#define TICKS_READ()              0u
+
 // --- Joypad ---
 typedef enum { JOYPAD_PORT_1 = 0, JOYPAD_PORT_2, JOYPAD_PORT_3, JOYPAD_PORT_4 } joypad_port_t;
 

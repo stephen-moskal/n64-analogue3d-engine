@@ -18,6 +18,8 @@ static const char *crash_options[]   = {"---", "Assert!"};
 _Static_assert(sizeof(overlay_options) / sizeof(overlay_options[0]) == OVERLAY_PAGE_COUNT,
                "overlay_options must match OverlayPage");
 
+#define DUMP_SETTLE_FRAMES 120   // ~2 s: under 2 % of the menu frames left in the averages
+
 static Menu *dbg_menu = NULL;
 static int   dbg_tab  = -1;
 
@@ -25,6 +27,7 @@ static OverlayPage overlay_page     = OVERLAY_OFF;
 static bool        profiler_enabled = true;
 static bool        rdp_check_active = false;   // validator state actually applied
 static bool        dump_requested   = false;
+static int         dump_countdown   = 0;      // closed-menu frames until the dump fires
 static bool        reset_requested  = false;
 static int         active_scene     = 0;      // scene currently shown (0 demo, 1 benchmark)
 static bool        scene_requested  = false;
@@ -120,8 +123,15 @@ void debug_menu_update(void) {
 #endif
 
     // Self-resetting one-shot items
+    // CSV dump: wait until the profiler's ~32-frame averages have settled
+    // without the menu (it was just open to pick the item), so the rows show
+    // the scene, not the menu. The countdown pauses while the menu is open.
     if (item_value(DBG_ITEM_DUMP_CSV) == 1) {
         item_set(DBG_ITEM_DUMP_CSV, 0);
+        dump_countdown = DUMP_SETTLE_FRAMES;
+        ENGINE_LOG("[debug] CSV dump in %d frames\n", DUMP_SETTLE_FRAMES);
+    }
+    if (dump_countdown > 0 && --dump_countdown == 0) {
         dump_requested = true;
         ENGINE_LOG("[debug] CSV dump requested\n");
     }

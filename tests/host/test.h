@@ -38,5 +38,6 @@ void run_action_tests(void);
 void run_camera_tests(void);
 void run_frametime_tests(void);
 void run_mesh_tests(void);
+void run_particle_tests(void);
 
 #endif

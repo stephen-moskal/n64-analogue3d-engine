@@ -52,6 +52,7 @@ int collision_add_sphere(CollisionWorld *world, vec3_t center, float radius,
     c->active = true;
     c->userdata = userdata;
     world->count++;
+    if (slot >= world->high) world->high = slot + 1;
     return slot;
 }
 
@@ -72,6 +73,7 @@ int collision_add_aabb(CollisionWorld *world, vec3_t min, vec3_t max,
     c->active = true;
     c->userdata = userdata;
     world->count++;
+    if (slot >= world->high) world->high = slot + 1;
     return slot;
 }
 
@@ -80,6 +82,7 @@ void collision_remove(CollisionWorld *world, int handle) {
     if (!world->colliders[handle].active) return;
     world->colliders[handle].active = false;
     world->count--;
+    while (world->high > 0 && !world->colliders[world->high - 1].active) world->high--;
 }
 
 void collision_set_static(CollisionWorld *world, int handle, bool is_static) {
@@ -470,10 +473,11 @@ bool collision_raycast_single(const Collider *collider, const Ray *ray,
 int collision_test_all(CollisionWorld *world) {
     world->result_count = 0;
 
-    for (int i = 0; i < COLLISION_MAX_COLLIDERS && world->result_count < COLLISION_MAX_RESULTS; i++) {
+    const int high = world->high;
+    for (int i = 0; i < high && world->result_count < COLLISION_MAX_RESULTS; i++) {
         if (!world->colliders[i].active) continue;
 
-        for (int j = i + 1; j < COLLISION_MAX_COLLIDERS && world->result_count < COLLISION_MAX_RESULTS; j++) {
+        for (int j = i + 1; j < high && world->result_count < COLLISION_MAX_RESULTS; j++) {
             if (!world->colliders[j].active) continue;
 
             const Collider *a = &world->colliders[i];
@@ -507,7 +511,7 @@ bool collision_raycast(const CollisionWorld *world, const Ray *ray,
     bool any_hit = false;
     float closest = ray->max_distance;
 
-    for (int i = 0; i < COLLISION_MAX_COLLIDERS; i++) {
+    for (int i = 0; i < world->high; i++) {
         if (!world->colliders[i].active) continue;
         if (!(world->colliders[i].layer & mask)) continue;
 
@@ -535,7 +539,7 @@ int collision_overlap_sphere(const CollisionWorld *world, vec3_t center, float r
     ColliderAABB query_bounds = sphere_to_aabb(&query);
     int count = 0;
 
-    for (int i = 0; i < COLLISION_MAX_COLLIDERS && count < max_results; i++) {
+    for (int i = 0; i < world->high && count < max_results; i++) {
         if (!world->colliders[i].active) continue;
         if (!(world->colliders[i].layer & mask)) continue;
 
