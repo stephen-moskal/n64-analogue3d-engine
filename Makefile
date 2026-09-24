@@ -5,6 +5,7 @@
 #   make BENCH=1          debug build that boots straight into the full benchmark
 #                         -> engine-debug-bench.z64 (own build dir: build/debug-bench)
 #   make BENCH=1 BENCH_KIND=AUDIO   ... into one benchmark kind instead of All
+#   make BENCH=1 BENCH_VALIDATOR=1  ... with the RDP validator on (Debug > RDP Check)
 #   make LAYOUT_PAD=448   adds 448 bytes of unused code at the end of .text, so all
 #                         data moves: a layout-stability test (docs/HARDWARE.md, D34)
 #
@@ -20,6 +21,7 @@ endif
 # It builds into its own directory and ROM, so the normal build is untouched.
 BENCH_SUFFIX := $(if $(filter 1,$(BENCH)),-bench,)
 BENCH_KIND ?= ALL
+BENCH_VALIDATOR ?= 0
 
 BUILD_DIR  = build/$(BUILD)$(BENCH_SUFFIX)
 SOURCE_DIR = src
@@ -58,12 +60,12 @@ CFLAGS += -DENGINE_LAYOUT_PAD=$(LAYOUT_PAD)
 
 # make does not track CFLAGS: the option values are kept in a stamp file,
 # rewritten only when they change, that every object and the DFS depend on
-BUILD_OPTIONS := SND_OPUS=$(SND_OPUS) LAYOUT_PAD=$(LAYOUT_PAD)$(if $(filter 1,$(BENCH)), BENCH_KIND=$(BENCH_KIND))
+BUILD_OPTIONS := SND_OPUS=$(SND_OPUS) LAYOUT_PAD=$(LAYOUT_PAD)$(if $(filter 1,$(BENCH)), BENCH_KIND=$(BENCH_KIND) BENCH_VALIDATOR=$(BENCH_VALIDATOR))
 OPTIONS_STAMP := $(BUILD_DIR)/options.stamp
 $(shell mkdir -p $(BUILD_DIR) && (echo '$(BUILD_OPTIONS)' | cmp -s - $(OPTIONS_STAMP) || echo '$(BUILD_OPTIONS)' > $(OPTIONS_STAMP)))
 
 ifeq ($(BENCH),1)
-CFLAGS += -DENGINE_BOOT_BENCHMARK=1 -DENGINE_BOOT_BENCHMARK_KIND=BENCH_$(BENCH_KIND)
+CFLAGS += -DENGINE_BOOT_BENCHMARK=1 -DENGINE_BOOT_BENCHMARK_KIND=BENCH_$(BENCH_KIND) -DENGINE_BOOT_VALIDATOR=$(BENCH_VALIDATOR)
 endif
 
 # All sources under src/ (one directory level deep)

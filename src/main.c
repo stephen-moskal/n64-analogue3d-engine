@@ -158,6 +158,11 @@ int main(void) {
 #define ENGINE_BOOT_BENCHMARK_KIND BENCH_ALL
 #endif
     benchmark_scene_configure(ENGINE_BOOT_BENCHMARK_KIND);
+#if defined(ENGINE_BOOT_VALIDATOR) && ENGINE_BOOT_VALIDATOR
+    // make BENCH=1 BENCH_VALIDATOR=1: Debug > RDP Check on; the Debug tab starts
+    // the validator at the first frame boundary, as when toggled by hand
+    menu_set_value(&start_menu, tab_d, DBG_ITEM_RDP_CHECK, 1);
+#endif
     debug_menu_set_active_scene(1);
     scene_manager_switch(&scene_mgr, benchmark_scene_get(), TRANSITION_CUT, 0);
 #else

@@ -15,8 +15,8 @@
 #include <string.h>
 
 // libdragon display APIs still marked preview at 39d0d6096, used here only:
-// display_set_fps_limit, display_get_delta_time, display_get_zbuf and
-// vi_install_vblank_handler. With LIBDRAGON_PREVIEW=1 each use warns
+// display_set_fps_limit, display_get_delta_time, display_get_zbuf,
+// vi_install_vblank_handler and vi_get_scanline. With LIBDRAGON_PREVIEW=1 each use warns
 // (deprecated); the warnings are silenced for this file alone, so a new
 // preview use elsewhere still shows in the build output.
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
@@ -41,7 +41,10 @@ surface_t *engine_zbuf(void) { return zbuf; }
 // Presented frames: at every vblank, check whether the VI now scans out
 // another framebuffer; if so, the previous one was on screen for
 // vblanks_shown vblanks (frametime.h). Runs after the display module's own
-// vblank handler, which flips VI_ORIGIN.
+// vblank handler, which flips VI_ORIGIN, so the current VI half-line is when
+// the flip happened: past the start of the active picture, the flip tore the
+// frame (D18: the RDP validator holds interrupts off while it validates, and
+// the vblank interrupt runs late).
 static uint32_t vi_origin_last;
 static int      vblanks_shown;
 
@@ -50,7 +53,9 @@ static void on_vblank(void *arg) {
     uint32_t origin = *VI_ORIGIN;
     vblanks_shown++;
     if (origin != vi_origin_last) {
-        if (vi_origin_last) frametime_record_present(vblanks_shown);
+        int line = vi_get_scanline(NULL);
+        int active_start = (int)((*VI_V_VIDEO >> 16) & 0x3FF);
+        if (vi_origin_last) frametime_record_present(vblanks_shown, line > active_start ? line : 0);
         vi_origin_last = origin;
         vblanks_shown = 0;
     }

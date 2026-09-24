@@ -78,7 +78,7 @@ A 256-frame ring of loop time and CPU time: fps, average/min/max, p99, 1 % low (
 
 With triple buffering the loop is paced by framebuffer availability, not vsync, so loop times alternate short/long (≈12.5 / 21 ms) at a steady 60 FPS (defect D19). Judge load by CPU time and fps, not by individual loop times.
 
-**Presented frames** (S6.2) measure what the player sees instead: the engine's vblank handler records how many vblanks each frame stayed on screen (a 256-present ring). "Late" counts frames shown longer than the target interval (1 vblank at 60 FPS, 2 at 30), each a visible hitch. The Frame page shows "Shown late N of M" (yellow when N > 0) and the 1 / 2 / 3+ vblank counts.
+**Presented frames** (S6.2) measure what the player sees instead: the engine's vblank handler records how many vblanks each frame stayed on screen (a 256-present ring). "Late" counts frames shown longer than the target interval (1 vblank at 60 FPS, 2 at 30), each a visible hitch. A flip that happens after the VI started scanning the picture is "torn" (the handler reads the current half-line; D18). The Frame page shows "Late N torn T of M" (yellow when either is above 0) and the 1 / 2 / 3+ vblank counts; `FTP` and `BENCH_PRESENT` rows end with `torn` and `torn_worst_halfline`.
 
 **Boot log** (S6.2, D32): for the first 20 s after boot, debug builds print one `BOOT` row per second (averages of frame, wait_display, update, draw, audio and RDP busy, in ms). On the A3D the first ~7.5 s after every reset run ~35–47 % slower (HARDWARE.md): measure after that.
 
@@ -113,13 +113,13 @@ PROF_HDR / PROF_AVG / PROF_PEAK          per-slot µs, averages and peaks (profi
 RDP,<frame>,counter_mhz=...,busy_us=...  RDP counters (profiler.c)
 RSP,<frame>,...                          RSP profile, "unavailable" unless RSPQ_PROFILE (profiler.c)
 FT_HDR / FT,<frame>,count,fps,...        frame-time window + histogram (frametime.c)
-FTP_HDR / FTP,<frame>,presents,vb1,...   presented frames: vblanks per frame, late count (frametime.c)
+FTP_HDR / FTP,<frame>,presents,vb1,...   presented frames: vblanks per frame, late and torn counts (frametime.c)
 BOOT_HDR / BOOT,<sec>,frames,...         per-second averages for the first 20 s after boot (engine.c)
 BENCH_SETTLE,start / done                boot-to-benchmark run waiting out the slow start after reset (D32)
 MEM_HDR / MEM,<frame>,rdram,...          memory (memstats.c)
 BENCH_META / BENCH_HDR / BENCH,...       benchmark run and steps (benchmark_scene.c, BENCHMARKS.md)
 BENCH_PROF_HDR / BENCH_PROF,...          per-step CPU breakdown (profiler on)
-BENCH_PRESENT_HDR / BENCH_PRESENT,...    per-step presented frames: vblanks 1/2/3/4+, late, average
+BENCH_PRESENT_HDR / BENCH_PRESENT,...    per-step presented frames: vblanks 1/2/3/4+, late, average, torn, worst torn half-line
 BENCH_LAYOUT,...                         data addresses, once per run: render stack, pillar geometry and Mesh struct, plus one row per Layout copy (D26)
 BENCH,END / BENCH,ABORTED                end of a benchmark run
 SOAK,... / SWEEP,...                     Reset Soak and Menu Sweep (testbed.c, DEBUGGING.md)

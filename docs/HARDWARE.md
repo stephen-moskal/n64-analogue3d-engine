@@ -20,7 +20,7 @@ What we have measured or learned about the target hardware, and the RDP rules th
 | Heap available to malloc | 7.86 MB | same |
 | RDP counter rate (`DP_CLOCK`) | **93.75 MHz**, 1.5× the 62.5 MHz RCP clock | RDP counters vs loop time (P1.7) |
 | Stack peak (demo) | ~3 KB of the 64 KB stack (4.5 KB with the validator) | stack painting (P1.4) |
-| Late frames | flicker in the lower screen area when frames overrun with the Start menu on screen (debug build + validator + menu); overruns without the menu do not flicker (Overload benchmark, Phase 2 S0); ares shows only an FPS drop | defect D18 |
+| Tearing | only with the RDP validator on: libdragon validates inside interrupt handlers with interrupts off, the vblank interrupt runs up to ~400 half-lines late and the framebuffer flip lands mid-picture (lower-screen tear, D18). Overruns alone never tear (S0 Overload; 0 late vblanks in every run without the validator) | libdragon `VI WARNING` lines, the engine's torn-frame counter (D18, S6.4) |
 
 | After a reset | for **~7.5 s** the same work costs ~35 % more CPU, ~47 % more RDP time and ~25 % more RSP (audio mixing) time, then drops to normal within one second. Every reset, demo or benchmark boot; ares shows nothing | `BOOT` rows, boot-to-benchmark holding a constant scene (D32, S6.2) |
 
@@ -31,7 +31,8 @@ Design for 4 MB anyway (a real N64 without Expansion Pak); the extra 4 MB is hea
 | Aspect | ares | Analogue 3D |
 |---|---|---|
 | RDP rule violations (fill-mode triangles, format/combiner mismatch) | tolerated | hang, RSP timeout or garbage |
-| Late frames | FPS drops | FPS drops; flicker only with the menu on screen (D18) |
+| Late frames | FPS drops | FPS drops; frames repeat in whole vblanks |
+| RDP validator on | late vblank interrupts, no visible tear | late vblank interrupts and a visible lower-screen tear (D18) |
 | Timing | close, not exact | real |
 | Log | ISViewer (Homebrew Mode) | USB via sc64deployer |
 | Crash inspector / backtrace | yes | yes (also over USB) |

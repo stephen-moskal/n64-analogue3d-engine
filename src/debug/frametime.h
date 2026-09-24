@@ -17,7 +17,10 @@
  * handler reports how many vblanks each presented frame stayed on screen
  * (frametime_record_present). At a steady 60 FPS every frame shows for 1
  * vblank; a frame shown longer than the target interval (1 at 60, 2 at 30)
- * is "late": a visible hitch.
+ * is "late": a visible hitch. A flip that happens after the VI has started
+ * scanning the picture is "torn": the lines below it come from the new frame,
+ * the lines above from the old one (D18: the RDP validator delays the vblank
+ * interrupt this way).
  * Pure C (no libdragon) so it can be unit-tested on the host.
  */
 
@@ -42,12 +45,15 @@ typedef struct {
     uint16_t present_hist[FRAMETIME_PRESENT_BUCKETS];   // shown for 1, 2, 3, 4+ vblanks
     int      late;                 // shown longer than the target interval
     float    present_avg_vblanks;
+    int      torn;                 // flips after the active picture had started
+    int      torn_worst_halfline;  // latest such flip (VI half-line), 0 if none
 } FrameTimeStats;
 
 void frametime_record(uint32_t frame_us, uint32_t cpu_us);
 // A frame was replaced on screen after being shown for this many vblanks.
-// Safe to call from the vblank interrupt.
-void frametime_record_present(int vblanks);
+// torn_halfline: the VI half-line the flip happened at when that was inside
+// the active picture (a tear), else 0. Safe to call from the vblank interrupt.
+void frametime_record_present(int vblanks, int torn_halfline);
 void frametime_get(FrameTimeStats *out, float budget_ms);
 void frametime_reset(void);
 void frametime_dump_csv(uint32_t frame_index, float budget_ms);

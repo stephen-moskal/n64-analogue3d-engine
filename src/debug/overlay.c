@@ -272,7 +272,7 @@ static void page_frametime(float budget_ms) {
     line(r++, load_color(f->cpu_max_ms, budget_ms), "CPU %.1f max %.1f ov %d",
          f->cpu_avg_ms, f->cpu_max_ms, f->over_budget);
     // What reached the screen: vblanks each presented frame was shown for
-    line(r++, f->late ? COL_YELLOW : COL_TEXT, "Shown late %d of %d", f->late, f->presents);
+    line(r++, (f->late || f->torn) ? COL_YELLOW : COL_TEXT, "Late %d torn %d of %d", f->late, f->torn, f->presents);
     line(r++, COL_TEXT, "vblanks 1:%d 2:%d 3+:%d", f->present_hist[0], f->present_hist[1],
          f->present_hist[2] + f->present_hist[3]);
     line(r++, COL_DIM, "loop ms, 1.5/bar");

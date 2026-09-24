@@ -70,14 +70,11 @@ engine_run():
 - **Frame-rate cap.** `engine_set_fps_limit(30)` (or 0 for the display's 60) calls libdragon's `display_set_fps_limit()`: the display module shows a new frame only every other vblank and `display_get()` waits for a free buffer, so the CPU sleeps in `wait_display` instead of spinning. The demo's Settings → Frame Rate sets it; `engine_frame_budget_ms()` gives 16.67 or 33.33 for gauges, CSV dumps and the benchmark. The `limiter` profiler slot (the old busy-wait) stays in the CSV columns and reads 0.
 - **dt** is `display_get_delta_time()`: libdragon's filtered time between presented frames, a whole number of vblanks. With triple buffering the loop runs up to two frames ahead of the screen, and its own iterations alternate ~12.5 / ~21 ms at a steady 60 FPS (D19); the old dt copied that jitter into every animation and physics step. The loop's wall time still feeds the profiler and the frame-time window.
 - **Z-buffer** from `display_get_zbuf()`: allocated from the top of RDRAM, in a different memory bank from the framebuffers (libdragon notes a speed gain for the RDP).
-- **Presented frames.** A vblank handler (`on_vblank`, installed after the display's own) watches `VI_ORIGIN` and reports how many vblanks each frame stayed on screen (`frametime_record_present`). At a steady 60 every frame shows for 1 vblank; a frame shown longer than the target (1 at 60, 2 at 30) is **late**, a hitch the player can see. Frame overlay page: "Shown late N of M" and the 1/2/3+ vblank counts; CSV: `FTP` rows with the dump, `BENCH_PRESENT` rows per benchmark step.
+- **Presented frames.** A vblank handler (`on_vblank`, installed after the display's own) watches `VI_ORIGIN` and reports how many vblanks each frame stayed on screen (`frametime_record_present`). At a steady 60 every frame shows for 1 vblank; a frame shown longer than the target (1 at 60, 2 at 30) is **late**, a hitch the player can see. The handler also reads the VI's current half-line: a flip after the start of the active picture (`VI_V_VIDEO`) is **torn**, the lines below it from the new frame (D18: only with the RDP validator on, see DEBUGGING.md). Frame overlay page: "Shown late N of M" and the 1/2/3+ vblank counts; CSV: `FTP` rows with the dump, `BENCH_PRESENT` rows per benchmark step.
 - **Boot log** (D32): debug builds print a `BOOT` row per second for the first 20 s (frame, wait_display, update, draw, audio and RDP busy ms, averaged over that second). It showed that on the A3D every reset is followed by ~7.5 s of slower CPU, RSP and RDP (HARDWARE.md), so boot-to-benchmark ROMs wait 15 s before their first step.
 
 The four display APIs above are still marked preview in libdragon; `engine.c` is the only file that uses them, with the deprecation warning silenced there.
 
-## Planned (Phase 2 S6)
-
-- S6.4: frame overruns under the RDP validator (D18).
 
 ## Source files
 

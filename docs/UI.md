@@ -177,7 +177,7 @@ Steps 40/41 draw a demo-like HUD direct or cached; steps 50/51 play the demo con
 ## Limits
 
 - Cached text needs plain monochrome fonts, and RGBA16 layers keep 1-bit alpha: anti-aliased fonts would lose their smooth edges.
-- A change frame still pays the full text cost of what changed. With the RDP validator on, text costs ~4× more, so cursor moves can overrun the frame (D18, taken up in S6).
+- A change frame still pays the full text cost of what changed. With the RDP validator on, text costs ~4× more, so cursor moves can overrun the frame, and the screen tears while the validator is on (D18, DEBUGGING.md).
 - 24 slots per layer, 39 bytes of text per slot.
 
 ## Source files

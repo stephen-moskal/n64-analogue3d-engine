@@ -62,7 +62,9 @@ Every boot prints the texture/audio load lines and `SMozN64 Dev Engine [debug bu
 
 libdragon's `rdpq_debug_start()` checks every RDP command against the hardware rules and prints `[RDPQ_VALIDATION] WARN/ERROR` lines. It catches the mistakes ares forgives but the Analogue 3D does not.
 
-- Off at boot. Turn it on to check a feature, off to judge performance: it costs CPU time (quiet demo 8 → 13 ms) and pushes heavy frames past 16.7 ms; with the menu open those frames flicker on the A3D (defect D18; overruns without the menu do not, see BENCHMARKS.md, Phase 2 S0).
+- Off at boot. Turn it on to check a feature, off to judge performance: it costs CPU time (quiet demo 8 → 13 ms) and pushes heavy frames past 16.7 ms.
+- **The screen tears while it is on (D18).** libdragon validates each RDP buffer inside the RSP and RDP interrupt handlers, with interrupts disabled (`__rdpq_trace_fetch` → `__rdpq_trace_flush`, marked `FIXME` in libdragon, still there upstream). A command-heavy buffer, text above all, takes milliseconds, so the vblank interrupt that flips the framebuffer runs late and the flip lands while the picture is being scanned: the lines below it show the new frame, the lines above the old one. You see it in the lower part of the screen when the picture changes. libdragon logs each late vblank as `VI WARNING: __vblank_interrupt outside of vblank period`, and the Frame overlay page counts torn frames ("torn N"). Nothing in the engine causes it: without the validator no run has logged a late vblank. ares shows the late interrupts but draws no tear.
+- For unattended checks, `make BENCH=1 BENCH_VALIDATOR=1` boots a benchmark with RDP Check already on.
 - The engine drains the RSP/RDP (`rspq_wait()`) before starting or stopping it; toggling mid-frame produced bogus `SET_COLOR_IMAGE` errors and once halted the RSP (an RSP crash in the audio mixer's `rspq_highpri_sync`).
 - Right after it starts, expect about 15 `textured primitive ... combiner` warnings on text glyphs with `SET_COMBINE_MODE last sent at 0x0`: the text mode was set before the validator saw it. Ignore those; a warning that keeps repeating is real.
 

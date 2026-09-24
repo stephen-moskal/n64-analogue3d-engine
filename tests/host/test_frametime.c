@@ -35,21 +35,23 @@ static void test_ring_wraps(void) {
 
 static void test_presents(void) {
     frametime_reset();
-    for (int i = 0; i < 97; i++) frametime_record_present(1);
-    frametime_record_present(2);                          // one hitch
-    frametime_record_present(3);
-    frametime_record_present(9);                          // 4+ bucket
+    for (int i = 0; i < 96; i++) frametime_record_present(1, 0);
+    frametime_record_present(1, 120);                     // flipped mid-picture (torn)
+    frametime_record_present(2, 0);                       // one hitch
+    frametime_record_present(3, 60);
+    frametime_record_present(9, 0);                       // 4+ bucket
     FrameTimeStats s;
     frametime_get(&s, 16.67f);                            // 60 FPS target: 1 vblank
     CHECK(s.presents == 100);
     CHECK(s.present_hist[0] == 97 && s.present_hist[1] == 1 && s.present_hist[2] == 1 && s.present_hist[3] == 1);
     CHECK(s.late == 3);
     CHECK_NEAR(s.present_avg_vblanks, (97 + 2 + 3 + 9) / 100.0, 1e-4);
+    CHECK(s.torn == 2 && s.torn_worst_halfline == 120);
     frametime_get(&s, 33.33f);                            // 30 FPS target: 2 vblanks are on time
     CHECK(s.late == 2);
     frametime_reset();
     frametime_get(&s, 16.67f);
-    CHECK(s.presents == 0 && s.late == 0);
+    CHECK(s.presents == 0 && s.late == 0 && s.torn == 0);
 }
 
 void run_frametime_tests(void) {

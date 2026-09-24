@@ -639,3 +639,30 @@ The static data every drawing loop touches (libdragon's command queue and rdpq s
 - The pads cost 9–14 KB of RAM (`rom_budget.py` now counts gaps between sections).
 
 `docs/benchmarks/2026-09-24-p2-s6_3-all-bootbench-debug-a3d.csv` is the comparison point for the next stage. With the render path's static data pinned, boot-to-benchmark runs (unattended, `make BENCH=1`) compare directly with it.
+
+## Phase 2 · S6.4 D18 root-caused: the RDP validator tears the display (2026-09-24, debug build, Analogue 3D)
+
+Two boot-to-benchmark runs of Bench = UI, identical except for the validator (`make BENCH=1 BENCH_KIND=UI [BENCH_VALIDATOR=1]`). The UI bench still has the pre-S5 direct-menu steps (n = 0–4), the path that used to flicker. The engine now counts **torn** flips: framebuffer flips that happen after the VI started scanning the picture ([ENGINE.md](ENGINE.md), "Pacing and time").
+
+| Step (n) | Validator on: FPS | late / torn of ~240 | worst torn half-line | Validator off: FPS | late / torn |
+|---|---|---|---|---|---|
+| direct menu, idle (0) | 46.8 | 67 / 26 | 90 | 60.0 | 0 / 0 |
+| cached menu, idle (10) | 59.8 | 0 / 12 | 116 | 60.0 | 0 / 0 |
+| direct, cursor moves (1) | 46.8 | 68 / 28 | 86 | 60.0 | 0 / 0 |
+| cached, cursor moves (11) | 59.2 | 3 / 28 | 112 | 60.0 | 0 / 0 |
+| direct, value changes (2) | 46.7 | 69 / 28 | 90 | 60.0 | 0 / 0 |
+| cached, value changes (12) | 58.6 | 5 / 34 | 110 | 60.0 | 0 / 0 |
+| direct, tab switches (3) | 48.9 | 54 / 26 | 88 | 60.0 | 0 / 0 |
+| cached, tab switches (13) | 59.7 | 1 / 46 | 160 | 60.0 | 0 / 0 |
+| direct, close/reopen (4) | 51.2 | 43 / 14 | 90 | 60.1 | 0 / 0 |
+| cached, close/reopen (14) | 60.1 | 0 / 23 | 116 | 60.0 | 0 / 0 |
+| Classic / Minimal styles (20, 30) | 58.4 / 58.2 | 6–8 / 34–45 | 178 / 190 | 60.0 | 0 / 0 |
+| HUD direct / cached (40, 41) | 47.0 / 60.1 | 66 / 20, 0 / 0 | 88, — | 60.0 | 0 / 0 |
+| dialog reading / skipping (50, 51) | 59.6 / 60.0 | 1 / 8, 0 / 1 | 408, 36 | 60.0 | 0 / 0 |
+
+- **With the validator: 952 libdragon `VI WARNING: __vblank_interrupt outside of vblank period` lines; without it: 0** (and 0 in every earlier run without the validator). The user saw the lower-screen flicker return in the validator runs, with the scene or the menu changing.
+- **Cause (libdragon):** `rdpq_debug` validates each RDP buffer inside the RSP and RDP interrupt handlers with interrupts disabled (`__rdpq_trace_fetch` → `__rdpq_trace_flush`, marked "FIXME: remove this", unchanged in upstream preview). Validation of a command-heavy buffer takes milliseconds, the vblank interrupt waits, and the display flips `VI_ORIGIN` mid-picture: the lines below the flip show the new frame. Text is command-heavy, which is why menus showed it first and why S5.1's cached menu (fewer commands) seemed to fix it. The only step with 0 torn flips is the cached HUD, which issues almost no text commands per frame.
+- **Frame overruns are not the cause:** under the validator the cached-menu steps run at ~60 FPS with 0–5 late frames and still tear 12–46 times; without it every step presents all frames on time with 0 torn.
+- **Validator off, against S5.3** (`...-s5_3-ui-...`): every UI step −4 to −8 % CPU, 0 regressions; the direct-menu steps now hold 60 FPS.
+
+Captures: `docs/benchmarks/2026-09-24-p2-s6_4-ui-validator-bootbench-debug-a3d.csv` and `...-s6_4-ui-bootbench-debug-a3d.csv` (the libdragon warnings are in the raw USB logs only). Resolution: tearing while RDP Check is on is expected and documented ([DEBUGGING.md](DEBUGGING.md)); the engine's torn-frame counter shows it. `docs/benchmarks/2026-09-24-p2-s6_3-all-bootbench-debug-a3d.csv` stays the Bench = All comparison point.
