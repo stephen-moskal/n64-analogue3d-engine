@@ -123,7 +123,7 @@ Findings:
 1. Build and upload the **debug** ROM (`engine-debug.z64`). Release builds compile `debugf` out, so they print no CSV. Both variants are `-O2`; the debug build adds asserts and profiler scopes, measured at ~0.1 ms, so its numbers stand for release.
 2. Start the capture: `sc64deployer debug | Tee-Object docs/benchmarks/<date>-<label>.log` (the SC64 must not be busy with another `debug` session).
 3. Reset the console, then Start → **Debug** → **Bench** (All or one test) → **Scene = Benchmark** → A. The scene fades in, runs every step (60 warm-up + 240 measured frames each, fixed camera path), and fades back to the demo. Start aborts.
-4. For unattended runs, `libdragon make BENCH=1` builds a ROM that boots straight into "All" (or into one kind with `BENCH_KIND=<kind>`, e.g. `AUDIO`): `engine-debug-bench.z64`, built in its own directory (`build/debug-bench/`), so the normal build and ROM are untouched and no clean is needed. Upload that ROM instead. On the A3D the first step of such a run can be slow (D32): repeat it, or discard it.
+4. For unattended runs, `libdragon make BENCH=1` builds a ROM that boots straight into "All" (or into one kind with `BENCH_KIND=<kind>`, e.g. `AUDIO`): `engine-debug-bench.z64`, built in its own directory (`build/debug-bench/`), so the normal build and ROM are untouched and no clean is needed. Upload that ROM instead. On the A3D every reset is followed by ~7.5 s of slower CPU, RSP and RDP (D32), so such a run first holds its first step's scene, unmeasured, until 15 s after reset ("settling", `BENCH_SETTLE` rows).
 5. Compare the capture with the baseline. `bench_compare.py` reads the `BENCH` step rows (and `BENCH_META` as a label) and ignores every other line, so a raw capture works; it reads UTF-8 and UTF-16 files. To keep just the benchmark rows: `Select-String '^BENCH' capture.log | % Line > new.csv`.
 
 ```powershell
@@ -555,5 +555,22 @@ The 30 FPS cap is libdragon's `display_set_fps_limit()` instead of a busy-wait, 
 **Z-buffer at the top of RDRAM:** no measurable RDP change on the A3D (objects 64, the most Z-heavy step: RDP busy 11.00 → 11.00 ms). Kept, since it costs nothing and frees the malloc heap of 150 KB of long-lived data. (`heap_used` doesn't move: libdragon counts top-of-RAM allocations as used.)
 
 **Boot (D32):** the demo boot's `BOOT` rows show no slow start (16.67 ms frames and 0.1 ms audio from the first second). D32 was only ever seen in boot-to-benchmark (`BENCH=1`) runs; that case is checked separately.
+
+### D32: the slow start after reset
+
+Two boot-to-benchmark runs of the S6.2 code:
+- `docs/benchmarks/2026-09-24-p2-s6_2-d32-bootbench-debug-a3d.csv`, starting at once: step 0 (the empty scene) CPU 1.19 ms and RDP 1.39 ms against 1.01 and 0.95 in the demo-launched run, step 1 CPU +13 %; every later step normal.
+- `...-d32-bootbench-settle-debug-a3d.csv`, holding the empty scene until 15 s after reset: identical content every second, so the `BOOT` rows isolate time since reset.
+
+| Seconds after reset | draw (CPU) | update | audio | RDP busy |
+|---|---|---|---|---|
+| 1–6 | 0.58 ms | 0.08 | 0.09 | 1.26–1.33 ms |
+| 8–13 | 0.43 ms | 0.06 | 0.07 | 0.90 ms |
+
+For ~7.5 s after every reset the same work costs ~35 % more CPU, ~47 % more RDP and ~25 % more audio mixing (an RSP job), then drops within one second. The demo boot shows the same window (seconds 1–7). Nothing in the engine changes at that moment and ares shows nothing, so it is the A3D or the cart after reset. The mixer's 4.1 ms from the original report is gone. After the settle, step 0 measures 0.91 ms CPU and 0.95 ms RDP, like a demo-launched run.
+
+### D34: libdragon's queue pointer on the stack's cache sets
+
+The two boot ROMs above differ only by the settle code (448 bytes, never run during the steps), yet every mesh-heavy step of the second is 7–12 % slower (`mesh_tris` +14 %, RDP unchanged). `BENCH_LAYOUT` and `nm` show why: libdragon's command-queue pointer (`rspq_cur_pointer`, read and written by every rdpq command) moved from D-cache set 0x1750 to 0x1920, onto the render stack's sets (≈0x1880–0x1CF0), so each triangle refetches both. Until S6.3 pins hot static data, compare mesh-heavy steps only between builds with the same layout, or inside one ROM.
 
 `docs/benchmarks/2026-09-24-p2-s6_2-all-debug-a3d.csv` is the comparison point for the next stage.

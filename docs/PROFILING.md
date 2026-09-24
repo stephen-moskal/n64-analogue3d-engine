@@ -80,7 +80,7 @@ With triple buffering the loop is paced by framebuffer availability, not vsync, 
 
 **Presented frames** (S6.2) measure what the player sees instead: the engine's vblank handler records how many vblanks each frame stayed on screen (a 256-present ring). "Late" counts frames shown longer than the target interval (1 vblank at 60 FPS, 2 at 30), each a visible hitch. The Frame page shows "Shown late N of M" (yellow when N > 0) and the 1 / 2 / 3+ vblank counts.
 
-**Boot log** (S6.2, D32): for the first 12 s after boot, debug builds print one `BOOT` row per second (averages of frame, wait_display, update, draw, audio and RDP busy, in ms).
+**Boot log** (S6.2, D32): for the first 20 s after boot, debug builds print one `BOOT` row per second (averages of frame, wait_display, update, draw, audio and RDP busy, in ms). On the A3D the first ~7.5 s after every reset run ~35–47 % slower (HARDWARE.md): measure after that.
 
 ## RDP load (hardware counters)
 
@@ -114,7 +114,8 @@ RDP,<frame>,counter_mhz=...,busy_us=...  RDP counters (profiler.c)
 RSP,<frame>,...                          RSP profile, "unavailable" unless RSPQ_PROFILE (profiler.c)
 FT_HDR / FT,<frame>,count,fps,...        frame-time window + histogram (frametime.c)
 FTP_HDR / FTP,<frame>,presents,vb1,...   presented frames: vblanks per frame, late count (frametime.c)
-BOOT_HDR / BOOT,<sec>,frames,...         per-second averages for the first 12 s after boot (engine.c)
+BOOT_HDR / BOOT,<sec>,frames,...         per-second averages for the first 20 s after boot (engine.c)
+BENCH_SETTLE,start / done                boot-to-benchmark run waiting out the slow start after reset (D32)
 MEM_HDR / MEM,<frame>,rdram,...          memory (memstats.c)
 BENCH_META / BENCH_HDR / BENCH,...       benchmark run and steps (benchmark_scene.c, BENCHMARKS.md)
 BENCH_PROF_HDR / BENCH_PROF,...          per-step CPU breakdown (profiler on)

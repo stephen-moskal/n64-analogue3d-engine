@@ -88,7 +88,7 @@ void engine_init(void) {
 // D32: the first seconds after boot ran slow on the A3D. For the first
 // BOOT_LOG_SECONDS, print one BOOT row per second with that second's
 // averages (debug builds; needs the profiler on, as it is at boot).
-#define BOOT_LOG_SECONDS 12
+#define BOOT_LOG_SECONDS 20
 static void boot_log(uint32_t now) {
     static uint32_t sec_start;
     static int      sec = -1, frames;

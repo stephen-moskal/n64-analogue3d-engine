@@ -68,6 +68,12 @@ static int        step_index;
 static int        step_frame;          // frames since the step started
 static bool       finished;
 static bool       aborted;
+
+// D32: for several seconds after a console reset the A3D runs CPU and RDP
+// ~40 % slower. A run that starts within BOOT_SETTLE_S of reset (make BENCH=1)
+// first holds its first step's scene, unmeasured, until then.
+#define BOOT_SETTLE_S   15
+static bool       settling;
 static uint64_t   run_start_ticks;
 
 // Per-step accumulators (measured frames only)
@@ -586,6 +592,10 @@ static void bench_init(Scene *scene) {
     camera_init(&scene->camera, &cfg);
 
     run_start_ticks = get_ticks();
+    settling = run_start_ticks < (uint64_t)BOOT_SETTLE_S * TICKS_PER_SECOND;
+    if (settling)
+        debugf("BENCH_SETTLE,start,%.1f s after reset,measuring from %d s\n",
+               (float)run_start_ticks / TICKS_PER_SECOND, BOOT_SETTLE_S);
     debugf("BENCH_META,build=%s,date=%s %s,rdram=%d,benchmark=%s,steps=%d,warmup=%d,measure=%d\n",
            ENGINE_BUILD_NAME, __DATE__, __TIME__, get_memory_size(),
            kind_names[configured_kind], step_count, WARMUP_FRAMES, MEASURE_FRAMES);
@@ -652,6 +662,14 @@ static void bench_update(Scene *scene, float dt) {
         }
         textbox_update(&ui_dlg_box, &in, 1.0f / 60.0f);
         PROF_END(PROF_DIALOG);
+    }
+
+    // D32 settle: keep the first step's scene on screen, unmeasured
+    if (settling) {
+        if (get_ticks() < (uint64_t)BOOT_SETTLE_S * TICKS_PER_SECOND) return;
+        settling = false;
+        run_start_ticks = get_ticks();
+        debugf("BENCH_SETTLE,done\n");
     }
 
     // Frame-locked camera path: identical on every run regardless of dt
@@ -771,7 +789,17 @@ static void bench_post_draw(Scene *scene) {
 
     // One status line (constant cost in every step)
     PROF_BEGIN(PROF_HUD);
-    if (step_index < step_count) {
+    if (settling) {
+        TextBoxConfig cfg = {
+            .x = 12, .y = 214, .font_id = FONT_DEBUG_MONO,
+            .color = RGBA32(0xFF, 0xFF, 0x80, 0xFF),
+        };
+        text_draw_fmt(&cfg, "BENCH settling after reset (D32): %d s",
+                      BOOT_SETTLE_S - (int)(get_ticks() / TICKS_PER_SECOND));
+        cfg.y = 226;
+        cfg.color = RGBA32(0xC0, 0xC0, 0xC0, 0xFF);
+        text_draw_fmt(&cfg, "%s", "not measured");
+    } else if (step_index < step_count) {
         const BenchStep *st = &steps[step_index];
         int sy = ui_dlg_active ? 20 : 214;
         TextBoxConfig cfg = {

@@ -48,6 +48,7 @@ VS Code tasks (`.vscode/tasks.json`) wrap the same commands with per-OS variants
 - Scenes poll input themselves (`action_update()` in `on_update`); the Start menu is driven by the demo scene only. The menu is nearly full (6/6 tabs; Debug uses 12 of 12 items, Controls 11) and `menu_add_item` returns -1 past the limits.
 - Particle emitters keep the `ParticleEmitterDef` pointer: definitions must have static storage.
 - Frame pacing (docs/ENGINE.md): `dt` is `display_get_delta_time()` and the 30 FPS cap is `engine_set_fps_limit()` (libdragon's display limit, no busy-wait). Under triple buffering the loop time jitters (~12.5/21 ms) while every frame still reaches the screen on time, so judge smoothness by presented frames (Frame page "Shown late", `FTP` / `BENCH_PRESENT` rows), not loop p99.
+- Measuring on the A3D: the first ~7.5 s after every reset run ~35–47 % slower (D32; boot-to-benchmark ROMs settle 15 s). Builds that differ only in unrelated code can differ ~10 % on mesh-heavy steps because static data slides through the D-cache (D34: libdragon's `rspq_cur_pointer` onto the render stack's sets): check `BENCH_LAYOUT` / `nm` before blaming a change, and use a same-ROM A/B near the 5 % gate.
 - Text: render a laid-out paragraph with `text_render_paragraph()`, never `rdpq_paragraph_render()` directly. The font sets its mode in a recorded block that rdpq's CPU-side tracking misses; after a fill-mode clear this silently broke later `text_draw()` calls (docs/UI.md).
 - UI text: `text_draw()` sets standard mode before each print (a font sets its mode in a recorded block the CPU-side tracking does not see; without it, text after fill/copy-mode drawing comes out invisible). Text cached in a `UiLayer` needs a plain monochrome font (`FONT_UI_*`, from `assets/fonts/`): libdragon's outlined builtins leave the alpha bit clear offscreen. Layer slot boxes are widened to 4-pixel columns (fill mode on 16-bit surfaces needs them). `menu_draw(menu, view)` takes a `MenuView`.
 
@@ -82,7 +83,8 @@ src/engine/                engine.c/h (engine_init: display 320x240 16-bit tripl
                            hot_text.ld (I-cache placement of the render path); docs/ENGINE.md
 tests/host/                host unit tests with a libdragon shim (libdragon exec make -C tests/host run)
 tools/                     bench_compare.py, hot_text.py, rdp_log_to_hex.py, rom_budget.py, ci_build.sh, rspq_profile.ps1,
-                           gen_placeholder_audio.py, dialog_build.py (dialog JSON -> .dlg, run by the Makefile)
+                           gen_placeholder_audio.py, dialog_build.py (dialog JSON -> .dlg, run by the Makefile),
+                           disasm.sh (one function's disassembly: check what the compiler made of a hot loop)
 assets/                    source PNGs, WAVs, fonts, dialog JSON; filesystem/ holds the generated outputs (ignored)
 ```
 

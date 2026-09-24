@@ -427,6 +427,7 @@ Gotchas:
 Gotchas:
 
 - `ENGINE_NOINIT` on an array that is read before it's written reads garbage.
+- To see what the compiler made of a loop: `libdragon exec bash tools/disasm.sh build/debug/engine-debug.elf <function>`. A loop that writes one float array while reading another may reload its inputs after every store; `restrict` or local copies fix that, and the disassembly shows whether it happened (HARDWARE.md, "Pointer aliasing").
 - Keep setup, logging and rare paths out of `ENGINE_HOT`: every byte moves the wrap point. Texture uploads stay outside the block on purpose: their ~7 KB of libdragon code would push the mesh phase to about 17 KB and onto `rdpq_triangle_rsp`'s lines, so `mesh_draw()` avoids repeat uploads instead.
 - The Makefile inserts `hot_text.ld` into libdragon's `n64.ld` after the boot code (as `build/<variant>/engine.ld`) and stops if that anchor is missing, which a libdragon upgrade could cause.
 

@@ -22,7 +22,9 @@ What we have measured or learned about the target hardware, and the RDP rules th
 | Stack peak (demo) | ~3 KB of the 64 KB stack (4.5 KB with the validator) | stack painting (P1.4) |
 | Late frames | flicker in the lower screen area when frames overrun with the Start menu on screen (debug build + validator + menu); overruns without the menu do not flicker (Overload benchmark, Phase 2 S0); ares shows only an FPS drop | defect D18 |
 
-Design for 4 MB anyway (a real N64 without Expansion Pak); the extra 4 MB is headroom for debug builds and tooling.
+| After a reset | for **~7.5 s** the same work costs ~35 % more CPU, ~47 % more RDP time and ~25 % more RSP (audio mixing) time, then drops to normal within one second. Every reset, demo or benchmark boot; ares shows nothing | `BOOT` rows, boot-to-benchmark holding a constant scene (D32, S6.2) |
+
+Design for 4 MB anyway (a real N64 without Expansion Pak); the extra 4 MB is headroom for debug builds and tooling. Take no timing measurement in the first 10 s after a reset; boot-to-benchmark ROMs wait 15 s before their first step.
 
 ## Analogue 3D vs ares
 
@@ -34,6 +36,7 @@ Design for 4 MB anyway (a real N64 without Expansion Pak); the extra 4 MB is hea
 | Log | ISViewer (Homebrew Mode) | USB via sc64deployer |
 | Crash inspector / backtrace | yes | yes (also over USB) |
 | RDP cycle counters | may be unimplemented | work, at 93.75 MHz |
+| First ~7.5 s after reset | normal speed | CPU, RSP and RDP ~35–47 % slower (D32) |
 
 ## RDP rules (consolidated)
 
@@ -73,7 +76,10 @@ The VR4300 has a 16 KB instruction cache (32-byte lines) and an 8 KB data cache 
 - **Texture uploads stay out:** `texture_upload()` and libdragon's sprite upload (~7 KB) would push the mesh phase past 16 KB and into `rdpq_triangle_rsp`'s lines, so they are left outside the block and `mesh_draw()` skips uploading a slot that is already in TMEM ([TEXTURES.md](TEXTURES.md)).
 - **Check:** `tools/hot_text.py <elf>` (part of `ci_build.sh`) follows each render phase (mesh, floor, shadow, particle) from its root functions through their callees inside the block, fails when two functions of a phase need different lines at the same cache index or when a phase function lies outside the block, and lists callees outside it (`COLD_OK` allows `texture_upload` and rare-path functions such as asserts; calls through function pointers are declared in `INDIRECT`). New per-triangle code: mark it `ENGINE_HOT` and place its object file in `hot_text.ld` if the order matters; a new drawing loop also gets a phase entry in `PHASES`. Step-by-step: [EXTENDING.md](EXTENDING.md).
 - **libdragon compiles with `-ftrivial-auto-var-init=pattern`:** every uninitialized local array is filled with 0xFE whenever it comes into scope, which in a triangle loop means a `memset` per triangle. Scratch arrays that are fully written before they are read take `ENGINE_NOINIT`.
+- **Pointer aliasing and `restrict` (checked 2026-09-24):** the hot helpers already compile without reloads. `mat4_mul_vec3` loads its vector and matrix once and stores its four results at the end, because strict aliasing (on at `-O2`) keeps `vec4_t`, `mat4_t` and `vec3_t` apart. The inlined float-array helpers (`model_point`, `model_normal`, `shadow_project`, `light_material`, `mesh_normal_matrix`) write locals the compiler can see are separate. Adding `restrict` to all of them left every instruction of `mesh_draw`, `floor_draw`, the shadow and particle loops and `lighting_calculate` unchanged, so the engine doesn't use it. `vec3.h` never writes through its pointers, so it can't gain either. Where it would matter: a new out-of-line loop that writes one float array while reading another (the P3.1 vertex-cache transform, for example). Use `restrict` there, or copy the matrix into locals before the loop, and check the result with `tools/disasm.sh` (count the `lwc1` loads).
+- **Reading FP code:** every `mul.s` is followed by a `nop`: that is `-mfix4300`, the VR4300 multiply-errata workaround every file is built with. A vertex transform (`mat4_mul_vec3`) is 19 loads, 12 multiplies (each with its `nop`), 12 adds and 4 stores.
 - **Data cache (D26):** mesh data that shares D-cache sets with the render stack costs 4–8.5 % CPU on object-heavy frames. The stack sits just below the top of RDRAM, so its hot frames (`mesh_draw` 688 B, `rdpq_triangle`) land on sets ≈0x1880–0x1CF0; a mesh's geometry block or its `Mesh` struct (face groups, read per group) on those sets is slower. Bench = Layout measures it with copies at four cache colours, and `BENCH_LAYOUT` rows log every address. The planned fix is the vertex cache (P3.1), whose triangle loop reads one static buffer at a known colour instead of mesh data.
+- **libdragon's static state slides too (D34):** every rdpq command reads and writes libdragon's queue pointer (`rspq_cur_pointer`, `rspq_cur_sentinel`), a static variable placed after all code. 448 bytes of unrelated code moved it from set 0x1750 to 0x1920, onto the render stack's sets, and cost `mesh_tris` 14 % (about 117 cycles per triangle). This is why builds that differ only in unrelated code can differ by ~10 % on mesh-heavy benchmark steps. Planned fix (S6.3): pin hot static data to a fixed D-cache colour in the link script, as `hot_text.ld` does for code.
 
 ## RSP / microcode limits
 
