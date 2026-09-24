@@ -23,7 +23,7 @@ Long-term vision (unchanged from v1): an action-RPG engine supporting souls-like
 6. **Measure before and after.** *(new)* No feature merges without a row in `docs/BENCHMARKS.md` showing what it cost or saved.
 7. **Debug builds are strict, release builds are lean.** *(new)* Validators, asserts and the profiler are on in `BUILD=debug` and compiled out in `BUILD=release`; both variants build in CI.
 
-## 2. Current state (2026-09-23)
+## 2. Current state (2026-09-24)
 
 **Delivered (v1 Features 1–7, 9, 10):** mesh system + shape library, multi-object scenes with selection/manipulation, audio (music + SFX; rewritten in Phase 2 S4b.2), billboards, configurable sun + 4 point lights + blob/projected shadows, 128-particle system with direct RDP batching, fog/atmosphere with 7 presets and sky gradient, semi-fixed-timestep physics, remappable action mapping with a Controls tab, tabbed menu, text. Details in [ROADMAP.md](ROADMAP.md).
 
@@ -33,7 +33,7 @@ Long-term vision (unchanged from v1): an action-RPG engine supporting souls-like
 
 **Not started from v1:** Feature 8 (sprite animation), Milestone 1 (Tiny3D + GLTF), Milestones 2–3.
 
-**In progress:** Phase 2, engine hardening (§6): S0–S4b verified on the A3D 2026-09-23 (S4b: libdragon upgrade for the RSP race D28, sound module rework), S5.1 (UI core, cached menu) and S5.2 (HUD, overlay, UI styles) 2026-09-24; S5.3 (dialog system and text box) verified 2026-09-24; next S6.
+**In progress:** Phase 2, engine hardening (§6): S0–S4b verified on the A3D 2026-09-23 (S4b: libdragon upgrade for the RSP race D28, sound module rework), S5.1 (UI core, cached menu) and S5.2 (HUD, overlay, UI styles) 2026-09-24; S5.3 (dialog system and text box) verified 2026-09-24; S6.1–S6.3 (engine core, frame pacing, hot data pinned) verified 2026-09-24; next S6.4. **Progress against the Phase 2 baseline: every Bench = All step 9–55 % less CPU, objects 32 and projected shadows now hold 60 FPS, all 60 FPS steps present every frame on time** ([BENCHMARKS.md](BENCHMARKS.md), "Phase 2 progress snapshot").
 
 **Phase 0 environment numbers** (performance numbers are in [BENCHMARKS.md](BENCHMARKS.md)):
 

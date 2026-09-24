@@ -206,6 +206,51 @@ Phase 2 (engine hardening, ROADMAP_v2 §6) is measured against these start refer
 
 Each Phase 2 stage commits its own CSV as `docs/benchmarks/<date>-p2-s<N>-debug-a3d.csv`; it becomes the comparison point for the next stage (moving baseline). The exit comparison (S13) is against the 2026-09-23 baseline.
 
+## Phase 2 progress snapshot: baseline → S6.3 (2026-09-24, debug build, Analogue 3D)
+
+Bench = All at the start of Phase 2 (`docs/benchmarks/2026-09-23-baseline-debug-a3d.csv`) against the build after S6.3 (`docs/benchmarks/2026-09-24-p2-s6_3-all-bootbench-debug-a3d.csv`, a boot-to-benchmark run with the D32 settle and the profiler **on**, which costs ~0.1 ms the baseline did not pay). `bench_compare.py`: **all 26 steps improved, 0 regressions.**
+
+| Step | FPS | CPU avg ms | CPU change | RDP busy ms | 1 % low FPS |
+|---|---|---|---|---|---|
+| empty scene | 60 → 60 | 1.20 → 0.88 | −27 % | 1.11 → 0.93 | 55.5 → 59.3 |
+| objects 8 | 60 → 60 | 4.53 → 3.92 | −13 % | 2.36 → 2.20 | 54.6 → 59.2 |
+| objects 16 | 60 → 60 | 7.88 → 6.68 | −15 % | 3.63 → 3.44 | 51.0 → 59.5 |
+| objects 24 | 59.9 → 60 | 11.35 → 9.42 | −17 % | 4.95 → 4.64 | 48.0 → 59.2 |
+| **objects 32** | **54.6 → 60** | 18.09 → 12.60 | **−30 %** | 6.16 → 5.86 | 42.8 → 59.2 |
+| objects 48 | 36.7 → 40.3 | 27.27 → 24.82 | −9 % | 8.85 → 8.44 | 28.4 → 39.9 |
+| objects 64 | 27.6 → 30.3 | 36.21 → 32.97 | −9 % | 11.19 → 11.00 | 21.4 → 30.0 |
+| particles 32 | 60 → 60 | 2.59 → 2.06 | −21 % | 1.28 → 1.10 | 57.6 → 59.2 |
+| particles 64 | 60 → 60 | 4.07 → 2.80 | −31 % | 1.37 → 1.19 | 57.2 → 59.1 |
+| particles 96 | 60 → 60 | 5.60 → 3.56 | −36 % | 1.47 → 1.29 | 57.0 → 59.2 |
+| **particles 128** | 60 → 60 | 7.21 → 4.35 | **−40 %** | 1.60 → 1.40 | 56.6 → 59.1 |
+| lights 0 / 1 / 2 / 4 | 60 → 60 | 7.91–8.37 → 6.69–7.33 | −12..−15 % | 3.64–3.72 → 3.46 | 51.0 → 59.4 |
+| **textures 1 / 2 / 4 / 8** | 60 → 60 | 7.54–7.72 → 5.23–5.49 | **−29..−31 %** | 2.45 → 1.94 | 54.5 → 59.2–59.5 |
+| shadows off | 60 → 60 | 8.06 → 6.72 | −17 % | 3.68 → 3.50 | 51.0 → 59.4 |
+| shadows blob | 60 → 60 | 8.99 → 7.32 | −19 % | 4.85 → 4.66 | 48.0 → 59.4 |
+| **shadows projected** | **40.5 → 60** | 24.70 → 11.13 | **−55 %** | 7.21 → 5.25 | 32.0 → 59.3 |
+| fill rate 1 / 2 / 4 / 8 layers | 60 → 60 | 1.14–1.15 → 0.90–0.91 | −21 % | 2.82–14.71 → 2.66–14.52 | 57.1 → 59.3 |
+
+**Headlines**
+- **Object ceiling at 60 FPS: ~24–28 → 32+ pillars** (512 triangles): objects 32 went from 54.6 FPS to a steady 60 with 4 ms to spare.
+- **Projected shadows: 40.5 → 60 FPS** for 16 casters (S3: vertices transformed once per caster and the caster frustum test; S6.3: the shadow scratch off the stack's cache lines).
+- **Particles −21 to −40 %** (S3: emitter index instead of a scan; S6.3: the pool off the stack's cache lines, D33).
+- **Textures −30 %** (S3: no re-upload of a texture already in TMEM; 48 → 16 uploads per frame in this bench).
+- **Smoothness:** every step that runs at 60 FPS now shows all 239 measured frames for exactly one vblank (`BENCH_PRESENT`, S6.2), and the 1 % lows rose from 48–57.6 to 59.1–59.5 FPS. Over budget, frames repeat in whole vblanks: objects 48 averages 1.49 vblanks per frame, objects 64 1.98.
+- **Reproducible numbers:** builds that differ only in unrelated code now agree within ±0.5 % (S6.3, D34); before, mesh-heavy steps moved 7–12 %.
+
+**Outside the benchmark** (stage sections below):
+
+| Measure | Phase 2 start | Now | Stage |
+|---|---|---|---|
+| Reset Scene leak (Reset Soak ×10) | ~13.5–20 KB per reset | **0 B** | S1 |
+| Demo heap (Reset Soak `heap_before`) | 946,992 B (S1) | 843,336 B (−101 KB) | S4 |
+| Start menu, open and idle | 4.07 ms per frame | **0.31 ms** | S5.1 |
+| Demo HUD | 1.1–1.4 ms | ~0.6 ms (cached, with shadow) | S5.2 |
+| Audio with music playing | 1.3 ms (2.69 avg, 10.2 peak and dropped frames after the S4b.1 upgrade) | 0.46 ms (VADPCM, mixing right after `display_get`) | S4b.2 |
+| Dialog text box | — | 0.30 ms reading, 0.53 ms skipping | S5.3 |
+| Frame pacing (D19) | loop 12.5 / 21 ms, dt jittered | dt from the display; 256/256 demo frames on time | S6.2 |
+| Slow start after reset (D32) | unexplained | A3D/cart: ~7.5 s at −35..−47 %; boot runs settle 15 s | S6.2 |
+
 ## Phase 2 · S0 measurement prep (2026-09-23, debug build, Analogue 3D)
 
 New tools: **Reset Soak** and **Menu Sweep** (Debug tab, `src/debug/testbed.c`), the **Overload** benchmark kind, and a static sphere in the demo (the S2 shading test object; it adds ~1 ms of CPU for its 60 triangles).
