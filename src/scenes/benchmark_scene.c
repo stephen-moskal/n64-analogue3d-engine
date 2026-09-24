@@ -13,6 +13,7 @@
 #include "../ui/text.h"
 #include "../ui/menu.h"
 #include "../ui/menu_view.h"
+#include "../ui/ui_hud.h"
 #include "../debug/engine_debug.h"
 #include "../debug/stats.h"
 #include "../debug/profiler.h"
@@ -54,7 +55,7 @@ static const char *kind_desc[BENCH_KIND_COUNT] = {
     "+%d ms CPU burn, floor + 16 pillars",
     "%d: variant*1000+pillars (0 shared, 1-4 at 0/2/4/6 KB, 5 reversed)",
     "%d: codec*100+poll*10+sfx (0 none 1 raw 2 vadpcm 3 opus)",
-    "%d: mode*10+input (0 direct 1 cached; 0 none 1 cursor 2 value 3 tab 4 reopen)",
+    "%d: menu mode*10+input, 20/30 styles, 40/41 HUD direct/cached",
 };
 
 static BenchKind  configured_kind = BENCH_ALL;
@@ -111,6 +112,44 @@ static MenuView ui_view[2];
 static bool     ui_views_ready;
 static bool     ui_active;
 static int      ui_mode, ui_input;
+// Steps 20 / 30: the cached menu in the Classic / Minimal style (view 2).
+// Steps 40 / 41: a demo-like HUD (title + six readouts whose values change
+// every frame) drawn direct every frame, or cached at ~6 Hz, 2 lines a frame.
+static MenuView ui_style_view;
+static HudPanel ui_hud[2][2];          // [cached][top, bottom]
+static int      ui_hud_line[2][7];
+static bool     ui_hud_active, ui_hud_cached;
+
+static void ui_hud_setup(void) {
+    for (int c = 0; c < 2; c++) {
+        HudPanel *t = &ui_hud[c][0], *b = &ui_hud[c][1];
+        hud_panel_init(t, 20, 10, 280, 14, c, c ? 10 : 0, c ? 2 : 0);
+        hud_panel_init(b, 0, 186, 320, 38, c, c ? 10 : 0, c ? 2 : 0);
+        ui_hud_line[c][0] = hud_panel_line(t, 20, 20, 280, FONT_UI_VAR, ALIGN_CENTER);
+        for (int i = 0; i < 3; i++) {
+            ui_hud_line[c][1 + i] = hud_panel_line(b, 4, 196 + 12 * i, 172, FONT_UI_MONO, ALIGN_LEFT);
+            ui_hud_line[c][4 + i] = hud_panel_line(b, 176, 196 + 12 * i, 140, FONT_UI_MONO, ALIGN_RIGHT);
+        }
+    }
+}
+
+static void ui_hud_draw(int frame) {
+    int c = ui_hud_cached ? 1 : 0;
+    const UiStyle *st = &ui_style_debug;
+    HudPanel *t = &ui_hud[c][0], *b = &ui_hud[c][1];
+    if (hud_panel_due(t)) hud_panel_set(t, ui_hud_line[c][0], st->hud_title, "SMozN64 Dev Engine [debug]");
+    if (hud_panel_due(b)) {
+        int *l = ui_hud_line[c];
+        hud_panel_setf(b, l[1], st->hud_text, "OBJ:%d/%d VIS:%d", 9, 64, 5 + (frame / 30) % 4);
+        hud_panel_setf(b, l[2], st->hud_text, "T:%d U:%d COL:%d RAY:%d", 400 + frame % 60, 6, 5, 300 + frame % 90);
+        hud_panel_setf(b, l[3], st->hud_accent, "FPS: 60 CPU:%d.%dms", 10 + frame % 3, frame % 10);
+        hud_panel_setf(b, l[4], st->hud_accent, "SEL:Pillar L");
+        hud_panel_setf(b, l[5], st->hud_text, "CAM:ORBITAL");
+        hud_panel_setf(b, l[6], st->hud_text, "XYZ:%d,%d,%d", frame % 400 - 200, 150, 400 - frame % 300);
+    }
+    hud_panel_draw(t, st);
+    hud_panel_draw(b, st);
+}
 
 // ------------------------------------------------------------------------
 // Helpers
@@ -195,7 +234,7 @@ static void build_steps(BenchKind which) {
         }
     }
     if (which == BENCH_UI) {
-        static const int p[] = {0, 10, 1, 11, 2, 12, 3, 13, 4, 14};
+        static const int p[] = {0, 10, 1, 11, 2, 12, 3, 13, 4, 14, 20, 30, 40, 41};
         for (unsigned i = 0; i < sizeof(p) / sizeof(p[0]); i++) add_step(BENCH_UI, p[i]);
     }
 }
@@ -286,6 +325,7 @@ static void setup_step(Scene *scene) {
     burn_ms = 0;
     draw_floor = false;
     ui_active = false;
+    ui_hud_active = false;
     lighting_init(L);
     L->point_light_count = 0;
     for (int i = 0; i < MAX_POINT_LIGHTS; i++) L->point_lights[i].active = false;
@@ -355,11 +395,15 @@ static void setup_step(Scene *scene) {
     case BENCH_UI:
         layout_grid(16);
         draw_floor = true;
+        ui_hud_active = st->param >= 40;
+        ui_hud_cached = st->param == 41;
+        if (ui_hud_active) break;
         ui_menu = start_menu;                 // a copy: the real settings stay untouched
         menu_open(&ui_menu);
         ui_mode = st->param / 10;
         ui_input = st->param % 10;
         ui_active = true;
+        if (ui_mode >= 2) menu_view_set_style(&ui_style_view, ui_mode == 2 ? &ui_style_classic : &ui_style_minimal);
         break;
     default:
         break;   // BENCH_ALL step 0: empty reference scene
@@ -473,6 +517,8 @@ static void bench_init(Scene *scene) {
     if (configured_kind == BENCH_UI && !ui_views_ready) {
         menu_view_init(&ui_view[0], &ui_style_debug, false);
         menu_view_init(&ui_view[1], &ui_style_debug, true);
+        menu_view_init(&ui_style_view, &ui_style_classic, true);
+        ui_hud_setup();
         ui_views_ready = true;
     }
     saved_poll_point = snd_get_poll_point();
@@ -648,8 +694,13 @@ static void bench_post_draw(Scene *scene) {
 
     if (ui_active) {
         PROF_BEGIN(PROF_MENU);
-        menu_draw(&ui_menu, &ui_view[ui_mode ? 1 : 0]);
+        menu_draw(&ui_menu, ui_mode >= 2 ? &ui_style_view : &ui_view[ui_mode ? 1 : 0]);
         PROF_END(PROF_MENU);
+    }
+    if (ui_hud_active) {
+        PROF_BEGIN(PROF_HUD);
+        ui_hud_draw(step_frame);
+        PROF_END(PROF_HUD);
     }
 
     // One status line (constant cost in every step)
@@ -679,6 +730,8 @@ static void bench_cleanup(Scene *scene) {
     if (ui_views_ready) {
         menu_view_free(&ui_view[0]);
         menu_view_free(&ui_view[1]);
+        menu_view_free(&ui_style_view);
+        for (int c = 0; c < 2; c++) { hud_panel_free(&ui_hud[c][0]); hud_panel_free(&ui_hud[c][1]); }
         ui_views_ready = false;
     }
     snd_music_stop(0.0f);

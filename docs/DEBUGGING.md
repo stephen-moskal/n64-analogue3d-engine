@@ -22,7 +22,7 @@ Start → L/R to the **Debug** tab (the Start menu exists in the demo scene). Va
 
 | Item | Options | What it does |
 |---|---|---|
-| Overlay | Off / Stats / Profiler / Memory / Frame / RSP | on-screen page (see PROFILING.md); hidden while the menu is open |
+| Overlay | Off / Stats / Profiler / Memory / Frame / RSP | on-screen page (see PROFILING.md); hidden while the menu is open. Text is cached per row (docs/UI.md); ~120 KB while a page is shown |
 | Profiler | On / Off | CPU scope timing (debug) |
 | RDP Check | Off / On | runtime RDP validator (debug) |
 | Dump CSV | --- / Dump! | writes STATS, PROF, RDP, RSP, FT, MEM rows to the log, 120 frames (~2 s) after the menu closes so the averages no longer include the menu |

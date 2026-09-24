@@ -40,6 +40,7 @@ static const char *toggle_options[] = {"On", "Off"};
 static const char *camera_mode_options[] = {"Orbital", "Fixed", "Follow"};
 static const char *camera_col_options[] = {"Off", "On"};
 static const char *fps_options[] = {"30", "60"};
+static const char *ui_style_options[] = {"Debug", "Classic", "Minimal"};   // order of ui_styles[]
 static const char *reset_options[] = {"---", "Reset!"};
 
 // Menu options — Sound tab
@@ -120,6 +121,7 @@ int main(void) {
     menu_add_item(&start_menu, tab_s, "Cam Collide", camera_col_options, 2, 0);
     menu_add_item(&start_menu, tab_s, "Frame Rate", fps_options, 2, 1);  // Default: 60
     menu_add_item(&start_menu, tab_s, "Reset Scene", reset_options, 2, 0);  // Default: ---
+    menu_add_item(&start_menu, tab_s, "UI Style", ui_style_options, 3, 0);  // Default: Debug (ui_styles[])
 
     // Tab 1: Sound
     int tab_a = menu_add_tab(&start_menu, "Sound");

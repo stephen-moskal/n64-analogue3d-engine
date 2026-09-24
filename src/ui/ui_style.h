@@ -23,8 +23,10 @@ typedef struct UiStyle {
     color_t disabled;          // greyed-out rows
     color_t footer;            // hints and scroll markers
 
-    // Panel (alpha < 255 = translucent; alpha 0 = not drawn)
+    // Panel (alpha < 255 = translucent; alpha 0 = not drawn). panel2 is the
+    // bottom colour of a vertical gradient (the same as panel for flat).
     color_t panel;
+    color_t panel2;
     color_t border;            // outer frame
     int16_t border_w;          // frame thickness in px (0 = none)
     color_t separator;         // line under the header
@@ -32,6 +34,14 @@ typedef struct UiStyle {
     color_t scroll_track;      // scroll bar beside lists longer than the view
     color_t scroll_thumb;
     int16_t scroll_w;          // scroll bar width in px (0 = none)
+
+    // HUD (ui_hud.h)
+    color_t hud_title;         // headline text
+    color_t hud_text;          // normal readouts
+    color_t hud_accent;        // highlighted readouts
+    color_t hud_shadow;        // drop shadow behind HUD text (alpha 0 = none)
+    color_t hud_backdrop;      // box behind each HUD panel (alpha 0 = none)
+    color_t gauge_bg, gauge_fill, gauge_warn;   // gauges; warn above 90 %
 
     // Menu layout, screen px. Text y values are baselines.
     int16_t menu_x0, menu_x1;  // panel left / right edge
@@ -53,7 +63,13 @@ typedef struct UiStyle {
     const char *more;          // text scroll markers ("" = none; the scroll bar is enough)
 } UiStyle;
 
-// The engine's original look: translucent black box, yellow cursor row
-extern const UiStyle ui_style_debug;
+// Built-in styles
+extern const UiStyle ui_style_debug;     // the original look: translucent black box, yellow cursor
+extern const UiStyle ui_style_classic;   // classic RPG window: blue gradient, white frame
+extern const UiStyle ui_style_minimal;   // dark and quiet: near-black panel, thin gold accents
+
+// All built-in styles, for a style picker (UI_STYLE_COUNT entries)
+#define UI_STYLE_COUNT 3
+extern const UiStyle *const ui_styles[UI_STYLE_COUNT];
 
 #endif

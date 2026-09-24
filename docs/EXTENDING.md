@@ -212,7 +212,7 @@ Gotchas:
 | Limit (`menu.h`) | Value | In use today |
 |---|---|---|
 | `MENU_MAX_TABS` | 6 | 6: Settings, Sound, Lighting, Environ, Controls, Debug |
-| `MENU_MAX_ITEMS` (per tab) | 12 | 6, 3, 10, 6, 11, 11 |
+| `MENU_MAX_ITEMS` (per tab) | 12 | 7, 3, 10, 6, 11, 11 |
 | `MENU_MAX_OPTIONS` (per item) | 16 | extra options are dropped silently |
 | `MENU_VISIBLE_ITEMS` | 7 | longer tabs scroll |
 

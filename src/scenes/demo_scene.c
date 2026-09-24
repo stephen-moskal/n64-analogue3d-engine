@@ -9,6 +9,8 @@
 #include "../ui/text.h"
 #include "../ui/menu.h"
 #include "../ui/menu_view.h"
+#include "../ui/ui_hud.h"
+#include "../ui/ui_draw.h"
 #include "../debug/engine_debug.h"
 #include "../debug/stats.h"
 #include "../debug/profiler.h"
@@ -183,72 +185,33 @@ static bool     start_menu_view_ready;
 extern int engine_target_fps;
 
 // ============================================================
-// HUD text configs — new layout
+// HUD: two panels of cached text (ui_hud.h) in the current UI style
 // ============================================================
 
-// Title (top center)
-static const TextBoxConfig title_text = {
-    .x       = 20.0f,
-    .y       = 20.0f,
-    .width   = 280,
-    .font_id = FONT_DEBUG_VAR,
-    .color   = RGBA32(0xFF, 0xFF, 0xFF, 0xFF),
-    .align   = ALIGN_CENTER,
-};
+#define HUD_REFRESH       10      // frames between HUD updates (~6 Hz)
+#define HUD_RENDER_BUDGET  2      // text lines re-rendered per frame at most
+#define HUD_GAUGE_W      120      // CPU budget gauge under the FPS line
 
-// Left side — object stats (above geometry stats)
-static const TextBoxConfig obj_stats_text = {
-    .x       = 4.0f,
-    .y       = 196.0f,
-    .font_id = FONT_DEBUG_MONO,
-    .color   = RGBA32(0xC0, 0xC0, 0xFF, 0xFF),
-};
+static HudPanel hud_top, hud_bottom;
+static bool     hud_ready;
+static int      hl_title, hl_obj, hl_geom, hl_fps, hl_sel, hl_cam, hl_pos;
+static float    hud_cpu_frac;
+static const UiStyle *ui_style_cur = &ui_style_debug;
 
-// Left side — geometry stats
-static const TextBoxConfig geom_stats_text = {
-    .x       = 4.0f,
-    .y       = 208.0f,
-    .font_id = FONT_DEBUG_MONO,
-    .color   = RGBA32(0xFF, 0xFF, 0x00, 0xFF),
-};
-
-// Left side — FPS
-static const TextBoxConfig fps_text = {
-    .x       = 4.0f,
-    .y       = 220.0f,
-    .font_id = FONT_DEBUG_MONO,
-    .color   = RGBA32(0x00, 0xFF, 0x00, 0xFF),
-};
-
-// Right side — selection info (only in object mode)
-static const TextBoxConfig sel_text = {
-    .x       = 4.0f,
-    .y       = 196.0f,
-    .width   = 312,
-    .font_id = FONT_DEBUG_MONO,
-    .color   = RGBA32(0xFF, 0x80, 0x40, 0xFF),
-    .align   = ALIGN_RIGHT,
-};
-
-// Right side — camera mode
-static const TextBoxConfig cam_text = {
-    .x       = 4.0f,
-    .y       = 208.0f,
-    .width   = 312,
-    .font_id = FONT_DEBUG_MONO,
-    .color   = RGBA32(0x80, 0xC0, 0xFF, 0xFF),
-    .align   = ALIGN_RIGHT,
-};
-
-// Right side — camera position
-static const TextBoxConfig pos_text = {
-    .x       = 4.0f,
-    .y       = 220.0f,
-    .width   = 312,
-    .font_id = FONT_DEBUG_MONO,
-    .color   = RGBA32(0x80, 0xC0, 0xFF, 0xFF),
-    .align   = ALIGN_RIGHT,
-};
+static void hud_setup(void) {
+    if (hud_ready) return;
+    hud_panel_init(&hud_top, 20, 10, 280, 14, true, HUD_REFRESH, HUD_RENDER_BUDGET);
+    hl_title = hud_panel_line(&hud_top, 20, 20, 280, FONT_UI_VAR, ALIGN_CENTER);
+    // Bottom band: three readouts on the left, three right-aligned
+    hud_panel_init(&hud_bottom, 0, 186, 320, 38, true, HUD_REFRESH, HUD_RENDER_BUDGET);
+    hl_obj  = hud_panel_line(&hud_bottom, 4, 196, 172, FONT_UI_MONO, ALIGN_LEFT);
+    hl_geom = hud_panel_line(&hud_bottom, 4, 208, 172, FONT_UI_MONO, ALIGN_LEFT);
+    hl_fps  = hud_panel_line(&hud_bottom, 4, 220, 172, FONT_UI_MONO, ALIGN_LEFT);
+    hl_sel  = hud_panel_line(&hud_bottom, 176, 196, 140, FONT_UI_MONO, ALIGN_RIGHT);
+    hl_cam  = hud_panel_line(&hud_bottom, 176, 208, 140, FONT_UI_MONO, ALIGN_RIGHT);
+    hl_pos  = hud_panel_line(&hud_bottom, 176, 220, 140, FONT_UI_MONO, ALIGN_RIGHT);
+    hud_ready = true;
+}
 
 // --- Menu tab/item indices (must match main.c order) ---
 #define TAB_SETTINGS       0
@@ -260,6 +223,7 @@ static const TextBoxConfig pos_text = {
 #define ITEM_CAMERA_COL    3
 #define ITEM_FRAME_RATE    4
 #define ITEM_RESET_SCENE   5
+#define ITEM_UI_STYLE      6
 
 #define ITEM_SOUND_MASTER  0
 #define ITEM_SFX_VOL       1
@@ -377,6 +341,7 @@ static const char *camera_mode_names[] = {"ORBITAL", "FIXED", "FOLLOW"};
 #define FIXED_Y_SPEED     5.0f
 
 static int last_fps_option = 1;
+static int last_ui_style = -1;       // -1: apply the UI Style item on the next check
 static int last_sound_master = -1;  // -1: apply the Sound tab on the next check
 static int last_sfx_vol = -1;
 static int last_bgm_vol = -1;
@@ -658,6 +623,7 @@ static void demo_init(Scene *scene) {
     last_camera_mode = 0;
     last_camera_col = 0;
     last_fps_option = 1;
+    last_ui_style = -1;
     last_sound_master = -1;
     last_sfx_vol = -1;
     last_bgm_vol = -1;
@@ -974,6 +940,14 @@ static void demo_update(Scene *scene, float dt) {
     // Sound tab (Master, SFX and BGM volumes), on change
     apply_sound_settings();
 
+    // UI style: menu and HUD restyle live, even while the menu is open
+    int ui_style_idx = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_UI_STYLE);
+    if (ui_style_idx != last_ui_style && ui_style_idx >= 0 && ui_style_idx < UI_STYLE_COUNT) {
+        ui_style_cur = ui_styles[ui_style_idx];
+        if (start_menu_view_ready) menu_view_set_style(&start_menu_view, ui_style_cur);
+        last_ui_style = ui_style_idx;
+    }
+
     // --- Apply lighting settings from Lighting tab ---
 
     int sun_dir_idx    = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_SUN_DIR);
@@ -1267,69 +1241,70 @@ static void demo_post_draw(Scene *scene) {
     PROF_END(PROF_PARTICLE_DRAW);
 
     PROF_BEGIN(PROF_HUD);
-    // Debug text overlay (HUD work only runs when the HUD is shown; defect D7)
+    // Debug text overlay (HUD work only runs when the HUD is shown; defect D7).
+    // The readouts are gathered only when the panels are due (~6 Hz).
     bool show_debug = (menu_get_value(&start_menu, TAB_SETTINGS, ITEM_DEBUG_TEXT) == 0);
     if (show_debug) {
-        // Count visible objects
-        int visible_count = 0;
-        for (int i = 0; i < scene->object_count; i++) {
-            if (scene->objects[i].visible) visible_count++;
-        }
+        hud_setup();
+        const UiStyle *st = ui_style_cur;
+        if (hud_panel_due(&hud_top))
+            hud_panel_set(&hud_top, hl_title, st->hud_title, "SMozN64 Dev Engine [" ENGINE_BUILD_NAME "]");
 
-        // Raycast from camera
-        Ray cam_ray;
-        cam_ray.origin = scene->camera.position;
-        cam_ray.direction = scene->camera.view_dir;
-        cam_ray.max_distance = 1000.0f;
-        ray_hit = collision_raycast(&scene->collision, &cam_ray,
-                                    COLLISION_LAYER_ALL, &ray_result);
-
-        text_draw(&title_text, "SMozN64 Dev Engine [" ENGINE_BUILD_NAME "]");
-
-        // Left side: object stats
-        text_draw_fmt(&obj_stats_text, "OBJ:%d/%d VIS:%d",
-            scene->object_count, SCENE_MAX_OBJECTS, visible_count);
-
-        // Left side: geometry stats
-        // Last complete frame (see src/debug/stats.h)
-        const EngineStats *st = stats_get();
-        text_draw_fmt(&geom_stats_text, "T:%lu U:%lu COL:%d RAY:%.0f",
-            (unsigned long)stats_tris_total(st), (unsigned long)st->tex_uploads,
-            scene->collision.result_count,
-            ray_hit ? ray_result.distance : -1.0f);
-
-        // Left side: FPS (smoothed)
-        uint32_t now = TICKS_READ();
-        if (hud_fps_ticks == 0 || TICKS_DISTANCE(hud_fps_ticks, now) > (int32_t)(TICKS_PER_SECOND / 2)) {
-            hud_fps = display_get_fps();
-            hud_fps_ticks = now;
-        }
-        text_draw_fmt(&fps_text, "FPS: %.0f CPU:%.1fms", hud_fps, profiler_cpu_ms());
-
-        // Right side: selection info (only in object mode)
-        if (interaction_mode != MODE_NORMAL && selected_object >= 0) {
-            SceneObject *sel = scene_get_object(scene, selected_object);
-            ObjectData *data = sel ? (ObjectData *)sel->data : NULL;
-            const char *name = data ? data->name : "???";
-            if (interaction_mode == MODE_OBJECT_TRANSFORM) {
-                text_draw_fmt(&sel_text, "SEL:%s [%s]",
-                    name, transform_mode_names[transform_mode]);
-            } else {
-                text_draw_fmt(&sel_text, "SEL:%s", name);
+        if (hud_panel_due(&hud_bottom)) {
+            int visible_count = 0;
+            for (int i = 0; i < scene->object_count; i++) {
+                if (scene->objects[i].visible) visible_count++;
             }
+            Ray cam_ray;
+            cam_ray.origin = scene->camera.position;
+            cam_ray.direction = scene->camera.view_dir;
+            cam_ray.max_distance = 1000.0f;
+            ray_hit = collision_raycast(&scene->collision, &cam_ray,
+                                        COLLISION_LAYER_ALL, &ray_result);
+
+            hud_panel_setf(&hud_bottom, hl_obj, st->hud_text, "OBJ:%d/%d VIS:%d",
+                           scene->object_count, SCENE_MAX_OBJECTS, visible_count);
+            const EngineStats *es = stats_get();       // last complete frame (src/debug/stats.h)
+            hud_panel_setf(&hud_bottom, hl_geom, st->hud_text, "T:%lu U:%lu COL:%d RAY:%.0f",
+                           (unsigned long)stats_tris_total(es), (unsigned long)es->tex_uploads,
+                           scene->collision.result_count, ray_hit ? ray_result.distance : -1.0f);
+
+            // FPS (smoothed over half a second)
+            uint32_t now = TICKS_READ();
+            if (hud_fps_ticks == 0 || TICKS_DISTANCE(hud_fps_ticks, now) > (int32_t)(TICKS_PER_SECOND / 2)) {
+                hud_fps = display_get_fps();
+                hud_fps_ticks = now;
+            }
+            float cpu = profiler_cpu_ms();
+            hud_cpu_frac = cpu / (engine_target_fps == 30 ? 33.33f : 16.67f);
+            hud_panel_setf(&hud_bottom, hl_fps, st->hud_accent, "FPS: %.0f CPU:%.1fms", hud_fps, cpu);
+
+            // Right side: selection (object mode only), camera mode and position
+            if (interaction_mode != MODE_NORMAL && selected_object >= 0) {
+                SceneObject *sel = scene_get_object(scene, selected_object);
+                ObjectData *data = sel ? (ObjectData *)sel->data : NULL;
+                const char *name = data ? data->name : "???";
+                if (interaction_mode == MODE_OBJECT_TRANSFORM)
+                    hud_panel_setf(&hud_bottom, hl_sel, st->hud_accent, "SEL:%s [%s]",
+                                   name, transform_mode_names[transform_mode]);
+                else
+                    hud_panel_setf(&hud_bottom, hl_sel, st->hud_accent, "SEL:%s", name);
+            } else {
+                hud_panel_set(&hud_bottom, hl_sel, st->hud_accent, "");
+            }
+            int cam_mode_idx = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_CAMERA_MODE);
+            hud_panel_setf(&hud_bottom, hl_cam, st->hud_text, "CAM:%s%s",
+                           camera_mode_names[cam_mode_idx],
+                           scene->camera.collision_enabled ? " COL" : "");
+            hud_panel_setf(&hud_bottom, hl_pos, st->hud_text, "XYZ:%.0f,%.0f,%.0f",
+                           scene->camera.position.x, scene->camera.position.y,
+                           scene->camera.position.z);
         }
 
-        // Right side: camera mode
-        int cam_mode_idx = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_CAMERA_MODE);
-        text_draw_fmt(&cam_text, "CAM:%s%s",
-            camera_mode_names[cam_mode_idx],
-            scene->camera.collision_enabled ? " COL" : "");
-
-        // Right side: camera position
-        text_draw_fmt(&pos_text, "XYZ:%.0f,%.0f,%.0f",
-            scene->camera.position.x,
-            scene->camera.position.y,
-            scene->camera.position.z);
+        hud_panel_draw(&hud_top, st);
+        hud_panel_draw(&hud_bottom, st);
+        ui_gauge(st->gauge_bg, hud_cpu_frac > 0.9f ? st->gauge_warn : st->gauge_fill,
+                 hud_cpu_frac, 4, 226, 4 + HUD_GAUGE_W, 229);
     }
 
     PROF_END(PROF_HUD);
@@ -1338,7 +1313,7 @@ static void demo_post_draw(Scene *scene) {
     if (start_menu.is_open) {
         PROF_BEGIN(PROF_MENU);
         if (!start_menu_view_ready) {
-            menu_view_init(&start_menu_view, &ui_style_debug, true);
+            menu_view_init(&start_menu_view, ui_style_cur, true);
             start_menu_view_ready = true;
         }
         menu_draw(&start_menu, &start_menu_view);

@@ -8,6 +8,7 @@
 #include "memstats.h"
 #include "frametime.h"
 #include "../ui/text.h"
+#include "../ui/ui_layer.h"
 
 /*
  * Layout is derived from the measured width of the debug mono font, so text
@@ -35,29 +36,25 @@
 #define COL_MARK   RGBA32(0xFF, 0xFF, 0xFF, 0xFF)
 #define COL_DIM    RGBA32(0x70, 0x70, 0x70, 0xFF)
 
-static int char_w = 0;        // measured advance of the mono font (px)
-static int line_h = 9;        // measured line advance (px)
-static int ascent = 7;        // baseline offset of the first line (px)
+static int char_w = 0;        // measured advance of the UI mono font (px)
+static int line_h = LINE_TARGET;
+static int ascent = 7;        // baseline offset of a row's text (px)
 
-// Text is batched: every line of a page is appended to one buffer with inline
-// "^xx" style switches and printed with a single rdpq_text_print() call.
-// One call per line cost ~0.35 ms each on the Analogue 3D.
-enum { ST_TEXT = 0x10, ST_HEAD, ST_GREEN, ST_YELLOW, ST_RED, ST_DIM };
-static char text_buf[1536];
-static int  text_len;
-static int  text_row;
-static int  line_spacing;     // added to the font's natural line height
-
-// Cached page: rebuilt at REFRESH_FRAMES, replayed every frame. Laying text
-// out (rdpq_paragraph_build) is the expensive part (~17 us per glyph on the
-// A3D); rendering a prebuilt paragraph is much cheaper.
-static rdpq_paragraph_t *cached_para = NULL;
-static int  cached_age  = 1000;
-static int  cached_page = -1;
-static int  panel_y1;
+// Text is cached (ui_layer.h): one slot per row, re-rendered only when the
+// row's text or colour changes, a few rows per frame at most. The page is
+// drawn every frame as one blit. Rows are recomputed at REFRESH_FRAMES.
+#define OV_ROWS        20
+#define OV_BUDGET       6     // rows re-rendered per frame at most
+static UiLayer ov_layer;
+static bool    ov_ready;
+static int     row_slot[OV_ROWS];
+static int     rows_written;
+static int     cached_age  = 1000;
+static int     cached_page = -1;
+static int     panel_y1;
 
 // Deferred bars: text and rectangles use different RDP modes, so bars are
-// queued while text is printed and drawn together afterwards (one mode set).
+// queued while the page is built and drawn together afterwards.
 #define MAX_BARS 48
 static struct { int16_t x, y, w, h; color_t c; } bars[MAX_BARS];
 static int bar_count;
@@ -74,62 +71,33 @@ static void measure_font(void) {
     const char *probe = "0000000000";
     int nbytes = 10;
     rdpq_textparms_t parms = {0};
-    rdpq_paragraph_t *p = rdpq_paragraph_build(&parms, FONT_DEBUG_MONO, probe, &nbytes);
+    rdpq_paragraph_t *p = rdpq_paragraph_build(&parms, FONT_UI_MONO, probe, &nbytes);
     char_w = (int)((p->bbox.x1 - p->bbox.x0) / 10.0f + 0.5f);
+    ascent = (int)(-p->bbox.y0 + 0.5f);
     rdpq_paragraph_free(p);
     if (char_w < 4 || char_w > 12) char_w = 8;   // sanity fallback
-
-    // Line advance = height of a 2-line paragraph minus a 1-line one
-    nbytes = 1;
-    p = rdpq_paragraph_build(&parms, FONT_DEBUG_MONO, "0", &nbytes);
-    float one_y0 = p->bbox.y0, one_y1 = p->bbox.y1;
-    rdpq_paragraph_free(p);
-    nbytes = 3;
-    p = rdpq_paragraph_build(&parms, FONT_DEBUG_MONO, "0\n0", &nbytes);
-    float two_y1 = p->bbox.y1;
-    rdpq_paragraph_free(p);
-    int natural = (int)(two_y1 - one_y1 + 0.5f);
-    if (natural < 6 || natural > 20) natural = 13;
-    line_spacing = LINE_TARGET - natural;
-    line_h = LINE_TARGET;
-    ascent = (int)(-one_y0 + 0.5f);
-    if (ascent < 4 || ascent > 12) ascent = 7;
-
-    text_set_style(FONT_DEBUG_MONO, ST_TEXT,   COL_TEXT);
-    text_set_style(FONT_DEBUG_MONO, ST_HEAD,   COL_HEAD);
-    text_set_style(FONT_DEBUG_MONO, ST_GREEN,  COL_GREEN);
-    text_set_style(FONT_DEBUG_MONO, ST_YELLOW, COL_YELLOW);
-    text_set_style(FONT_DEBUG_MONO, ST_RED,    COL_RED);
-    text_set_style(FONT_DEBUG_MONO, ST_DIM,    COL_DIM);
-
-    debugf("[overlay] debug mono font: advance %d px, natural line %d px (using %d), ascent %d px\n",
-           char_w, natural, line_h, ascent);
+    if (ascent < 4 || ascent > line_h - 2) ascent = line_h - 2;   // keep the text inside its row
+    debugf("[overlay] UI mono font: advance %d px, ascent %d px, rows %d px\n", char_w, ascent, line_h);
 }
 
-static int style_for(color_t c) {
-    uint32_t v = color_to_packed32(c);
-    if (v == color_to_packed32(COL_HEAD))   return ST_HEAD;
-    if (v == color_to_packed32(COL_GREEN))  return ST_GREEN;
-    if (v == color_to_packed32(COL_YELLOW)) return ST_YELLOW;
-    if (v == color_to_packed32(COL_RED))    return ST_RED;
-    if (v == color_to_packed32(COL_DIM))    return ST_DIM;
-    return ST_TEXT;
+static void layer_setup(void) {
+    ui_layer_init(&ov_layer, SAFE_X1 - SAFE_X0, 2 * PAD + OV_ROWS * line_h, true);
+    ui_layer_set_budget(&ov_layer, OV_BUDGET);
+    for (int r = 0; r < OV_ROWS; r++) {
+        int y = row_y(r) - PANEL_Y0;
+        row_slot[r] = ui_layer_add(&ov_layer, text_x() - SAFE_X0, y, TEXT_COLS * char_w, line_h,
+                                   y + ascent, FONT_UI_MONO, ALIGN_LEFT);
+    }
+    ov_ready = true;
 }
 
 static void text_begin(void) {
-    text_len = 0;
-    text_row = 0;
-    text_buf[0] = '\0';
+    rows_written = 0;
 }
 
+// Rows the page did not write this time are emptied
 static void text_build(void) {
-    if (cached_para) { rdpq_paragraph_free(cached_para); cached_para = NULL; }
-    if (text_len == 0) return;
-    int nbytes = text_len;
-    cached_para = rdpq_paragraph_build(
-        &(rdpq_textparms_t){ .style_id = ST_TEXT, .line_spacing = line_spacing },
-        FONT_DEBUG_MONO, text_buf, &nbytes);
-    text_len = 0;
+    for (int r = rows_written; r < OV_ROWS; r++) ui_layer_set(&ov_layer, row_slot[r], COL_TEXT, "");
 }
 
 static void queue_bar(int x, int y, int w, int h, color_t c) {
@@ -180,19 +148,9 @@ static void line(int row, color_t color, const char *fmt, ...) {
     va_end(ap);
     buf[TEXT_COLS] = '\0';          // hard cap so text never reaches the bar column
 
-    // Newlines up to the requested row, then the style switch and the text
-    while (text_row < row && text_len < (int)sizeof(text_buf) - 2) {
-        text_buf[text_len++] = '\n';
-        text_row++;
-    }
-    int room = (int)sizeof(text_buf) - text_len;
-    int n = snprintf(text_buf + text_len, room, "^%02X", style_for(color));
-    if (n > 0 && n < room) text_len += n;
-    for (const char *c = buf; *c && text_len < (int)sizeof(text_buf) - 3; c++) {
-        if (*c == '^' || *c == '$') text_buf[text_len++] = *c;   // escape
-        text_buf[text_len++] = *c;
-    }
-    text_buf[text_len] = '\0';
+    if (row < 0 || row >= OV_ROWS) return;
+    ui_layer_set(&ov_layer, row_slot[row], color, buf);
+    if (row + 1 > rows_written) rows_written = row + 1;
 }
 
 // Horizontal meter: grey track + filled part, on the given row
@@ -378,11 +336,13 @@ void overlay_draw(float budget_ms) {
     OverlayPage page = debug_overlay_page();
     if (page == OVERLAY_OFF) {
         cached_page = -1;
+        if (ov_ready) ui_layer_free(&ov_layer);   // ~120 KB back while no page is shown
         return;
     }
 
     PROF_BEGIN(PROF_OVERLAY);
     if (char_w == 0) measure_font();
+    if (!ov_ready) layer_setup();
 
     if ((int)page != cached_page || ++cached_age >= REFRESH_FRAMES) {
         bar_count = 0;
@@ -401,7 +361,7 @@ void overlay_draw(float budget_ms) {
     }
 
     draw_panel();
-    if (cached_para) rdpq_paragraph_render(cached_para, text_x(), row_y(0) + ascent);
+    ui_layer_draw(&ov_layer, SAFE_X0, PANEL_Y0, panel_y1 - PANEL_Y0);
     flush_bars();
 
     PROF_END(PROF_OVERLAY);

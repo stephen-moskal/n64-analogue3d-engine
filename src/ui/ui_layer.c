@@ -70,12 +70,28 @@ void ui_layer_invalidate(UiLayer *layer) {
     for (int i = 0; i < layer->slot_count; i++) layer->slots[i].dirty = true;
 }
 
-static void draw_slot_text(const UiSlot *s, int ox, int oy) {
+void ui_layer_set_shadow(UiLayer *layer, color_t shadow) {
+    if (color_to_packed32(layer->shadow) == color_to_packed32(shadow)) return;
+    layer->shadow = shadow;
+    ui_layer_invalidate(layer);
+}
+
+void ui_layer_set_budget(UiLayer *layer, int n) {
+    layer->max_renders = (uint8_t)(n < 0 ? 0 : n > 255 ? 255 : n);
+}
+
+static void draw_slot_text(const UiLayer *layer, const UiSlot *s, int ox, int oy) {
     if (s->text[0] == '\0') return;
     TextBoxConfig cfg = {
         .x = ox + s->tx, .y = oy + s->ty, .width = s->tw,
         .font_id = s->font_id, .color = s->color, .align = (rdpq_align_t)s->align,
     };
+    if (layer->shadow.a) {
+        TextBoxConfig sh = cfg;
+        sh.x += 1; sh.y += 1;
+        sh.color = layer->shadow;
+        text_draw(&sh, s->text);
+    }
     text_draw(&cfg, s->text);
 }
 
@@ -94,23 +110,26 @@ static void render_dirty(UiLayer *layer) {
 
     rdpq_attach(&layer->surf, NULL);
     int renders = 0;
-    if (layer->clear_all) {
+    bool cleared = layer->clear_all;
+    if (cleared) {
         rdpq_set_mode_fill(RGBA32(0, 0, 0, 0));
         rdpq_fill_rectangle(0, 0, layer->w, layer->h);
+        for (int i = 0; i < layer->slot_count; i++) layer->slots[i].dirty = true;
+        layer->clear_all = false;
     }
     for (int i = 0; i < layer->slot_count; i++) {
         UiSlot *s = &layer->slots[i];
-        if (!s->dirty && !layer->clear_all) continue;
+        if (!s->dirty) continue;
+        if (layer->max_renders && renders >= layer->max_renders) break;   // rest next frame
         rdpq_set_scissor(s->x, s->y, s->x + s->w, s->y + s->h);
-        if (!layer->clear_all) {
+        if (!cleared) {
             rdpq_set_mode_fill(RGBA32(0, 0, 0, 0));
             rdpq_fill_rectangle(s->x, s->y, s->x + s->w, s->y + s->h);
         }
-        draw_slot_text(s, 0, 0);
+        if (s->text[0]) draw_slot_text(layer, s, 0, 0);
         s->dirty = false;
         renders++;
     }
-    layer->clear_all = false;
     rdpq_detach();
 
     // Layers are drawn onto the display framebuffer: reopen the whole screen
@@ -123,7 +142,7 @@ void ui_layer_draw(UiLayer *layer, int x, int y, int used_h) {
 
     if (!layer->cached) {
         for (int i = 0; i < layer->slot_count; i++) {
-            draw_slot_text(&layer->slots[i], x, y);
+            draw_slot_text(layer, &layer->slots[i], x, y);
             layer->slots[i].dirty = false;
         }
         STATS_ADD(ui_renders, layer->slot_count);

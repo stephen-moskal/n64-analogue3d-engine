@@ -7,7 +7,7 @@ Tools for answering "where does the frame go?" on the Analogue 3D and in ares. N
 | Tool | Where | What it measures | Cost |
 |---|---|---|---|
 | HUD `FPS … CPU x.x ms` | demo HUD | frame rate and average CPU work per frame | — |
-| Overlay pages | D-Up / Debug → Overlay | stats, per-phase CPU, memory, frame-time histogram, RDP load | 2.3–4.2 ms with a page up, 0 when off |
+| Overlay pages | D-Up / Debug → Overlay | stats, per-phase CPU, memory, frame-time histogram, RDP load | cached text since S5.2 (~0.6 ms in ares; was 2.3–4.2 ms on the A3D), 0 when off |
 | CSV dump | D-Down / Debug → Dump CSV | STATS, PROF_AVG/PEAK, RDP, RSP, FT, MEM rows over the debug log, ~2 s (120 menu-closed frames) after the request | one-off |
 | Benchmark scene | Debug → Scene = Benchmark, or a `BENCH=1` ROM | stress run (26 steps for All), one BENCH and one BENCH_PROF row per step | — |
 | `tools/bench_compare.py` | host or container | regression check between two benchmark runs | — |

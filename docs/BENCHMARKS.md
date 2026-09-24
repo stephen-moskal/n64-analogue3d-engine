@@ -149,7 +149,7 @@ The tests run with fog and sky off (restored afterwards) on the benchmark scene'
 | fillrate | 1, 2, 4, 8 | N full-screen blended rectangles (RDP read-modify-write) |
 | layout | 32, 64 × variants 0–5 | data-placement check (D26): the shared pillar (0), copies at D-cache colours 0/2/4/6 KB (1–4), a reversed-winding copy (5); param = variant × 1000 + pillars. Debug only, not in All |
 | overload | 0, 10, 14, 17, 20, 25 | floor + 16 pillars + N ms of CPU busy-wait per frame: deliberate overruns, for the D18 flicker (not in All) |
-| ui | 0, 10, 1, 11, 2, 12, 3, 13, 4, 14 | the Start menu (a copy) over floor + 16 pillars; param = mode × 10 + input (mode 0 direct, 1 cached; input 0 none, 1 cursor every 8 frames, 2 value every 2, 3 tab every 30, 4 closed 30 of every 100 frames); not in All ([UI.md](UI.md)) |
+| ui | 0, 10, 1, 11, 2, 12, 3, 13, 4, 14, 20, 30, 40, 41 | floor + 16 pillars with UI on top. 0–14: the Start menu (a copy), param = mode × 10 + input (mode 0 direct, 1 cached; input 0 none, 1 cursor every 8 frames, 2 value every 2, 3 tab every 30, 4 closed 30 of every 100 frames). 20 / 30: the cached menu in the Classic / Minimal style. 40 / 41: a demo-like HUD (title + six readouts changing every frame) drawn direct every frame / cached at ~6 Hz. Not in All ([UI.md](UI.md)) |
 | audio | 8 steps (10 with `SND_OPUS=1`) | floor + 16 pillars with the music at full volume; param = codec × 100 + poll point × 10 + effects (codec 0 none, 1 raw, 2 VADPCM, 3 Opus; poll point 0 after present, 1 before `display_get`, 2 after; effects 1 = a new sound every 4 frames). Opus runs first, so VADPCM later reuses its channel (D31). Steps whose track is not in the ROM are skipped; not in All ([AUDIO.md](AUDIO.md)) |
 
 ### Baseline (2026-09-23, debug build, Analogue 3D, `docs/benchmarks/2026-09-23-baseline-debug-a3d.csv`)
@@ -470,3 +470,29 @@ The lower-screen flicker (D18) no longer appears with the validator on and the m
 - **This is not proven.** It is tracked as D33 and re-checked with the S5.2 build; a same-ROM A/B settles it if it persists.
 
 `docs/benchmarks/2026-09-24-p2-s5_1-all-debug-a3d.csv` is the comparison point for S5.2.
+
+## Phase 2 · S5.2 HUD, overlay and styles (2026-09-24, debug build, Analogue 3D)
+
+The demo HUD and the debug overlay now use cached UI layers:
+- the HUD as two `HudPanel`s, refreshed at ~6 Hz with at most 2 lines re-rendered per frame and a drop shadow;
+- the overlay with one slot per row.
+
+Two styles were added (Classic, Minimal), selectable live from Settings → UI Style ([UI.md](UI.md)).
+
+**Bench = UI** (`docs/benchmarks/2026-09-24-p2-s5_2-ui-debug-a3d.csv`, profiler off, so no `BENCH_PROF` rows). CPU ms:
+
+| Step | CPU avg / max | Note |
+|---|---|---|
+| cached menu, Debug style (10) | 10.24 / 12.4 | as in S5.1 (10.28) |
+| cached menu, Classic (20) | 10.37 / 12.5 | +0.13 ms: 8 gradient bands and a 2 px frame |
+| cached menu, Minimal (30) | 10.34 / 12.6 | +0.10 ms |
+| HUD direct, every frame, with shadow (40) | 15.97 / 18.4 | 13 text prints per frame |
+| HUD cached (41) | 10.56 / 15.5 | **−5.4 ms**; p99 22.1 ms, 1 % low 45 FPS: a refresh frame can overrun |
+
+- **The cached HUD costs about 0.6 ms per frame on average.** That is the step's CPU minus the cached static menu step's, which shares the scene. It compares with 1.1–1.4 ms for the old demo HUD in S0, which had no shadow and fewer glyphs. The S5 target of ≤ 0.4 ms is not reached.
+- **Refresh frames still spike** by ~3 ms, even with the 2-line budget, because the shadow doubles each line's glyphs. Two ways down: a budget of 1, or a backdrop instead of the shadow (the Classic style's HUD already uses backdrops).
+- **Bench = All vs S5.1** (`...-s5_2-all-...`): **0 regressions.**
+  - Textures swung back −7 to −13 % (S5.1's +7.8 % was layout); lights, shadows and objects +2 to +4 %.
+  - Against S4b.2, particles 64–128 are still +11 to +16 % (D33). The particle update is up ~10 % as well, which is pure CPU. The pool no longer aliases the render stack's D-cache sets in this build, so data layout alone does not explain it; code placement (the update is outside the hot-text block) is the next suspect. A same-ROM A/B is planned.
+
+`docs/benchmarks/2026-09-24-p2-s5_2-all-debug-a3d.csv` is the comparison point for the next stage.

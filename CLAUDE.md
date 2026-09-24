@@ -3,7 +3,7 @@
 ## Project Overview
 Nintendo 64 homebrew game engine built on libdragon (`preview` branch, vendored as the `libdragon/` git submodule pinned at `39d0d6096`, 2026-09-15; upgraded from `10f3bd43e` in Phase 2 S4b). Verified on real hardware (Analogue 3D via SummerCart64) and in the ares emulator. Long-term goal: an action-RPG engine supporting souls-like combat and Final Fantasy Tactics-style battles, general enough for other genres.
 
-Current state (2026-09-23): engine features from v1 (mesh system, multi-object scenes, camera, collision, physics, lighting + shadows, billboards, particles, fog/atmosphere, audio, action-mapped input, tabbed menu, text) plus the Phase 1 developer tooling in `src/debug/` (profiler, stats, memory, frame time, overlay pages, RDP counters, RDP capture, crash test, Reset Soak, Menu Sweep), a benchmark scene, host unit tests and CI. Planning lives in `docs/ROADMAP_v2.md`: Phases 0 and 1 are done; Phase 2 (engine hardening, stages S0–S13) is in progress with S0–S4b verified on the A3D (S4b: libdragon upgrade fixing the RSP race D28, sound module rework); S5.1 (UI core: cached menu text, styles) verified 2026-09-24; next S5.2 (HUD, overlay, styles) and S5.3 (text boxes), then S6, CPU-path graphics features and Tiny3D. The engine is CPU-bound (see `docs/BENCHMARKS.md`).
+Current state (2026-09-23): engine features from v1 (mesh system, multi-object scenes, camera, collision, physics, lighting + shadows, billboards, particles, fog/atmosphere, audio, action-mapped input, tabbed menu, text) plus the Phase 1 developer tooling in `src/debug/` (profiler, stats, memory, frame time, overlay pages, RDP counters, RDP capture, crash test, Reset Soak, Menu Sweep), a benchmark scene, host unit tests and CI. Planning lives in `docs/ROADMAP_v2.md`: Phases 0 and 1 are done; Phase 2 (engine hardening, stages S0–S13) is in progress with S0–S4b verified on the A3D (S4b: libdragon upgrade fixing the RSP race D28, sound module rework); S5.1–S5.2 (UI core: cached menu, HUD and overlay text, three styles) verified 2026-09-24; next S5.3 (text boxes), then S6, CPU-path graphics features and Tiny3D. The engine is CPU-bound (see `docs/BENCHMARKS.md`).
 
 ## Build & Deploy
 Development happens on Windows 11 (PowerShell) and macOS. The `libdragon` npm CLI runs `make` inside the Docker container `ghcr.io/dragonminded/libdragon:preview` (config in `.libdragon/config.json`, vendor strategy = submodule). Full setup: `docs/SETUP.md`.
@@ -70,7 +70,8 @@ src/scenes/benchmark_scene.c   stress test (All = 26 steps, plus Layout, Overloa
 src/audio/                 sound module (snd_*): crossfading music slots, 8 prioritised SFX voices, positional sound,
                            master/music/SFX volume ramps; snd_mix (pure, host-tested); sound_bank table
 src/ui/                    text (fonts, text_draw), menu (model + input, host-tested), menu_view (drawing in a UiStyle),
-                           ui_layer (cached text slots), ui_style, ui_draw (rectangles, gauges); docs/UI.md
+                           ui_layer (cached text slots), ui_hud (HUD panels), ui_style (Debug/Classic/Minimal),
+                           ui_draw (rectangles, gradients, gauges); docs/UI.md
 src/debug/                 engine_debug.h (build switches), debug_menu (Debug tab + D-Up/D-Down), stats,
                            profiler (+ RDP counters), memstats, frametime, overlay, rdp_debug, testbed (Reset Soak, Menu Sweep)
 src/engine/                hot.h (ENGINE_HOT, ENGINE_NOINIT), hot_text.ld (I-cache placement of the render path)

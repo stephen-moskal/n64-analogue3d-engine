@@ -153,7 +153,7 @@ void menu_draw(const Menu *menu, MenuView *v) {
     int fy = footer_y(st, rows);
     int y0 = st->title_y - st->pad;
     int y1 = fy + st->row_h;
-    ui_rect(st->panel, st->menu_x0, y0, st->menu_x1, y1);
+    ui_vgradient(st->panel, st->panel2, st->menu_x0, y0, st->menu_x1, y1);
     ui_frame(st->border, st->border_w, st->menu_x0, y0, st->menu_x1, y1);
     ui_rect(st->separator, st->menu_x0 + st->pad, st->sep_y, st->menu_x1 - st->pad, st->sep_y + 1);
     if (st->cursor_bar.a && tab->item_count > 0) {

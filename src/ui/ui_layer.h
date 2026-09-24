@@ -37,6 +37,8 @@ typedef struct {
     bool    cached;            // false: immediate mode
     bool    allocated;         // surface exists
     bool    clear_all;         // clear the whole surface on the next render
+    uint8_t max_renders;       // slots rendered per frame at most (0 = all dirty ones)
+    color_t shadow;            // drop shadow at (+1, +1) behind the text (alpha 0 = none)
     surface_t surf;            // RGBA16, cached mode only
     int     slot_count;
     UiSlot  slots[UI_LAYER_MAX_SLOTS];
@@ -58,6 +60,15 @@ void ui_layer_setf(UiLayer *layer, int slot, color_t color, const char *fmt, ...
 
 // Re-render every slot on the next draw (e.g. after a style change)
 void ui_layer_invalidate(UiLayer *layer);
+
+// Drop shadow behind all text (alpha 0 = none): keeps plain-font text readable
+// over the scene. A change re-renders the layer.
+void ui_layer_set_shadow(UiLayer *layer, color_t shadow);
+
+// Spread re-rendering: at most n dirty slots per frame (0 = all). The rest
+// keep their old text until a later frame. Good for HUDs and overlays whose
+// many small updates would otherwise land in one frame.
+void ui_layer_set_budget(UiLayer *layer, int n);
 
 // Render what changed, then draw rows [0, used_h) of the layer with its
 // top-left corner at (x, y). Call while the frame buffer is attached.

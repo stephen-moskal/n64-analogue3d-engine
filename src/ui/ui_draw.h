@@ -10,6 +10,10 @@
 // Filled rectangle; translucent when the colour's alpha is below 255
 void ui_rect(color_t color, int x0, int y0, int x1, int y1);
 
+// Vertical gradient from top to bottom colour, as horizontal bands (a flat
+// rectangle when both colours are equal). Rectangles only: hardware-safe.
+void ui_vgradient(color_t top, color_t bottom, int x0, int y0, int x1, int y1);
+
 // Frame of the given thickness just inside the rectangle
 void ui_frame(color_t color, int thickness, int x0, int y0, int x1, int y1);
 

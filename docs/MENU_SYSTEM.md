@@ -174,7 +174,7 @@ The benchmark scene has no menu (Start aborts the run). A new scene that wants t
 
 Items are addressed by position: the `TAB_*` / `ITEM_*` defines in `demo_scene.c` and the `DebugMenuItem` enum in `debug_menu.h` must match the order in which `main.c` and `debug_menu_init()` add the items. Values live in the global menu, so they survive scene switches and Reset Scene.
 
-**Capacity:** all 6 tabs are used, and the Controls and Debug tabs hold 11 of their 12 items (Settings 6, Sound 3, Lighting 10, Environ 6). A seventh tab needs `MENU_MAX_TABS` raised.
+**Capacity:** all 6 tabs are used, and the Controls and Debug tabs hold 11 of their 12 items (Settings 7 with UI Style, Sound 3, Lighting 10, Environ 6). A seventh tab needs `MENU_MAX_TABS` raised.
 
 ## Extending the Menu
 

@@ -1,6 +1,6 @@
 # UI
 
-The UI layer in `src/ui/` draws menus, and later HUDs and text boxes (Phase 2 S5.2–S5.3), so that:
+The UI layer in `src/ui/` draws menus and HUDs, and later text boxes (Phase 2 S5.3), so that:
 - text costs little per frame, because it is cached;
 - the look is data, because it comes from a style;
 - the model (what a menu holds) is separate from the view (how it is drawn).
@@ -11,9 +11,10 @@ The menu model and its API are in [MENU_SYSTEM.md](MENU_SYSTEM.md). This documen
 |---|---|
 | `text.c/h` | Font registry and `text_draw()` / `text_draw_fmt()`: immediate text, one print per call |
 | `ui_style.c/h` | `UiStyle`: fonts, colours, layout metrics and decorations. Built in: `ui_style_debug` |
-| `ui_draw.c/h` | Immediate primitives: `ui_rect()`, `ui_frame()`, `ui_gauge()` |
+| `ui_draw.c/h` | Immediate primitives: `ui_rect()`, `ui_vgradient()`, `ui_frame()`, `ui_gauge()` |
 | `ui_layer.c/h` | `UiLayer`: retained text slots, cached in an offscreen surface |
 | `menu_view.c/h` | `MenuView`: draws a `Menu` in a style through a `UiLayer` |
+| `ui_hud.c/h` | `HudPanel`: anchored blocks of HUD text, refreshed at a fixed rate |
 | `menu.c/h` | The menu model and its joypad input ([MENU_SYSTEM.md](MENU_SYSTEM.md)) |
 
 ## Why text is cached
@@ -42,6 +43,8 @@ ui_layer_draw(&L, 30, 12, used_h);   // render dirty slots, then blit rows [0, u
 - **Immediate mode** (`cached = false`) draws every slot straight to the screen every frame. It needs no surface memory; the UI benchmark uses it for the before/after comparison.
 - **Memory:** `w × h × 2` bytes, allocated on the first draw. The Start menu's layer is 264 × 186 px, about 98 KB. `ui_layer_free()` releases it after an `rspq_wait()`.
 - **`ui_layer_invalidate()`** re-renders everything on the next draw, for example after a style change.
+- **Drop shadow:** `ui_layer_set_shadow(L, color)` draws each slot's text again 1 px down and right in that colour, behind the text. It keeps plain-font text readable over the 3D scene (the plain fonts have no outline). It doubles the cost of a re-render, not of the per-frame blit.
+- **Render budget:** `ui_layer_set_budget(L, n)` re-renders at most `n` dirty slots per frame; the rest keep their old text until a later frame. HUDs (2) and the overlay (6) use it, so a refresh that changes many lines spreads over a few frames instead of landing in one. Menus render everything at once (0) so the screen never shows a half-updated panel.
 - **Counters:** `ui_renders` (slots rendered this frame) and `ui_blits` (layers drawn), on the Stats page and in the `STATS` CSV row. A static open menu shows 0 renders and 1 blit.
 
 ### Fonts for cached text
@@ -77,7 +80,17 @@ A style is a `const UiStyle` with static storage. Widgets keep a pointer to it; 
 | Menu layout (screen px, text y = baselines) | `menu_x0/x1`, `pad`, `title_y`, `tab_y`, `sep_y`, `items_y`, `row_h`, `label_x`, `value_x`, `footer_pad` |
 | Decorations (printf formats) | `value_fmt` (`"< %s >"`), `tab_fmt`, `tab_fmt_single`, `footer_multi`, `footer_single`, `more` (text scroll markers, `""` = none) |
 
-`ui_style_debug` is the engine's original look: a translucent black box, yellow cursor row, grey rows, and a thin scroll bar. More styles arrive in S5.2.
+Styles also carry the HUD colours (`hud_title`, `hud_text`, `hud_accent`, `hud_shadow`, `hud_backdrop`) and the gauge colours (`gauge_bg`, `gauge_fill`, `gauge_warn`), and `panel2` for a vertical gradient.
+
+| Built-in style | Look |
+|---|---|
+| `ui_style_debug` | the engine's original look: translucent black box, yellow cursor row, grey rows, thin scroll bar; HUD text with a black shadow |
+| `ui_style_classic` | classic RPG window: blue vertical gradient, 2 px white frame, white text, gold highlights, a translucent white cursor bar; HUD panels on dark blue backdrops |
+| `ui_style_minimal` | dark and quiet: near-black panel, 1 px gold frame and separator, cream text, gold cursor bar, values without arrows; HUD text with a shadow, no backdrop |
+
+`ui_styles[UI_STYLE_COUNT]` lists them for a picker. The demo's **Settings → UI Style** item switches the menu and the HUD live, even while the menu is open (`menu_view_set_style()` re-lays out and re-renders the menu).
+
+To add a style: copy one of the definitions in `ui_style.c` (`MENU_LAYOUT` holds the shared metrics), change what you need, add it to `ui_styles[]` and raise `UI_STYLE_COUNT`, and add its name to `ui_style_options[]` in `main.c`. Keep text slots apart when changing metrics: slot boxes must not overlap.
 
 ## Primitives (`ui_draw.h`)
 
@@ -88,6 +101,7 @@ Drawn every frame as RDP rectangles, never triangles:
 | Function | Draws |
 |---|---|
 | `ui_rect(color, x0, y0, x1, y1)` | a filled rectangle (skipped when alpha is 0) |
+| `ui_vgradient(top, bottom, x0, y0, x1, y1)` | a vertical gradient as 8 horizontal bands (a flat rectangle if the colours match) |
 | `ui_frame(color, t, x0, y0, x1, y1)` | a frame `t` px thick inside the rectangle |
 | `ui_gauge(bg, fill, fraction, x0, y0, x1, y1)` | a horizontal bar filled to `fraction` |
 
@@ -111,6 +125,30 @@ What is drawn every frame, as rectangles:
 
 The panel height follows the tab's row count, and a change of row count re-lays out the slots.
 
+## HudPanel
+
+```c
+static HudPanel hud;
+hud_panel_init(&hud, 0, 186, 320, 38, true, 10, 2);   // x, y, w, h, cached, refresh frames, budget
+int fps = hud_panel_line(&hud, 4, 220, 172, FONT_UI_MONO, ALIGN_LEFT);   // left, baseline, width
+...
+if (hud_panel_due(&hud))                               // true every 10th frame
+    hud_panel_setf(&hud, fps, style->hud_accent, "FPS: %.0f", fps_value);
+hud_panel_draw(&hud, style);                           // backdrop, shadow and the cached text
+```
+
+A panel is a `UiLayer` at a screen position with a refresh rate. Content is gathered and formatted only when the panel is due, and a line re-renders only if its text changed. The demo HUD is two panels, both refreshing every 10 frames (~6 Hz) with a budget of 2 lines per frame:
+- a title panel (20, 10, 280 × 14);
+- a bottom band (0, 186, 320 × 38) with three readouts on the left and three right-aligned.
+
+The camera raycast and the visible-object count behind the readouts run only on refresh frames. A CPU-budget gauge (`ui_gauge`, red above 90 %) sits under the FPS line.
+
+A line's box runs from 8 px above its baseline (10 for `FONT_UI_VAR`) to 4 px below. The title panel is sized so the at01 glyphs (rows 13–20 for baseline 20) sit centred in a style's backdrop.
+
+## Debug overlay
+
+The overlay pages (`src/debug/overlay.c`) use a cached `UiLayer` with one slot per text row (20 rows, 10 px pitch, `FONT_UI_MONO`, budget 6 rows per frame). Rows are recomputed every 15 frames. Unchanged rows (labels, idle values) never re-render, and the page is drawn every frame as one blit plus its panel and bars. The layer (~120 KB) is freed when the overlay is Off.
+
 ## Measured cost
 
 See [BENCHMARKS.md](BENCHMARKS.md), "Phase 2 · S5.1". Bench = UI draws a copy of the Start menu over the floor and 16 pillars:
@@ -124,7 +162,6 @@ See [BENCHMARKS.md](BENCHMARKS.md), "Phase 2 · S5.1". Bench = UI draws a copy o
 - Cached text needs plain monochrome fonts, and RGBA16 layers keep 1-bit alpha: anti-aliased fonts would lose their smooth edges.
 - A change frame still pays the full text cost of what changed. With the RDP validator on, text costs ~4× more, so cursor moves can overrun the frame (D18, taken up in S6).
 - 24 slots per layer, 39 bytes of text per slot.
-- The HUD and the debug overlay still draw text directly; they move to layers in S5.2.
 
 ## Source files
 
@@ -135,4 +172,5 @@ See [BENCHMARKS.md](BENCHMARKS.md), "Phase 2 · S5.1". Bench = UI draws a copy o
 | [src/ui/ui_draw.h](../src/ui/ui_draw.h), [src/ui/ui_draw.c](../src/ui/ui_draw.c) | rectangles, frames, gauges |
 | [src/ui/ui_layer.h](../src/ui/ui_layer.h), [src/ui/ui_layer.c](../src/ui/ui_layer.c) | cached text slots |
 | [src/ui/menu_view.h](../src/ui/menu_view.h), [src/ui/menu_view.c](../src/ui/menu_view.c) | menu drawing |
+| [src/ui/ui_hud.h](../src/ui/ui_hud.h), [src/ui/ui_hud.c](../src/ui/ui_hud.c) | HUD panels |
 | [assets/fonts/](../assets/fonts/) | TTF sources for the UI fonts, with their licences |
