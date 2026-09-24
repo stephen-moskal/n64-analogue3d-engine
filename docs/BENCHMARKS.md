@@ -574,3 +574,23 @@ For ~7.5 s after every reset the same work costs ~35 % more CPU, ~47 % more RDP 
 The two boot ROMs above differ only by the settle code (448 bytes, never run during the steps), yet every mesh-heavy step of the second is 7–12 % slower (`mesh_tris` +14 %, RDP unchanged). `BENCH_LAYOUT` and `nm` show why: libdragon's command-queue pointer (`rspq_cur_pointer`, read and written by every rdpq command) moved from D-cache set 0x1750 to 0x1920, onto the render stack's sets (≈0x1880–0x1CF0), so each triangle refetches both. Until S6.3 pins hot static data, compare mesh-heavy steps only between builds with the same layout, or inside one ROM.
 
 `docs/benchmarks/2026-09-24-p2-s6_2-all-debug-a3d.csv` is the comparison point for the next stage.
+
+## Phase 2 · S6.3 hot data pinned (2026-09-24, debug build, Analogue 3D)
+
+The static data every drawing loop touches (libdragon's command queue and rdpq state, the triangle formats, fog, the profiler and stats counters, the particle pool, the shadow scratch, the floor grid) is pinned to fixed D-cache colours away from the render stack by `src/engine/hot_data.ld`, and `tools/hot_data.py` checks it in CI ([HARDWARE.md](HARDWARE.md), "Hot data"). Two boot-to-benchmark runs (with the D32 settle), profiler on:
+- `docs/benchmarks/2026-09-24-p2-s6_3-all-bootbench-debug-a3d.csv`: the pinned build;
+- `...-s6_3-all-bootbench-pad448-debug-a3d.csv`: the same build with `make LAYOUT_PAD=448`, 448 bytes of unused code moving all data after it, the shift that cost 7–12 % in D34.
+
+**Layout stability: the two builds agree within ±0.5 %** on every step but one (objects 32, at the edge of the frame budget: −1.7 %); fill rate +1.1 %, i.e. 0.01 ms. Before S6.3 the same shift moved every mesh-heavy step by 7–12 %.
+
+| Against | Mesh-heavy steps (lights, textures, shadows, objects) | Particles 32–128 | Other |
+|---|---|---|---|
+| the slow build of D34 (queue pointer on the stack) | −6..−10 %; objects 32 back to 60 FPS (17.8 → 12.6 ms) | −2.5..−3 % | fill rate −3..−4 % |
+| the fast build of D34 (queue pointer just off the stack by luck) | ±2 % | −3..−5.5 % | fill rate −6..−8 % |
+| S4b.2, before D33 (profiler off there) | shadows −3..−7 % | **−3.5..−5.5 %** | |
+
+- **D33 is closed:** particles are faster than before the slowdown, although this run carries the profiler's ~0.1 ms. `hot_data.py` showed the particle pool on 47 of the particle loop's stack lines in every earlier build.
+- The floor grid (58 stack lines before) is pinned too, but Bench = All draws no floor; the demo's `floor` slot shows it.
+- The pads cost 9–14 KB of RAM (`rom_budget.py` now counts gaps between sections).
+
+`docs/benchmarks/2026-09-24-p2-s6_3-all-bootbench-debug-a3d.csv` is the comparison point for the next stage. With the render path's static data pinned, boot-to-benchmark runs (unattended, `make BENCH=1`) compare directly with it.

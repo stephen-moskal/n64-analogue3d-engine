@@ -405,7 +405,7 @@ Gotchas:
 
 **Why this needs care.** The VR4300's instruction cache is 16 KB, direct-mapped, with 32-byte lines: two functions whose addresses are equal modulo 16 KB share cache lines and evict each other. When the first S2 triangle loop landed on all 46 lines of libdragon's `rdpq_triangle_rsp`, every triangle paid about 1,100 extra cycles (+38 % CPU, D25), and unrelated edits moved benchmark results by about 6 % as code shifted. So the per-triangle path is linked as one contiguous "hot text" block at the start of `.text`. Details: [HARDWARE.md](HARDWARE.md), section "CPU caches and code placement".
 
-**Files:** your render `.c` file, `src/engine/hot_text.ld`, `tools/hot_text.py`.
+**Files:** your render `.c` file, `src/engine/hot_text.ld`, `tools/hot_text.py`, and for its static data `src/engine/hot_data.ld`, `tools/hot_data.py`.
 
 1. Include `../engine/hot.h` and mark the loop, and every function it calls per triangle or per group, `ENGINE_HOT`.
 2. Mark local scratch arrays that are fully written before they're read `ENGINE_NOINIT`. libdragon compiles with `-ftrivial-auto-var-init=pattern`, which otherwise fills them on every iteration:
@@ -422,7 +422,8 @@ Gotchas:
    ```
 
    The first output line gives the block size and a status per phase.
-6. Benchmark the change; near the 5 % limit, use a same-ROM A/B (see [Contributing a change](#contributing-a-change)).
+6. Static data the loop touches (arrays, counters, lookup tables): run `libdragon exec python3 tools/hot_data.py build/debug/engine-debug.elf --verbose`. A note "unpinned data on the stack's lines" means a variable shares D-cache lines with the loop's own stack frames (D34). Pin it: add its input section (`.bss.<name>`, `.sbss.<name>`, `.rodata.<name>`, qualified by object file) to the matching group of `src/engine/hot_data.ld` and its name to that group in `GROUPS` in `tools/hot_data.py`; a large per-loop array gets its own group at a colour clear of the stack range the tool prints. A new phase also needs its call chain in `CHAINS` (the scene callbacks are function pointers). To check that placement no longer depends on code size, build with `make LAYOUT_PAD=448`: the tool's output must not change.
+7. Benchmark the change; near the 5 % limit, use a same-ROM A/B (see [Contributing a change](#contributing-a-change)).
 
 Gotchas:
 

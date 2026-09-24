@@ -5,6 +5,8 @@
 #   make BENCH=1          debug build that boots straight into the full benchmark
 #                         -> engine-debug-bench.z64 (own build dir: build/debug-bench)
 #   make BENCH=1 BENCH_KIND=AUDIO   ... into one benchmark kind instead of All
+#   make LAYOUT_PAD=448   adds 448 bytes of unused code at the end of .text, so all
+#                         data moves: a layout-stability test (docs/HARDWARE.md, D34)
 #
 # Via the Docker toolchain: `libdragon make` / `libdragon make BUILD=release`.
 
@@ -47,10 +49,16 @@ CFLAGS += -I$(SOURCE_DIR)
 #                below); the audio benchmark then measures Opus too
 SND_OPUS ?= 0
 CFLAGS += -DSND_ENABLE_OPUS=$(SND_OPUS)
+#   LAYOUT_PAD=N adds N bytes (a multiple of 4) of unused code at the end of
+#                .text (src/engine/layout_pad.c), moving all data after it: with
+#                hot data pinned (src/engine/hot_data.ld) nothing measured
+#                should change
+LAYOUT_PAD ?= 0
+CFLAGS += -DENGINE_LAYOUT_PAD=$(LAYOUT_PAD)
 
 # make does not track CFLAGS: the option values are kept in a stamp file,
 # rewritten only when they change, that every object and the DFS depend on
-BUILD_OPTIONS := SND_OPUS=$(SND_OPUS)$(if $(filter 1,$(BENCH)), BENCH_KIND=$(BENCH_KIND))
+BUILD_OPTIONS := SND_OPUS=$(SND_OPUS) LAYOUT_PAD=$(LAYOUT_PAD)$(if $(filter 1,$(BENCH)), BENCH_KIND=$(BENCH_KIND))
 OPTIONS_STAMP := $(BUILD_DIR)/options.stamp
 $(shell mkdir -p $(BUILD_DIR) && (echo '$(BUILD_OPTIONS)' | cmp -s - $(OPTIONS_STAMP) || echo '$(BUILD_OPTIONS)' > $(OPTIONS_STAMP)))
 
@@ -158,22 +166,24 @@ filesystem/audio/music/%.xm64: assets/audio/music/%.xm
 	@echo "    [XM64] $@"
 	@$(N64_AUDIOCONV) -o $(dir $@) "$<"
 
-# Hot text (ROADMAP_v2 D25): the per-triangle render path is linked as one
-# contiguous block so it never collides with itself in the 16 KB direct-mapped
-# I-cache. The link script is libdragon's n64.ld with src/engine/hot_text.ld
-# inserted after the boot code; it is regenerated when either changes, and the
-# build fails if the anchor is missing. tools/hot_text.py checks the result.
+# Hot text and hot data (ROADMAP_v2 D25, D34). The per-triangle render path is
+# linked as one contiguous block so it never collides with itself in the 16 KB
+# direct-mapped I-cache (src/engine/hot_text.ld), and the static data the
+# drawing loops touch is pinned to fixed colours of the 8 KB direct-mapped
+# D-cache, away from the render stack (src/engine/hot_data.ld). The link script
+# is libdragon's n64.ld with both inserted by src/engine/engine_ld.awk; it is
+# regenerated when any of them changes, and the build fails if an anchor is
+# missing. tools/hot_text.py and tools/hot_data.py check the result.
 ENGINE_LD    := $(BUILD_DIR)/engine.ld
 HOT_TEXT_LD  := $(SOURCE_DIR)/engine/hot_text.ld
+HOT_DATA_LD  := $(SOURCE_DIR)/engine/hot_data.ld
+ENGINE_LD_AWK := $(SOURCE_DIR)/engine/engine_ld.awk
 N64_LDFLAGS  := $(subst -Tn64.ld,-T$(ENGINE_LD),$(N64_LDFLAGS))
 
-$(ENGINE_LD): $(N64_LIBDIR)/n64.ld $(HOT_TEXT_LD)
+$(ENGINE_LD): $(N64_LIBDIR)/n64.ld $(HOT_TEXT_LD) $(HOT_DATA_LD) $(ENGINE_LD_AWK)
 	@mkdir -p $(dir $@)
 	@echo "    [LDSCRIPT] $@"
-	@awk -v frag="$(HOT_TEXT_LD)" '{ print } \
-		/\*\(\.boot\)/ { boot = 1; next } \
-		boot == 1 && /ALIGN\(16\)/ { while ((getline line < frag) > 0) print line; boot = 2 } \
-		END { if (boot != 2) { print "engine.ld: *(.boot) + ALIGN(16) anchor not found in n64.ld" > "/dev/stderr"; exit 1 } }' \
+	@awk -v hot_text="$(HOT_TEXT_LD)" -v hot_data="$(HOT_DATA_LD)" -f $(ENGINE_LD_AWK) \
 		$(N64_LIBDIR)/n64.ld > $@.tmp && mv $@.tmp $@
 
 $(ROM_NAME).z64: $(BUILD_DIR)/$(ROM_NAME).dfs

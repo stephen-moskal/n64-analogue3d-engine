@@ -119,6 +119,57 @@ def collide(a, b):
     return sum(1 for idx, line in b.items() if idx in a and a[idx] != line)
 
 
+def phase_members(elf, funcs, marks):
+    """Each render phase's functions: its roots, the triangle and group paths,
+    and every callee reached through them inside the hot block. Returns
+    {phase: (members, callees outside the block, errors)}."""
+    hot_lo, hot_hi = marks["__engine_hot_start"], marks["__engine_hot_end"]
+
+    def inside(name):
+        a, s = funcs[name]
+        return hot_lo <= a and a + s <= hot_hi
+
+    result = {}
+    for phase, roots in PHASES.items():
+        errors = []
+        present = []
+        for r in roots:
+            name = r.rstrip("?")
+            if name in funcs:
+                present.append(name)
+            elif not r.endswith("?"):
+                errors.append(f"{phase}: root {name} not found")
+        if not present:
+            result[phase] = (set(), set(), errors)
+            continue
+
+        members = set(present) | set(TRI_PATH) | set(GROUP_PATH)
+        outside = set()
+        queue, visited = sorted(members), set()
+        while queue:                                   # callees, transitively
+            f = queue.pop()
+            if f in visited or f not in funcs or not inside(f):
+                continue
+            visited.add(f)
+            a, s = funcs[f]
+            for c in sorted(direct_callees(elf, a, s)) + INDIRECT.get(f, []):
+                if c not in funcs:
+                    continue
+                if inside(c):
+                    if c not in members:
+                        members.add(c)
+                        queue.append(c)
+                elif c not in COLD_OK:
+                    outside.add(c)
+        for m in sorted(members):
+            if m not in funcs:
+                errors.append(f"{phase}: {m} not found")
+            elif not inside(m):
+                errors.append(f"{phase}: {m} at {funcs[m][0]:#x} is outside the hot block")
+        result[phase] = (members, outside, errors)
+    return result
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("elf")
@@ -135,46 +186,11 @@ def main():
         return 1
     hot_lo, hot_hi = marks["__engine_hot_start"], marks["__engine_hot_end"]
 
-    def inside(name):
-        a, s = funcs[name]
-        return hot_lo <= a and a + s <= hot_hi
-
     errors, notes, summary = [], [], []
-    for phase, roots in PHASES.items():
-        present = []
-        for r in roots:
-            name = r.rstrip("?")
-            if name in funcs:
-                present.append(name)
-            elif not r.endswith("?"):
-                errors.append(f"{phase}: root {name} not found")
-        if not present:
+    for phase, (members, outside, phase_errors) in phase_members(args.elf, funcs, marks).items():
+        errors.extend(phase_errors)
+        if not members:
             continue
-
-        members = set(present) | set(TRI_PATH) | set(GROUP_PATH)
-        outside = set()
-        queue, visited = sorted(members), set()
-        while queue:                                   # callees, transitively
-            f = queue.pop()
-            if f in visited or f not in funcs or not inside(f):
-                continue
-            visited.add(f)
-            a, s = funcs[f]
-            for c in sorted(direct_callees(args.elf, a, s)) + INDIRECT.get(f, []):
-                if c not in funcs:
-                    continue
-                if inside(c):
-                    if c not in members:
-                        members.add(c)
-                        queue.append(c)
-                elif c not in COLD_OK:
-                    outside.add(c)
-
-        for m in sorted(members):
-            if m not in funcs:
-                errors.append(f"{phase}: {m} not found")
-            elif not inside(m):
-                errors.append(f"{phase}: {m} at {funcs[m][0]:#x} is outside the hot block")
 
         # Pairwise I-cache line collisions within the phase
         ranges = [(m, funcs[m]) for m in sorted(members) if m in funcs]

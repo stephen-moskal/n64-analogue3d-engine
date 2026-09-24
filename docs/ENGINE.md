@@ -7,6 +7,9 @@
 | `engine_config.h` | build constants: screen size, framebuffer count, max dt, guard band |
 | `engine.c/h` | `engine_init()` (hardware and subsystems), `engine_run()` (the frame loop), frame-rate cap, shared Z-buffer, presented-frame tracking |
 | `hot.h`, `hot_text.ld` | I-cache placement of the render hot path ([HARDWARE.md](HARDWARE.md)) |
+| `hot_data.ld` | D-cache placement of the render path's static data: fixed colours away from the stack (D34) |
+| `engine_ld.awk` | builds `build/<variant>/engine.ld` from libdragon's `n64.ld` with both fragments |
+| `layout_pad.c` | `make LAYOUT_PAD=<bytes>`: unused code that shifts all data, for layout-stability tests |
 
 ## Using it
 
@@ -74,7 +77,6 @@ The four display APIs above are still marked preview in libdragon; `engine.c` is
 
 ## Planned (Phase 2 S6)
 
-- S6.3: the particle code A/B (D33).
 - S6.4: frame overruns under the RDP validator (D18).
 
 ## Source files

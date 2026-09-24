@@ -32,4 +32,9 @@ python3 tools/hot_text.py build/debug/engine-debug.elf
 python3 tools/hot_text.py build/release/engine.elf
 echo "::endgroup::"
 
+echo "::group::Hot data (D-cache layout)"
+python3 tools/hot_data.py build/debug/engine-debug.elf
+python3 tools/hot_data.py build/release/engine.elf
+echo "::endgroup::"
+
 echo "CI build OK"
