@@ -180,16 +180,11 @@ scene->on_init();           // Scene-specific setup
 
 ### Frame Loop (Variable Timestep)
 
-Game logic runs once per rendered frame using the actual elapsed time (`dt`, capped at 0.1 s). Frame rate is selectable via menu (30 or 60 FPS). At 60 FPS there is no limiter; at 30 FPS a busy-wait holds each loop iteration to 1/30 s.
+Game logic runs once per rendered frame (`engine_run()` in `src/engine/engine.c`, [ENGINE.md](ENGINE.md)). `dt` is the display's filtered time between presented frames (`display_get_delta_time()`, capped at 0.1 s). Frame rate is selectable via menu (30 or 60 FPS); the 30 FPS cap is `display_set_fps_limit()`, so the loop waits in `display_get()` instead of spinning.
 
 ```c
-uint32_t last_ticks = TICKS_READ();
-
 while (1) {
-    // Measure real elapsed time
-    uint32_t now = TICKS_READ();
-    float dt = TICKS_DISTANCE(last_ticks, now) / (float)TICKS_PER_SECOND;
-    last_ticks = now;
+    float dt = display_get_delta_time();   // time between presented frames
 
     // Update game logic once per frame
     scene_manager_update(&mgr, dt);
@@ -204,7 +199,7 @@ while (1) {
     // Render
     surface_t *fb = display_get();    // Waits for a free framebuffer
     audio_poll(SND_POLL_AFTER_DISPLAY, dt);   // snd_update(): mix the audio (default poll point)
-    rdpq_attach(fb, &zbuf);
+    rdpq_attach(fb, zbuf);            // zbuf = display_get_zbuf()
     scene_manager_draw(&mgr);
     //   -> scene_draw(current)
     //      -> sky_draw() or rdpq_clear(bg_color); rdpq_clear_z(ZBUF_MAX)
@@ -214,13 +209,10 @@ while (1) {
     //   -> transition overlay (if transitioning)
     overlay_draw(budget_ms);           // Debug overlay page
     rdpq_detach_show();
-
-    // Busy-wait frame limiter (for 30 FPS target)
-    if (engine_target_fps > 0) { /* spin until target frame time */ }
 }
 ```
 
-With triple buffering, `display_get()` waits for a free framebuffer rather than for vsync, so loop times alternate short and long (about 12.5 / 21 ms) at a steady 60 FPS, and `dt` inherits that jitter (defect D19, [PROFILING.md](PROFILING.md)). The profiler, stats and memory hooks around this loop are described in PROFILING.md.
+With triple buffering, `display_get()` waits for a free framebuffer rather than for vsync, so loop times alternate short and long (about 12.5 / 21 ms) at a steady 60 FPS. Until S6.2 `dt` was that loop time and inherited the jitter (defect D19); it now comes from the display, and a vblank handler measures how long each frame actually stays on screen (ENGINE.md, "Pacing and time"). The profiler, stats and memory hooks around this loop are described in PROFILING.md.
 
 **Why variable timestep:** A previous fixed-timestep accumulator (30Hz logic) caused every other frame at 60 FPS to be an identical duplicate — the accumulator hadn't reached the 33ms threshold, so no logic update ran. Motion was effectively 30Hz regardless of display rate, making 30 and 60 FPS feel identical. Variable timestep ensures every rendered frame has a unique logic update.
 

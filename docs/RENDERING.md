@@ -47,10 +47,10 @@ The engine uses a hardware 16-bit depth buffer for correct occlusion, replacing 
 
 ```c
 // Allocate once before game loop
-surface_t zbuf = surface_alloc(FMT_RGBA16, ENGINE_SCREEN_W, ENGINE_SCREEN_H);
+surface_t *zbuf = display_get_zbuf();   // top of RDRAM, away from the framebuffers
 
 // Each frame: attach both color and depth (engine.c)
-rdpq_attach(fb, &zbuf);
+rdpq_attach(fb, zbuf);
 
 // scene_draw(): the sky replaces the colour clear when it covers the screen
 if (sky_covers_screen()) sky_draw(); else rdpq_clear(bg_color);
@@ -244,18 +244,17 @@ The loop in `engine_run()` (`src/engine/engine.c`, [ENGINE.md](ENGINE.md)), simp
 ```c
 while (1) {
     // === UPDATE ===
-    float dt = /* seconds since the previous iteration, capped at 0.1 */;
+    float dt = display_get_delta_time();   // time between presented frames, capped at 0.1 s
     scene_manager_update(&mgr, dt);   // scene on_update (input, menu, logic), camera, collision
 
     // === RENDER ===
     surface_t *fb = display_get();    // Wait for a free framebuffer (triple buffering)
     snd_update(dt);                   // Mix the audio (poll point: AUDIO.md)
-    rdpq_attach(fb, &zbuf);           // Attach color + depth
+    rdpq_attach(fb, zbuf);            // Attach color + depth (zbuf = display_get_zbuf())
     scene_manager_draw(&mgr);         // scene_draw(), then the transition fade
     overlay_draw(budget_ms);          // Debug overlay page (not while the menu is open)
     rdpq_detach_show();               // Present frame
-
-    // 30 FPS mode: busy-wait until the frame time is reached
+    // 30 FPS mode: display_set_fps_limit(30) makes display_get() wait
 }
 ```
 

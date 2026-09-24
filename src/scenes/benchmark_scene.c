@@ -18,6 +18,7 @@
 #include "../dialog/dialog.h"
 #include "../debug/engine_debug.h"
 #include "../engine/engine_config.h"
+#include "../engine/engine.h"
 #include "../debug/stats.h"
 #include "../debug/profiler.h"
 #include "../debug/frametime.h"
@@ -35,7 +36,6 @@
 #define GRID_SPACING    110.0f
 #define NUM_TEX_BOXES     8        // one single-texture box mesh per texture slot 0..7
 #define CAMERA_SPIN     0.2f       // radians per second of *measured* time (frame-locked)
-#define BUDGET_MS      16.67f
 
 typedef struct {
     BenchKind kind;
@@ -501,7 +501,7 @@ static void finish_step(void) {
     const BenchStep *st = &steps[step_index];
     log_layout();
     FrameTimeStats ft;
-    frametime_get(&ft, BUDGET_MS);
+    frametime_get(&ft, engine_frame_budget_ms());   // presents are judged against the current cap
     const RdpCounters *rdp = profiler_rdp_get();
     const MemStats *mem = memstats_get();
     float tris = acc_frames ? (float)acc_tris / acc_frames : 0.0f;
@@ -513,6 +513,13 @@ static void finish_step(void) {
            ft.p99_ms, ft.low1_fps, ft.cpu_avg_ms, ft.cpu_max_ms,
            rdp->available ? rdp->busy_ms : -1.0f, rdp->available ? rdp->busy_pct : -1.0f,
            tris, ups, mem->heap_used / 1024);
+
+    // What reached the screen during the step: vblanks per presented frame
+    // (frametime.h; the last 256 presents of the measured frames)
+    debugf("BENCH_PRESENT,%s,%d,%d,%d,%u,%u,%u,%u,%d,%.3f\n",
+           kind_names[st->kind], step_index, st->param, ft.presents,
+           ft.present_hist[0], ft.present_hist[1], ft.present_hist[2], ft.present_hist[3],
+           ft.late, ft.present_avg_vblanks);
 
     // CPU breakdown of the step (profiler moving averages, ~32 frames), so a
     // regression can be pinned to a stage of mesh_draw. Separate row type:
@@ -584,6 +591,7 @@ static void bench_init(Scene *scene) {
            kind_names[configured_kind], step_count, WARMUP_FRAMES, MEASURE_FRAMES);
     debugf("BENCH_HDR,kind,step,param,frames,fps,avg_ms,p99_ms,low1_fps,cpu_avg_ms,cpu_max_ms,"
            "rdp_busy_ms,rdp_busy_pct,tris,tex_uploads,heap_kb\n");
+    debugf("BENCH_PRESENT_HDR,kind,step,param,presents,vb1,vb2,vb3,vb4plus,late,avg_vblanks\n");
     debugf("BENCH_PROF_HDR,kind,step,param,update_us,draw_us,objects_us,mesh_cull_us,"
            "mesh_light_us,mesh_tris_us,audio_us,menu_us,hud_us,dialog_us\n");
     setup_step(scene);

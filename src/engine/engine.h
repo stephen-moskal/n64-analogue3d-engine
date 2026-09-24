@@ -26,17 +26,25 @@ typedef struct {
 // atmosphere and the shared Z-buffer. Call once, first.
 void engine_init(void);
 
-// The frame loop: measure dt, update the scene, debug tooling, the app's
-// on_frame, render, present, pace. Does not return.
+// The frame loop: dt from the display, update the scene, debug tooling, the
+// app's on_frame, render, present. Does not return.
+//
+// dt is display_get_delta_time(): the filtered time between presented
+// frames, a whole number of vblanks (1/60 s at a steady 60 FPS), not the
+// loop's own wall time, which jitters under triple buffering (D19).
 void engine_run(const EngineApp *app);
 
-// Frame rate cap set by the game: 30, or 0 for the display rate (60)
-extern int engine_target_fps;
+// Frame rate cap: 30, or 0 for the display rate (60). The display module
+// enforces it (display_set_fps_limit): display_get() waits, no busy loop.
+void engine_set_fps_limit(int fps);
+int  engine_fps_limit(void);
 
 // Frame budget in ms for the current cap (16.67 or 33.33)
 float engine_frame_budget_ms(void);
 
-// The Z-buffer shared by all scenes (ENGINE_SCREEN_W x ENGINE_SCREEN_H, RGBA16)
+// The Z-buffer shared by all scenes (ENGINE_SCREEN_W x ENGINE_SCREEN_H, RGBA16),
+// from display_get_zbuf(): allocated at the top of RDRAM, away from the
+// framebuffers
 surface_t *engine_zbuf(void);
 
 #endif

@@ -12,6 +12,12 @@
  * Note: with triple buffering the loop is paced by framebuffer availability,
  * not by vsync, so per-iteration wall time jitters (about 12.5-21 ms on the
  * A3D at a steady 60 FPS). CPU time is the overrun signal; wall time gives fps.
+ *
+ * What the player sees is measured separately (S6.2): the engine's vblank
+ * handler reports how many vblanks each presented frame stayed on screen
+ * (frametime_record_present). At a steady 60 FPS every frame shows for 1
+ * vblank; a frame shown longer than the target interval (1 at 60, 2 at 30)
+ * is "late": a visible hitch.
  * Pure C (no libdragon) so it can be unit-tested on the host.
  */
 
@@ -20,6 +26,7 @@
 #define FRAMETIME_WINDOW   256
 #define FRAMETIME_BUCKETS  24      // 1.5 ms each, 0-36 ms; last bucket = overflow
 #define FRAMETIME_BUCKET_US 1500
+#define FRAMETIME_PRESENT_BUCKETS 4   // shown for 1, 2, 3, 4+ vblanks
 
 typedef struct {
     int      count;                // frames in the window
@@ -29,9 +36,18 @@ typedef struct {
     float    cpu_avg_ms, cpu_max_ms;
     int      over_budget;          // frames whose CPU work > budget + 10 %
     uint16_t histogram[FRAMETIME_BUCKETS];
+
+    // Presented frames (the last FRAMETIME_WINDOW)
+    int      presents;
+    uint16_t present_hist[FRAMETIME_PRESENT_BUCKETS];   // shown for 1, 2, 3, 4+ vblanks
+    int      late;                 // shown longer than the target interval
+    float    present_avg_vblanks;
 } FrameTimeStats;
 
 void frametime_record(uint32_t frame_us, uint32_t cpu_us);
+// A frame was replaced on screen after being shown for this many vblanks.
+// Safe to call from the vblank interrupt.
+void frametime_record_present(int vblanks);
 void frametime_get(FrameTimeStats *out, float budget_ms);
 void frametime_reset(void);
 void frametime_dump_csv(uint32_t frame_index, float budget_ms);

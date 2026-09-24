@@ -531,3 +531,29 @@ The frame loop and hardware init moved from `main.c` to `src/engine/engine.c`, a
 - Textures −4 to −6 % and objects −0.3 to −1.9 % against S4b.2.
 
 `docs/benchmarks/2026-09-24-p2-s6_1-all-debug-a3d.csv` is the comparison point for the next stage.
+
+## Phase 2 · S6.2 frame pacing (2026-09-24, debug build, Analogue 3D)
+
+The 30 FPS cap is libdragon's `display_set_fps_limit()` instead of a busy-wait, `dt` comes from `display_get_delta_time()`, the Z-buffer from `display_get_zbuf()`, and a vblank handler records how many vblanks each frame stays on screen ([ENGINE.md](ENGINE.md), "Pacing and time"). Bench = All: `docs/benchmarks/2026-09-24-p2-s6_2-all-debug-a3d.csv` (profiler on), now with a `BENCH_PRESENT` row per step.
+
+**What reaches the screen** (the new measurement):
+
+| Where | Presented frames | Shown for 1 / 2 / 3 vblanks | Late |
+|---|---|---|---|
+| demo, quiet view, 60 FPS (CSV dump) | 256 | 256 / 0 / 0 | 0 |
+| every Bench = All step at 60 FPS (22 steps) | 239 each | 239 / 0 / 0 | 0 |
+| objects 32 (57.7 FPS) | 240 | 231 / 9 / 0 | 9 |
+| objects 48 (38.7 FPS) | 239 | 107 / 132 / 0 | 132 |
+| objects 64 (29.1 FPS) | 239 | 0 / 225 / 14 | 239 |
+
+- **D19 is a loop artefact, not a visible one.** In the same demo dump the loop still ranged 12.4–20.9 ms (the triple-buffer pattern), yet every frame was on screen for exactly one vblank. Since `dt` now follows the display rather than the loop, animation and physics no longer inherit the loop's jitter either.
+- **Over budget, frames repeat in whole vblanks**, and the presentation rows show how many: at 38.7 FPS about half the frames are held for 2 vblanks. That is the measurement to watch for stutter from now on; loop p99 alone misreads it (step 0's loop p99 rose to 17.6 ms while all its frames were on time).
+- **30 FPS** (checked in ares, and visually on the A3D): every frame 2 vblanks, the wait all inside `wait_display`, `limiter` 0.
+
+**Against S6.1: 0 regressions.** Most steps are 1–3 % faster, projected shadows −5.7 % (back within 0.5 % of S4b.2) and particles 96–128 −6 %. The near-idle steps (step 0, fill rate) gained 0.08–0.14 ms, under the gate: the benchmark's status-line text (`hud_us` 444 → 515 µs) and `update` (+10 µs), code S6.2 didn't touch, so layout again (the engine file grew and everything linked after it moved).
+
+**Z-buffer at the top of RDRAM:** no measurable RDP change on the A3D (objects 64, the most Z-heavy step: RDP busy 11.00 → 11.00 ms). Kept, since it costs nothing and frees the malloc heap of 150 KB of long-lived data. (`heap_used` doesn't move: libdragon counts top-of-RAM allocations as used.)
+
+**Boot (D32):** the demo boot's `BOOT` rows show no slow start (16.67 ms frames and 0.1 ms audio from the first second). D32 was only ever seen in boot-to-benchmark (`BENCH=1`) runs; that case is checked separately.
+
+`docs/benchmarks/2026-09-24-p2-s6_2-all-debug-a3d.csv` is the comparison point for the next stage.

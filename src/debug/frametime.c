@@ -14,6 +14,28 @@ static uint32_t ring_cpu[FRAMETIME_WINDOW];
 static int      ring_head  = 0;
 static int      ring_count = 0;
 static int      header_sent = 0;
+static int      present_header_sent = 0;
+
+// Presented frames: written by the vblank interrupt, read by frametime_get
+static volatile uint8_t ring_present[FRAMETIME_WINDOW];
+static volatile int     present_head  = 0;
+static volatile int     present_count = 0;
+
+#ifdef N64
+#define PRESENT_LOCK()   disable_interrupts()
+#define PRESENT_UNLOCK() enable_interrupts()
+#else
+#define PRESENT_LOCK()   ((void)0)
+#define PRESENT_UNLOCK() ((void)0)
+#endif
+
+void frametime_record_present(int vblanks) {
+    if (vblanks < 1) vblanks = 1;
+    if (vblanks > 255) vblanks = 255;
+    ring_present[present_head] = (uint8_t)vblanks;
+    present_head = (present_head + 1) % FRAMETIME_WINDOW;
+    if (present_count < FRAMETIME_WINDOW) present_count++;
+}
 
 void frametime_record(uint32_t frame_us, uint32_t cpu_us) {
     ring_frame[ring_head] = frame_us;
@@ -25,6 +47,10 @@ void frametime_record(uint32_t frame_us, uint32_t cpu_us) {
 void frametime_reset(void) {
     ring_head = 0;
     ring_count = 0;
+    PRESENT_LOCK();
+    present_head = 0;
+    present_count = 0;
+    PRESENT_UNLOCK();
 }
 
 static int cmp_desc(const void *a, const void *b) {
@@ -32,8 +58,29 @@ static int cmp_desc(const void *a, const void *b) {
     return (x < y) - (x > y);
 }
 
+// Presented-frame statistics against the target interval (vblanks per frame)
+static void present_stats(FrameTimeStats *out, float budget_ms) {
+    uint8_t snap[FRAMETIME_WINDOW];
+    PRESENT_LOCK();
+    int n = present_count;
+    for (int i = 0; i < n; i++) snap[i] = ring_present[i];
+    PRESENT_UNLOCK();
+    int target = budget_ms > 25.0f ? 2 : 1;          // 30 or 60 FPS
+    uint32_t sum = 0;
+    for (int i = 0; i < n; i++) {
+        int v = snap[i];
+        sum += v;
+        int b = v > FRAMETIME_PRESENT_BUCKETS ? FRAMETIME_PRESENT_BUCKETS : v;
+        out->present_hist[b - 1]++;
+        if (v > target) out->late++;
+    }
+    out->presents = n;
+    out->present_avg_vblanks = n ? (float)sum / n : 0.0f;
+}
+
 void frametime_get(FrameTimeStats *out, float budget_ms) {
     memset(out, 0, sizeof(*out));
+    present_stats(out, budget_ms);
     int n = ring_count;
     out->count = n;
     if (n == 0) return;
@@ -89,4 +136,11 @@ void frametime_dump_csv(uint32_t frame_index, float budget_ms) {
            s.p99_ms, s.low1_fps, s.cpu_avg_ms, s.cpu_max_ms, s.over_budget);
     for (int b = 0; b < FRAMETIME_BUCKETS; b++) debugf(",%u", s.histogram[b]);
     debugf("\n");
+    if (!present_header_sent) {
+        debugf("FTP_HDR,frame,presents,vb1,vb2,vb3,vb4plus,late,avg_vblanks\n");
+        present_header_sent = 1;
+    }
+    debugf("FTP,%lu,%d,%u,%u,%u,%u,%d,%.3f\n", (unsigned long)frame_index, s.presents,
+           s.present_hist[0], s.present_hist[1], s.present_hist[2], s.present_hist[3],
+           s.late, s.present_avg_vblanks);
 }

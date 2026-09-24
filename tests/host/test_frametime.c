@@ -33,7 +33,27 @@ static void test_ring_wraps(void) {
     CHECK_NEAR(s.min_ms, 10.050, 1e-3);
 }
 
+static void test_presents(void) {
+    frametime_reset();
+    for (int i = 0; i < 97; i++) frametime_record_present(1);
+    frametime_record_present(2);                          // one hitch
+    frametime_record_present(3);
+    frametime_record_present(9);                          // 4+ bucket
+    FrameTimeStats s;
+    frametime_get(&s, 16.67f);                            // 60 FPS target: 1 vblank
+    CHECK(s.presents == 100);
+    CHECK(s.present_hist[0] == 97 && s.present_hist[1] == 1 && s.present_hist[2] == 1 && s.present_hist[3] == 1);
+    CHECK(s.late == 3);
+    CHECK_NEAR(s.present_avg_vblanks, (97 + 2 + 3 + 9) / 100.0, 1e-4);
+    frametime_get(&s, 33.33f);                            // 30 FPS target: 2 vblanks are on time
+    CHECK(s.late == 2);
+    frametime_reset();
+    frametime_get(&s, 16.67f);
+    CHECK(s.presents == 0 && s.late == 0);
+}
+
 void run_frametime_tests(void) {
+    RUN_TEST(test_presents);
     RUN_TEST(test_stats);
     RUN_TEST(test_ring_wraps);
 }

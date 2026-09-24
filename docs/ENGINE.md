@@ -5,7 +5,7 @@
 | File | Role |
 |---|---|
 | `engine_config.h` | build constants: screen size, framebuffer count, max dt, guard band |
-| `engine.c/h` | `engine_init()` (hardware and subsystems), `engine_run()` (the frame loop), frame-rate cap, shared Z-buffer |
+| `engine.c/h` | `engine_init()` (hardware and subsystems), `engine_run()` (the frame loop), frame-rate cap, shared Z-buffer, presented-frame tracking |
 | `hot.h`, `hot_text.ld` | I-cache placement of the render hot path ([HARDWARE.md](HARDWARE.md)) |
 
 ## Using it
@@ -47,7 +47,7 @@ They are compile-time constants, so the render loops fold them exactly like the 
 
 ```
 engine_run():
-  dt = time since the previous iteration (capped at ENGINE_MAX_DT)
+  dt = display_get_delta_time() (capped at ENGINE_MAX_DT)
   publish last frame's profiler / frame-time / stats, start this frame's
   scene_manager_update(dt)                  scene on_update: input, logic, camera, collision
   debug_menu_update(), testbed_update()     Debug tab, Reset Soak, Menu Sweep
@@ -60,14 +60,21 @@ engine_run():
   rdpq_attach(fb, zbuf); scene_manager_draw(); overlay; testbed status
   rdpq_detach_show()
   audio (poll point: after present)
-  30 FPS cap: busy-wait to 33.3 ms (profiler: limiter)
 ```
 
-`engine_target_fps` (0 = the display's 60, or 30) is set by the game (the demo's Settings → Frame Rate); `engine_frame_budget_ms()` gives 16.67 or 33.33 for gauges and CSV dumps.
+## Pacing and time (S6.2)
+
+- **Frame-rate cap.** `engine_set_fps_limit(30)` (or 0 for the display's 60) calls libdragon's `display_set_fps_limit()`: the display module shows a new frame only every other vblank and `display_get()` waits for a free buffer, so the CPU sleeps in `wait_display` instead of spinning. The demo's Settings → Frame Rate sets it; `engine_frame_budget_ms()` gives 16.67 or 33.33 for gauges, CSV dumps and the benchmark. The `limiter` profiler slot (the old busy-wait) stays in the CSV columns and reads 0.
+- **dt** is `display_get_delta_time()`: libdragon's filtered time between presented frames, a whole number of vblanks. With triple buffering the loop runs up to two frames ahead of the screen, and its own iterations alternate ~12.5 / ~21 ms at a steady 60 FPS (D19); the old dt copied that jitter into every animation and physics step. The loop's wall time still feeds the profiler and the frame-time window.
+- **Z-buffer** from `display_get_zbuf()`: allocated from the top of RDRAM, in a different memory bank from the framebuffers (libdragon notes a speed gain for the RDP).
+- **Presented frames.** A vblank handler (`on_vblank`, installed after the display's own) watches `VI_ORIGIN` and reports how many vblanks each frame stayed on screen (`frametime_record_present`). At a steady 60 every frame shows for 1 vblank; a frame shown longer than the target (1 at 60, 2 at 30) is **late**, a hitch the player can see. Frame overlay page: "Shown late N of M" and the 1/2/3+ vblank counts; CSV: `FTP` rows with the dump, `BENCH_PRESENT` rows per benchmark step.
+- **Boot log** (D32): debug builds print a `BOOT` row per second for the first 12 s (frame, wait_display, update, draw, audio and RDP busy ms, averaged over that second), to catch a slow start.
+
+The four display APIs above are still marked preview in libdragon; `engine.c` is the only file that uses them, with the deprecation warning silenced there.
 
 ## Planned (Phase 2 S6)
 
-- S6.2 frame pacing: `display_set_fps_limit()` instead of the busy-wait, dt from `display_get_delta_time()`, the Z-buffer from `display_get_zbuf()`; loop-time jitter (D19) and the slow first seconds after boot (D32).
+- S6.3: the particle code A/B (D33).
 - S6.4: frame overruns under the RDP validator (D18).
 
 ## Source files

@@ -29,7 +29,7 @@
 typedef enum {
     PROF_FRAME,             // wall time, loop top to loop top
     PROF_WAIT_DISPLAY,      // blocked in display_get() waiting for a free framebuffer
-    PROF_LIMITER,           // busy-wait of the 30 FPS limiter
+    PROF_LIMITER,           // unused since S6.2 (the display module paces; kept for CSV columns)
     PROF_UPDATE,            //   scene_manager_update()
     PROF_INPUT,             //     action/input polling
     PROF_PHYSICS,           //     physics_world_update()

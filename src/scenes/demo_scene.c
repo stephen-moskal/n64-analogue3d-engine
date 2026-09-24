@@ -1046,8 +1046,8 @@ static void demo_update(Scene *scene, float dt) {
     int fps_opt = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_FRAME_RATE);
     if (fps_opt != last_fps_option) {
         switch (fps_opt) {
-        case 0: engine_target_fps = 30; break;
-        case 1: engine_target_fps = 0;  break;  // 60fps: no limiter needed (VSync caps it)
+        case 0: engine_set_fps_limit(30); break;
+        case 1: engine_set_fps_limit(0);  break;  // the display rate (60)
         }
         last_fps_option = fps_opt;
     }

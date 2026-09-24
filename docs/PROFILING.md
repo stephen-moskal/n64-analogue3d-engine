@@ -27,14 +27,14 @@ PROF_END(PROF_FLOOR);
 - Scopes compile out in release (`ENGINE_PROFILE=0`) and are skipped at runtime when Debug → Profiler is Off. Overhead measured on the A3D: ~0.1 ms per frame.
 - A slot can be entered many times per frame (once per mesh); time and calls accumulate. Nested slots are timed separately, so a parent includes its children.
 - Values: exponential moving average over ~32 frames (`avg_us`), last frame (`last_us`), and peak since boot or Reset Peaks (`peak_us`).
-- `frame`, `wait_display` and `limiter` are always measured. **CPU work = frame − wait_display − limiter** (the HUD's CPU value).
+- `frame`, `wait_display` and `limiter` are always measured. **CPU work = frame − wait_display − limiter** (the HUD's CPU value). Since S6.2 the 30 FPS wait is inside `wait_display` and `limiter` is 0.
 
 Slots and nesting:
 
 ```
 frame                 loop top to loop top (wall time)
   wait_display        blocked in display_get() for a free framebuffer = idle headroom
-  limiter             30 FPS busy-wait
+  limiter             unused since S6.2 (the display module paces inside wait_display); kept for the CSV columns
   update              scene_manager_update
     input / physics / particle_upd / scene_sys (camera + collision)
   draw                scene_manager_draw
@@ -78,6 +78,10 @@ A 256-frame ring of loop time and CPU time: fps, average/min/max, p99, 1 % low (
 
 With triple buffering the loop is paced by framebuffer availability, not vsync, so loop times alternate short/long (≈12.5 / 21 ms) at a steady 60 FPS (defect D19). Judge load by CPU time and fps, not by individual loop times.
 
+**Presented frames** (S6.2) measure what the player sees instead: the engine's vblank handler records how many vblanks each frame stayed on screen (a 256-present ring). "Late" counts frames shown longer than the target interval (1 vblank at 60 FPS, 2 at 30), each a visible hitch. The Frame page shows "Shown late N of M" (yellow when N > 0) and the 1 / 2 / 3+ vblank counts.
+
+**Boot log** (S6.2, D32): for the first 12 s after boot, debug builds print one `BOOT` row per second (averages of frame, wait_display, update, draw, audio and RDP busy, in ms).
+
 ## RDP load (hardware counters)
 
 The RDP's cycle counters `DP_CLOCK`, `DP_BUSY`, `DP_PIPE_BUSY` and `DP_TMEM_BUSY` are read and reset once per loop and scaled by the measured counter rate. **On the Analogue 3D they tick at 93.75 MHz** (1.5× the 62.5 MHz RCP clock), so the code scales by the measured clock rather than assuming a frequency.
@@ -109,9 +113,12 @@ PROF_HDR / PROF_AVG / PROF_PEAK          per-slot µs, averages and peaks (profi
 RDP,<frame>,counter_mhz=...,busy_us=...  RDP counters (profiler.c)
 RSP,<frame>,...                          RSP profile, "unavailable" unless RSPQ_PROFILE (profiler.c)
 FT_HDR / FT,<frame>,count,fps,...        frame-time window + histogram (frametime.c)
+FTP_HDR / FTP,<frame>,presents,vb1,...   presented frames: vblanks per frame, late count (frametime.c)
+BOOT_HDR / BOOT,<sec>,frames,...         per-second averages for the first 12 s after boot (engine.c)
 MEM_HDR / MEM,<frame>,rdram,...          memory (memstats.c)
 BENCH_META / BENCH_HDR / BENCH,...       benchmark run and steps (benchmark_scene.c, BENCHMARKS.md)
 BENCH_PROF_HDR / BENCH_PROF,...          per-step CPU breakdown (profiler on)
+BENCH_PRESENT_HDR / BENCH_PRESENT,...    per-step presented frames: vblanks 1/2/3/4+, late, average
 BENCH_LAYOUT,...                         data addresses, once per run: render stack, pillar geometry and Mesh struct, plus one row per Layout copy (D26)
 BENCH,END / BENCH,ABORTED                end of a benchmark run
 SOAK,... / SWEEP,...                     Reset Soak and Menu Sweep (testbed.c, DEBUGGING.md)
