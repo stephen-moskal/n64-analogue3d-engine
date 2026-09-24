@@ -516,7 +516,7 @@ Bench = UI gained two steps (the `dialog` profiler slot; `dialog_us` appended to
 (ares measured 450 / 658 µs: the emulator's timings are only indicative.)
 
 - **A reading text box costs 0.3 ms per frame** on average, about the same CPU as an open static menu. The per-frame work doesn't depend on the text length: a few rectangles (box, frame, name plate, choice box) and two or three blits.
-- **A new page costs one layout and one text render** of up to ~130 glyphs, around 3–5 ms in that frame (CPU max 15.9 ms against ~10.3 for a quiet frame). CPU never passes 16.7 ms, but when skipping (a page every ~6 frames) p99 frame time reaches 22 ms, the same pattern as the menu's change steps (3, 5, 7, 13: p99 21–24 ms with CPU max 17–18 ms). That is frame pacing around busy frames, which S6 takes up (D19). A render budget for pages (lay out on one frame, render on the next) is the fix if it shows in play.
+- **A new page costs one layout and one text render** of up to ~130 glyphs, up to ~5.5 ms in that frame (CPU max 15.9 ms against ~10.3 for a quiet frame). CPU never passes 16.7 ms, but when skipping (a page every ~6 frames) p99 frame time reaches 22 ms, the same pattern as the menu's change steps (3, 5, 7, 13: p99 21–24 ms with CPU max 17–18 ms). That is frame pacing around busy frames, which S6 takes up (D19). A render budget for pages (lay out on one frame, render on the next) is the fix if it shows in play.
 - **Against S5.2** (`...-s5_2-ui-...`): 0 regressions at 5 % / 0.15 ms on the 14 shared steps, although the profiler was on in this run and off in the reference.
 
 `docs/benchmarks/2026-09-24-p2-s5_3-ui-debug-a3d.csv` is the UI comparison point; `...-s5_2-all-...` stays the Bench = All reference.

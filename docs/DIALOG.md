@@ -183,7 +183,7 @@ Variables are filled when a line starts (the runner holds the filled text), so a
 
 **Input.** `textbox_update()` takes a `UiInput` (confirm, cancel, up, down), so the game decides the buttons. The demo maps A/B through the action map (remappable) and the D-pad or stick for choices. While the box is open it skips object interaction, camera control and Start, pauses the Debug D-pad shortcuts (`debug_menu_set_shortcuts()`), and hides the bottom HUD band that the box covers.
 
-**Cost.** A page is laid out (`rdpq_paragraph_build`) and rendered once into a cached layer ([UI.md](UI.md), canvas). While it types, each frame blits the completed lines and a growing part of the current one, cut at the next glyph's pen position. So a revealing box costs a few rectangles and two or three blits; a new page costs one text render. On the A3D (Bench = UI steps 50 and 51, `dialog_us`): **0.30 ms per frame while reading, 0.53 ms when skipping** through pages; a page change frame costs about 3–5 ms ([BENCHMARKS.md](BENCHMARKS.md), "Phase 2 · S5.3").
+**Cost.** A page is laid out (`rdpq_paragraph_build`) and rendered once into a cached layer ([UI.md](UI.md), canvas). While it types, each frame blits the completed lines and a growing part of the current one, cut at the next glyph's pen position. So a revealing box costs a few rectangles and two or three blits; a new page costs one text render. On the A3D (Bench = UI steps 50 and 51, `dialog_us`): **0.30 ms per frame while reading, 0.53 ms when skipping** through pages; a page change frame costs up to ~5.5 ms ([BENCHMARKS.md](BENCHMARKS.md), "Phase 2 · S5.3").
 
 ## Errors
 
