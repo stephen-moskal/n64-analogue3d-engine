@@ -1,11 +1,14 @@
 # Menu System
 
-A lightweight, reusable tabbed menu system for in-game settings, pause menus, and option screens. Designed to be data-driven: define tabs, items, and options. The system handles navigation, rendering, scrolling, disabled items, and cancel/revert.
+A lightweight, reusable tabbed menu system for in-game settings, pause menus, and option screens. Designed to be data-driven: define tabs, items, and options. The system handles navigation, scrolling, disabled items, and cancel/revert.
+
+The menu is split into a **model** (`menu.c`: tabs, items, values, cursor, input; host-tested in `tests/host/test_menu.c`) and a **view** (`menu_view.c`: drawing in a `UiStyle`, with cached text). This document covers the model and how to use both; the drawing side is in [UI.md](UI.md).
 
 ## Quick Start
 
 ```c
 #include "ui/menu.h"
+#include "ui/menu_view.h"
 
 // Define options (the menu keeps the pointers: use static storage)
 static const char *difficulty[] = {"Easy", "Normal", "Hard"};
@@ -23,8 +26,12 @@ menu_add_item(&my_menu, tab_game, "Sound", sound, 2, 0);            // default: 
 if (start_pressed) menu_open(&my_menu);
 if (my_menu.is_open) menu_update(&my_menu);   // D-pad, stick, L/R, A/B
 
-// In the draw, after the 3D scene:
-if (my_menu.is_open) menu_draw(&my_menu);
+// Once: a view (style + cached text; ~98 KB surface, allocated on first draw)
+static MenuView my_view;
+menu_view_init(&my_view, &ui_style_debug, true);
+
+// In the draw, after the 3D scene (draws nothing while the menu is closed):
+menu_draw(&my_menu, &my_view);
 
 // Read current values (tab index, item index):
 int diff = menu_get_value(&my_menu, tab_game, 0);
@@ -49,7 +56,7 @@ The -1 returns are silent: check them when adding to a nearly full menu.
 
 ### `menu_item_set_disabled(Menu *menu, int tab, int item, bool disabled)`
 
-Greys an item out. The cursor skips disabled items and their value cannot be changed; `menu_open()` starts each tab's cursor on its first enabled item.
+Greys an item out. Its value cannot be changed, but the cursor can move onto it (the label lights up, the value stays grey without arrows), so a long list scrolls to disabled items and shows them. `menu_open()` starts each tab's cursor on its first enabled item.
 
 ### `menu_open(Menu *menu)`
 
@@ -61,11 +68,19 @@ Closes the menu. If `apply` is `false`, all item selections revert to the snapsh
 
 ### `menu_update(Menu *menu)`
 
-Handles navigation; call once per frame while the menu is open. It reads the joypad state directly (`joypad_get_buttons_pressed()` / `joypad_get_inputs()`, port 1), so the joypad must already have been polled this frame — `action_update()` does that ([INPUT.md](INPUT.md)). Start is not handled here: the caller opens and closes the menu.
+Handles navigation; call once per frame while the menu is open. It maps the joypad to the model operations below. It reads the joypad state directly (`joypad_get_buttons_pressed()` / `joypad_get_inputs()`, port 1), so the joypad must already have been polled this frame — `action_update()` does that ([INPUT.md](INPUT.md)). Start is not handled here: the caller opens and closes the menu.
 
-### `menu_draw(const Menu *menu)`
+### Model operations
 
-Renders the menu when it is open. Call after all 3D geometry and other UI, while the framebuffer is attached.
+`menu_move_cursor(menu, dir)` (wraps, keeps the cursor in the visible window), `menu_change_value(menu, dir)` (the cursor item; wraps; ignored on disabled items), `menu_switch_tab(menu, dir)` (wraps). `menu_update()` uses them; scripted input (the UI benchmark) and tests call them directly.
+
+### `menu_set_value(Menu *menu, int tab, int item, int value)`
+
+Sets an item's option index (out-of-range values are ignored). Use it instead of writing `items[i].selected` so a later change (S8) can hook it; the view notices direct writes too.
+
+### `menu_draw(const Menu *menu, MenuView *view)`
+
+Renders the menu when it is open, in the view's style, re-rendering only the text that changed ([UI.md](UI.md)). Call after all 3D geometry and other UI, while the framebuffer is attached. `menu_view_init(view, style, cached)` once; `menu_view_set_style()` restyles; `menu_view_free()` releases the surface.
 
 ### `menu_get_value(const Menu *menu, int tab, int item_index)`
 
@@ -111,7 +126,7 @@ typedef struct {
 | Input | Action |
 |-------|--------|
 | Start | Toggle menu open/close (handled by the caller, not `menu_update`) |
-| D-pad Up/Down | Move cursor between enabled items (wraps), auto-scrolls when >7 items |
+| D-pad Up/Down | Move the cursor (wraps; disabled items can be visited but not changed), auto-scrolls when >7 items |
 | D-pad Left/Right | Cycle selected option for current item (wraps) |
 | Analog Stick Left/Right | Same as D-pad left/right (threshold 40, repeats every 10 frames) |
 | L/R Shoulder | Switch between tabs (wraps) |
@@ -125,11 +140,9 @@ typedef struct {
 │          Start Menu          │  Title (white, variable-width font)
 │      < [Settings] 1/6 >      │  Active tab and position (yellow)
 │──────────────────────────────│  Separator line
-│            ...               │  Scroll-up indicator (if needed)
-│  BG Color    < Light Blue >  │  Cursor row (yellow)
-│  Debug Text     <  On  >     │  Other rows (grey), disabled rows dark grey without arrows
-│  Camera       < Orbital >    │
-│            ...               │  Scroll-down indicator (if needed)
+│  BG Color    < Light Blue > ▐│  Cursor row (yellow); ▐ scroll bar on tabs with >7 items
+│  Debug Text     <  On  >    ▐│  Other rows (grey), disabled rows dark grey without arrows
+│  Camera       < Orbital >   ││
 │   L/R:Tab  A:OK  B:Cancel    │  Footer hint
 └──────────────────────────────┘
 ```
@@ -140,22 +153,12 @@ typedef struct {
 - Left column (label): x=44
 - Right column (value with arrows): starts at x=170, centred in the remaining width
 - With a single tab the header is `[Label]` and the footer `A:OK  B:Cancel`
+- Scroll bar: a 3 px track beside the rows at the right edge, with a thumb whose height is the visible share (7 / item count) and whose position follows the scroll offset
+- All of these values come from the style (`ui_style_debug`); another style can move, recolour or restyle every element ([UI.md](UI.md))
 
 ## Rendering Details
 
-The menu background uses alpha blending to create a semi-transparent overlay:
-
-```c
-rdpq_set_mode_standard();
-rdpq_mode_combiner(RDPQ_COMBINER_FLAT);
-rdpq_mode_blender(RDPQ_BLENDER_MULTIPLY);
-rdpq_set_prim_color(RGBA32(0, 0, 0, 160));
-// Two TRIFMT_FILL triangles form the background rectangle
-```
-
-This uses 1-cycle mode (not fill mode), which is safe on real hardware. The separator line is a fill-mode rectangle. The two background triangles count as `tris_ui` in the stats.
-
-Text is rendered using the text system (`text_draw` / `text_draw_fmt`) with `TextBoxConfig` structs for each element. Text is the menu's main cost ([BENCHMARKS.md](BENCHMARKS.md)); the demo times `menu_draw()` in the `menu` profiler slot.
+Every frame the view draws the panel as a translucent rectangle (standard mode, flat combiner, blender; `rdpq_fill_rectangle` is hardware-safe in any mode), the separator and the scroll bar as rectangles, and the text as one copy-mode blit of its cached layer. Text is re-rendered into the layer only for the slots that changed: a cursor move re-renders two rows, a tab switch the whole panel. The demo times `menu_draw()` in the `menu` profiler slot; Bench = UI measures it ([BENCHMARKS.md](BENCHMARKS.md)).
 
 ## Integration in This Engine
 
@@ -164,7 +167,7 @@ The engine has one global menu, `Menu start_menu`, defined and built in `src/mai
 Driving it is the scene's job, and only the demo scene does it (`demo_scene.c`):
 
 - `demo_update()` polls input with `action_update()`, toggles the menu on Start (raw joypad), calls `menu_update()` while it is open, and after it closes reads values with `menu_get_value()` and applies the ones that changed (it caches the last applied value of each item).
-- `demo_post_draw()` calls `menu_draw()` last, after the HUD.
+- `demo_post_draw()` calls `menu_draw(&start_menu, &start_menu_view)` last, after the HUD. The view is created on first use and kept across scene resets.
 - `debug_menu_update()`, called from the main loop in `main.c`, applies the Debug tab while the menu is closed. The debug overlay page is hidden while the menu is open.
 
 The benchmark scene has no menu (Start aborts the run). A new scene that wants the menu must poll input, toggle, update and draw it the same way.
@@ -209,8 +212,9 @@ float game_speed = speeds[menu_get_value(&start_menu, TAB_SETTINGS, ITEM_GAME_SP
 | File | Purpose |
 |------|---------|
 | [src/ui/menu.h](../src/ui/menu.h) | Data structures and API declarations |
-| [src/ui/menu.c](../src/ui/menu.c) | Input handling, rendering, state management |
-| [src/ui/text.h](../src/ui/text.h) | Text rendering (used by menu) |
+| [src/ui/menu.c](../src/ui/menu.c) | Model: building, open/close, cursor, values, joypad input |
+| [src/ui/menu_view.h](../src/ui/menu_view.h), [src/ui/menu_view.c](../src/ui/menu_view.c) | View: drawing in a style with cached text ([UI.md](UI.md)) |
+| [tests/host/test_menu.c](../tests/host/test_menu.c) | Host tests of the model |
 | [src/main.c](../src/main.c) | Builds the global start menu (option arrays, tab and item order) |
 | [src/scenes/demo_scene.c](../src/scenes/demo_scene.c) | Opens, updates, draws the menu and applies its values |
 | [src/debug/debug_menu.c](../src/debug/debug_menu.c) | Debug tab items and how they apply |

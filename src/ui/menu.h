@@ -1,7 +1,10 @@
 #ifndef MENU_H
 #define MENU_H
 
-#include <libdragon.h>
+// Tabbed option menu: the model (tabs, items, values, cursor, cancel/revert)
+// and its joypad input. Drawing lives in menu_view.h, so one model can be
+// shown in any style and the model is testable on the host. See docs/UI.md.
+
 #include <stdbool.h>
 
 #define MENU_MAX_TABS        6
@@ -35,15 +38,27 @@ typedef struct {
     int analog_cooldown;                     // Frame counter for analog repeat
 } Menu;
 
+// Building
 void menu_init(Menu *menu, const char *title);
 int  menu_add_tab(Menu *menu, const char *label);
 int  menu_add_item(Menu *menu, int tab, const char *label,
                    const char **options, int count, int default_idx);
+
+// Open (snapshot values) and close (apply, or revert to the snapshot)
 void menu_open(Menu *menu);
 void menu_close(Menu *menu, bool apply);
+
+// Joypad: D-pad/stick, L/R tabs, A apply, B cancel. Port 1, already polled.
 void menu_update(Menu *menu);
-void menu_draw(const Menu *menu);
+
+// Model operations (what menu_update does; also for scripted input and tests)
+void menu_move_cursor(Menu *menu, int dir);   // wraps, scrolls; disabled items can be visited
+void menu_change_value(Menu *menu, int dir);  // the cursor item, wraps
+void menu_switch_tab(Menu *menu, int dir);    // wraps
+
+// Values
 int  menu_get_value(const Menu *menu, int tab, int item_index);
+void menu_set_value(Menu *menu, int tab, int item_index, int value);
 void menu_item_set_disabled(Menu *menu, int tab, int item, bool disabled);
 
 #endif

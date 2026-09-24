@@ -3,7 +3,7 @@
 ## Project Overview
 Nintendo 64 homebrew game engine built on libdragon (`preview` branch, vendored as the `libdragon/` git submodule pinned at `39d0d6096`, 2026-09-15; upgraded from `10f3bd43e` in Phase 2 S4b). Verified on real hardware (Analogue 3D via SummerCart64) and in the ares emulator. Long-term goal: an action-RPG engine supporting souls-like combat and Final Fantasy Tactics-style battles, general enough for other genres.
 
-Current state (2026-09-23): engine features from v1 (mesh system, multi-object scenes, camera, collision, physics, lighting + shadows, billboards, particles, fog/atmosphere, audio, action-mapped input, tabbed menu, text) plus the Phase 1 developer tooling in `src/debug/` (profiler, stats, memory, frame time, overlay pages, RDP counters, RDP capture, crash test, Reset Soak, Menu Sweep), a benchmark scene, host unit tests and CI. Planning lives in `docs/ROADMAP_v2.md`: Phases 0 and 1 are done; Phase 2 (engine hardening, stages S0–S13) is in progress with S0–S4b verified on the A3D (S4b: libdragon upgrade fixing the RSP race D28, sound module rework); next S5 (text and menu performance), then CPU-path graphics features and Tiny3D. The engine is CPU-bound (see `docs/BENCHMARKS.md`).
+Current state (2026-09-23): engine features from v1 (mesh system, multi-object scenes, camera, collision, physics, lighting + shadows, billboards, particles, fog/atmosphere, audio, action-mapped input, tabbed menu, text) plus the Phase 1 developer tooling in `src/debug/` (profiler, stats, memory, frame time, overlay pages, RDP counters, RDP capture, crash test, Reset Soak, Menu Sweep), a benchmark scene, host unit tests and CI. Planning lives in `docs/ROADMAP_v2.md`: Phases 0 and 1 are done; Phase 2 (engine hardening, stages S0–S13) is in progress with S0–S4b verified on the A3D (S4b: libdragon upgrade fixing the RSP race D28, sound module rework); S5.1 (UI core: cached menu text, styles) verified 2026-09-24; next S5.2 (HUD, overlay, styles) and S5.3 (text boxes), then S6, CPU-path graphics features and Tiny3D. The engine is CPU-bound (see `docs/BENCHMARKS.md`).
 
 ## Build & Deploy
 Development happens on Windows 11 (PowerShell) and macOS. The `libdragon` npm CLI runs `make` inside the Docker container `ghcr.io/dragonminded/libdragon:preview` (config in `.libdragon/config.json`, vendor strategy = submodule). Full setup: `docs/SETUP.md`.
@@ -47,6 +47,7 @@ VS Code tasks (`.vscode/tasks.json`) wrap the same commands with per-OS variants
 - The camera rebuilds its matrices only when `dirty` (set by the `camera_*` setters) or when following a target; code that edits `Camera` fields directly must set `dirty`.
 - Scenes poll input themselves (`action_update()` in `on_update`); the Start menu is driven by the demo scene only. The menu is nearly full (6/6 tabs; Debug and Controls use 11 of 12 items) and `menu_add_item` returns -1 past the limits.
 - Particle emitters keep the `ParticleEmitterDef` pointer: definitions must have static storage.
+- UI text: `text_draw()` sets standard mode before each print (a font sets its mode in a recorded block the CPU-side tracking does not see; without it, text after fill/copy-mode drawing comes out invisible). Text cached in a `UiLayer` needs a plain monochrome font (`FONT_UI_*`, from `assets/fonts/`): libdragon's outlined builtins leave the alpha bit clear offscreen. Layer slot boxes are widened to 4-pixel columns (fill mode on 16-bit surfaces needs them). `menu_draw(menu, view)` takes a `MenuView`.
 
 ## Architecture
 
@@ -68,7 +69,8 @@ src/scenes/demo_scene.c    the demo (objects, menu semantics, HUD), the largest 
 src/scenes/benchmark_scene.c   stress test (All = 26 steps, plus Layout, Overload, Audio); BENCH / BENCH_PROF / BENCH_LAYOUT rows
 src/audio/                 sound module (snd_*): crossfading music slots, 8 prioritised SFX voices, positional sound,
                            master/music/SFX volume ramps; snd_mix (pure, host-tested); sound_bank table
-src/ui/                    text (rdpq_text, builtin fonts), menu (tabbed, snapshot/revert)
+src/ui/                    text (fonts, text_draw), menu (model + input, host-tested), menu_view (drawing in a UiStyle),
+                           ui_layer (cached text slots), ui_style, ui_draw (rectangles, gauges); docs/UI.md
 src/debug/                 engine_debug.h (build switches), debug_menu (Debug tab + D-Up/D-Down), stats,
                            profiler (+ RDP counters), memstats, frametime, overlay, rdp_debug, testbed (Reset Soak, Menu Sweep)
 src/engine/                hot.h (ENGINE_HOT, ENGINE_NOINIT), hot_text.ld (I-cache placement of the render path)
@@ -115,5 +117,5 @@ CPU software transform + hardware RDP rasterization, hardware 16-bit Z-buffer (n
 - Planning: `docs/ROADMAP_v2.md` (current), `docs/ROADMAP.md` (v1 record of Features 1–10)
 - Environment/workflow: `docs/SETUP.md`, `docs/WORKFLOW.md`, `docs/EXTENDING.md` (how-to recipes, contributing)
 - Tooling: `docs/DEBUGGING.md`, `docs/PROFILING.md`, `docs/BENCHMARKS.md`, `docs/HARDWARE.md`
-- Systems: `docs/ARCHITECTURE.md`, `docs/RENDERING.md`, `docs/MESH_SYSTEM.md`, `docs/CAMERA.md`, `docs/TEXTURES.md`, `docs/BILLBOARDS.md`, `docs/PARTICLES.md`, `docs/AUDIO.md`, `docs/COLLISION.md`, `docs/PHYSICS.md`, `docs/SCENE_SYSTEM.md`, `docs/INPUT.md`, `docs/MENU_SYSTEM.md`
+- Systems: `docs/ARCHITECTURE.md`, `docs/RENDERING.md`, `docs/MESH_SYSTEM.md`, `docs/CAMERA.md`, `docs/TEXTURES.md`, `docs/BILLBOARDS.md`, `docs/PARTICLES.md`, `docs/AUDIO.md`, `docs/COLLISION.md`, `docs/PHYSICS.md`, `docs/SCENE_SYSTEM.md`, `docs/INPUT.md`, `docs/MENU_SYSTEM.md`, `docs/UI.md`
 - External: libdragon sources in `libdragon/` (submodule); optional N64 reference collection `../awesome-n64-development/` if checked out beside this repo

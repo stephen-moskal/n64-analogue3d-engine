@@ -77,6 +77,13 @@ assets_sfx_wav64   = $(addprefix filesystem/audio/sfx/,$(notdir $(assets_sfx_wav
 assets_music_wav64 = $(addprefix filesystem/audio/music/,$(notdir $(assets_music_wav:%.wav=%.wav64)))
 assets_music_xm64  = $(addprefix filesystem/audio/music/,$(notdir $(assets_music_xm:%.xm=%.xm64)))
 
+# Asset conversion — fonts. Monochrome and without outline: outlined fonts
+# fake transparency with coverage blending, which leaves the alpha bit clear
+# when text is rendered into a cached UI layer (docs/UI.md)
+assets_font_ttf  = $(wildcard assets/fonts/*.ttf)
+assets_font64    = $(addprefix filesystem/fonts/,$(notdir $(assets_font_ttf:%.ttf=%.font64)))
+MKFONT_FLAGS    ?= --monochrome --range 20-7F
+
 # Debug-only data, built under $(DEBUG_FS)/ instead of filesystem/: a debug ROM
 # packs a staging copy of filesystem/ plus these files, a release ROM packs
 # filesystem/ alone. Now: the demo track in the other encodings the audio
@@ -130,6 +137,11 @@ $(DEBUG_FS)/audio/bench/demo_opus.wav64: assets/audio/music/demo.wav
 	@$(N64_AUDIOCONV) --wav-compress 3 -o $(BUILD_DIR)/audio_opus "$<"
 	@mv $(BUILD_DIR)/audio_opus/demo.wav64 $@
 
+filesystem/fonts/%.font64: assets/fonts/%.ttf
+	@mkdir -p $(dir $@)
+	@echo "    [FONT] $@"
+	@$(N64_MKFONT) $(MKFONT_FLAGS) -o $(dir $@) "$<"
+
 filesystem/audio/music/%.xm64: assets/audio/music/%.xm
 	@mkdir -p $(dir $@)
 	@echo "    [XM64] $@"
@@ -155,7 +167,7 @@ $(ENGINE_LD): $(N64_LIBDIR)/n64.ld $(HOT_TEXT_LD)
 
 $(ROM_NAME).z64: $(BUILD_DIR)/$(ROM_NAME).dfs
 
-$(BUILD_DIR)/$(ROM_NAME).dfs: $(assets_conv) $(assets_sfx_wav64) $(assets_music_wav64) $(assets_music_xm64) \
+$(BUILD_DIR)/$(ROM_NAME).dfs: $(assets_conv) $(assets_sfx_wav64) $(assets_music_wav64) $(assets_music_xm64) $(assets_font64) \
                               $(debug_assets) $(OPTIONS_STAMP)
 ifeq ($(BUILD),debug)
 	@mkdir -p $(dir $@)
@@ -172,6 +184,6 @@ $(BUILD_DIR)/$(ROM_NAME).elf: $(OBJS) $(ENGINE_LD)
 -include $(wildcard $(BUILD_DIR)/*.d $(BUILD_DIR)/*/*.d)
 
 clean:
-	rm -rf build *.z64 *.elf *.dfs filesystem/*.sprite filesystem/audio
+	rm -rf build *.z64 *.elf *.dfs filesystem/*.sprite filesystem/audio filesystem/fonts
 
 .PHONY: all clean

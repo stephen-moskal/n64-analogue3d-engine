@@ -207,7 +207,7 @@ static void meter(int x, int row, float frac, color_t c) {
 
 static void page_stats(void) {
     const EngineStats *s = stats_get();
-    int rows = 10;
+    int rows = 11;
     panel(bar_col_x(TEXT_COLS), rows);
     int r = 0;
     line(r++, COL_HEAD, "STATS (last frame)");
@@ -231,6 +231,8 @@ static void page_stats(void) {
          (unsigned long)s->physics_bodies, (unsigned long)s->physics_steps);
     line(r++, COL_TEXT, "Snd %lu voices %lu buf",
          (unsigned long)s->snd_voices, (unsigned long)s->snd_buffers);
+    line(r++, COL_TEXT, "UI %lu text %lu layers",
+         (unsigned long)s->ui_renders, (unsigned long)s->ui_blits);
 }
 
 static void page_profiler(float budget_ms) {

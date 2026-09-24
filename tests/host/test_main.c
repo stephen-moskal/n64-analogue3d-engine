@@ -13,6 +13,7 @@ int main(void) {
     run_mesh_tests();
     run_particle_tests();
     run_audio_tests();
+    run_menu_tests();
 
     printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;

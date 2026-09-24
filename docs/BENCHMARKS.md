@@ -149,6 +149,7 @@ The tests run with fog and sky off (restored afterwards) on the benchmark scene'
 | fillrate | 1, 2, 4, 8 | N full-screen blended rectangles (RDP read-modify-write) |
 | layout | 32, 64 × variants 0–5 | data-placement check (D26): the shared pillar (0), copies at D-cache colours 0/2/4/6 KB (1–4), a reversed-winding copy (5); param = variant × 1000 + pillars. Debug only, not in All |
 | overload | 0, 10, 14, 17, 20, 25 | floor + 16 pillars + N ms of CPU busy-wait per frame: deliberate overruns, for the D18 flicker (not in All) |
+| ui | 0, 10, 1, 11, 2, 12, 3, 13, 4, 14 | the Start menu (a copy) over floor + 16 pillars; param = mode × 10 + input (mode 0 direct, 1 cached; input 0 none, 1 cursor every 8 frames, 2 value every 2, 3 tab every 30, 4 closed 30 of every 100 frames); not in All ([UI.md](UI.md)) |
 | audio | 8 steps (10 with `SND_OPUS=1`) | floor + 16 pillars with the music at full volume; param = codec × 100 + poll point × 10 + effects (codec 0 none, 1 raw, 2 VADPCM, 3 Opus; poll point 0 after present, 1 before `display_get`, 2 after; effects 1 = a new sound every 4 frames). Opus runs first, so VADPCM later reuses its channel (D31). Steps whose track is not in the ROM are skipped; not in All ([AUDIO.md](AUDIO.md)) |
 
 ### Baseline (2026-09-23, debug build, Analogue 3D, `docs/benchmarks/2026-09-23-baseline-debug-a3d.csv`)
@@ -423,3 +424,49 @@ Two things differ from the S4b.1 run:
 | Stability (D28) | **no RSP crash** in about 40 minutes of testing across several boots: Reset Soak ×4 (40 resets; the fourth also 0 B), Menu Sweep (24 items, 123 options), Bench = All, and Bench = Audio three times, once with Opus. The first Opus attempt stopped on the D30 assert, which is a CPU assertion, not an RSP crash. |
 | RAM (release ELF) | 502.0 → 511.6 KB (+9.6 KB: the sound module and the Audio benchmark). `SND_OPUS=1` would add ~94 KB (the full Opus decoder); keeping it opt-in saved that much against the first S4b.2 build. |
 | ROM (release) | 400 KB, unchanged. The benchmark tracks are debug-only; the debug ROM carries the 176 KB raw track. |
+
+## Phase 2 · S5.1 UI core and cached menu (2026-09-24, debug build, Analogue 3D)
+
+The Start menu's text now renders into an offscreen RGBA16 surface only when a slot changes, and each frame is drawn with one copy-mode blit ([UI.md](UI.md)). Other changes in this stage:
+- the menu is split into a model (`menu.c`, host-tested) and a view in a style (`menu_view.c`);
+- a scroll bar replaces the "..." markers, and the cursor can visit disabled items;
+- `text_draw` no longer draws rdpq_text's AA-fix rectangle (the display has no VI anti-aliasing) and sets standard mode before each print instead.
+
+**Bench = UI** (`docs/benchmarks/2026-09-24-p2-s5_1-ui-debug-a3d.csv`, validator off): a copy of the Start menu over the floor and 16 pillars. Direct draws every text element every frame (the pre-S5 cost); cached re-renders only what changed.
+
+| Input | `menu` ms direct → cached | CPU avg ms direct → cached | CPU max ms cached |
+|---|---|---|---|
+| none | 4.07 → **0.31** | 16.69 → 10.28 | 12.3 |
+| cursor move every 8 frames | 4.09 → 0.49 | 16.71 → 10.91 | 18.3 |
+| value change every 2 frames | 4.06 → 0.49 | 16.75 → 11.72 | 16.9 |
+| tab switch every 30 frames | 3.77 → 0.49 | 16.25 → 10.53 | 18.3 |
+| close 30 of every 100 frames | 1.54 → 0.12 | 14.25 → 10.16 | 12.3 |
+
+- **The idle menu costs 92 % less** (4.07 → 0.31 ms), and the frame goes from 16.7 ms (at the budget, 1 % low 53 FPS) to 10.3 ms.
+- **A change frame still costs a few ms.** It pays the text of what changed: two rows for a cursor move, the whole panel for a tab switch. The cached CPU maximum is 16.9–18.3 ms against 12.3 ms idle. S5.2 can spread re-renders over frames if that matters.
+- **The S5 target is met on average** (`menu` ≤ 1.5 ms). The ≤ 3 ms peak target is not met on change frames.
+- **Direct text now costs more** than the 2.6 ms measured in S0 (~4 ms). This benchmark draws over a heavier scene, and the benchmark's own status line (`hud_us`, ~3.3 ms in the direct steps against ~0.6 ms in the cached ones) waits behind the RSP work the direct menu queued.
+- **Heap:** +96 KB for the menu's text surface (`heap_kb` 903 → 999).
+
+**With the RDP validator on** (`...-s5_1-ui-validator-...`):
+- direct menu: 7.1 ms per frame, CPU 22.9 ms (44 FPS);
+- cached menu, idle: 0.31 ms, but CPU still 18.0 ms, because the validator makes everything slower (the two status lines cost 4–5 ms);
+- cached menu, change frames: up to 32–48 ms.
+
+The lower-screen flicker (D18) no longer appears with the validator on and the menu open (A3D, user check). The remaining over-budget frames under the validator are a whole-frame issue, so the rest of D18 moves to S6.
+
+**The validator found a bug in the first S5.1 build.** Slot clears used fill mode with a scissor starting at x=14, and fill mode on a 16-bit surface needs 4-pixel alignment (undefined on hardware). Slot boxes now snap to 4-pixel columns; the next validator run showed 0 of these errors.
+
+**Full benchmark vs S4b.2** (`...-p2-s5_1-all-...`, `bench_compare.py`): **4 steps over the gate**, in code this stage did not touch:
+
+| Step | S4b.2 → S5.1 CPU ms | Where (BENCH_PROF against S4b.1, also profiler on) |
+|---|---|---|
+| particles 64 / 96 / 128 | 2.93 → 3.24 / 3.69 → 4.22 / 4.55 → 5.19 (+11 to +14 %) | `draw` 3.81 → 4.35 ms at 128: the particle renderer |
+| textures 2 | 5.76 → 6.21 (+7.8 %) | `mesh_light` 0.58 → 0.78 ms; textures 1/4/8 +0.5 to +3.8 % |
+| everything else | within ±5 % (most −0.5 to −4 %) | |
+
+- **The profiler was on in this run and off in S4b.2**, which accounts for ~0.1 ms.
+- **The rest is most likely data layout (D26 family).** Static data grew by 11 KB (the benchmark's menu copy and the views), which moves every static array. The 128-particle pool, which spans most of the 8 KB direct-mapped D-cache, now starts at cache offset 0x0F18. The RDP is slightly less busy than before (1.42 vs 1.60 ms at 128 particles).
+- **This is not proven.** It is tracked as D33 and re-checked with the S5.2 build; a same-ROM A/B settles it if it persists.
+
+`docs/benchmarks/2026-09-24-p2-s5_1-all-debug-a3d.csv` is the comparison point for S5.2.

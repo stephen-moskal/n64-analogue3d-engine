@@ -4,8 +4,10 @@
 #include <libdragon.h>
 
 // Font registry IDs (1-255, 0 reserved by libdragon)
-#define FONT_DEBUG_MONO  1
-#define FONT_DEBUG_VAR   2
+#define FONT_DEBUG_MONO  1    // libdragon builtin, outlined
+#define FONT_DEBUG_VAR   2    // libdragon builtin, outlined
+#define FONT_UI_MONO     3    // assets/fonts/monogram.ttf, plain (cached UI text)
+#define FONT_UI_VAR      4    // assets/fonts/at01.ttf, plain (cached UI text)
 
 typedef struct {
     float x, y;              // Screen position (text baseline)

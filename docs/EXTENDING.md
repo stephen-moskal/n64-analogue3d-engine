@@ -97,7 +97,7 @@ Gotchas:
   if (start_menu.is_open) menu_update(&start_menu);
 
   // on_post_draw, last:
-  if (start_menu.is_open) menu_draw(&start_menu);
+  menu_draw(&start_menu, &my_menu_view);   // a MenuView of the scene's own (docs/UI.md)
   ```
 - **Soft reset:** `scene->reset_requested = true` makes the next `scene_manager_update()` run `scene_cleanup()` and `scene_init()` and skip that frame's update. The menu keeps its values across the reset (the demo's Settings → Reset Scene uses this).
 - **Camera dirty flag:** `camera_update()` rebuilds the matrices only when `camera.dirty` is set (every `camera_*` setter sets it) or in follow mode with a target. Code that writes `Camera` fields directly (`azimuth`, `fixed_position`, `follow_offset`) must set `scene->camera.dirty = true`, as `demo_update()` and `bench_update()` do.
@@ -240,7 +240,7 @@ Gotchas:
    ```
 
    Reset the cache in `demo_init()`: Reset Scene re-runs it while the menu keeps its values. A cache reset to -1 forces an apply on the first update (the point lights, the Controls bindings and the Environ disabled states do this); a cache reset to the item's default skips that first apply, so the scene must already be in that state (the other blocks, like the frame rate above, work this way).
-4. Optionally grey an item out with `menu_item_set_disabled(&start_menu, tab, item, true)`; the cursor skips it. Update disabled states on change too.
+4. Optionally grey an item out with `menu_item_set_disabled(&start_menu, tab, item, true)`; the cursor can visit it but its value cannot change. Update disabled states on change too. Set values from code with `menu_set_value()`.
 5. Test with Debug → Menu Sweep, which steps every option of every item (except the Controls and Debug tabs and Reset Scene), holding each for 15 frames. Run it with RDP Check on.
 
 Gotchas:
@@ -340,7 +340,7 @@ Gotchas:
    - `setup_step()`: a `case` that sets the scene up for one step. Its preamble resets emitters, fill layers, instances, the CPU burn, the floor and the lighting before every step; reset any state you add there too.
    - `bench_update()`, `bench_draw()`, `bench_post_draw()`: the load itself. Keep it deterministic: the camera path is frame-locked and particles update with a fixed 1/60 s step.
    - `bench_cleanup()`: free what the kind allocated.
-3. In `debug_menu.c`, add the name to `bench_options[]` at the same index and raise the count in `menu_add_item(menu, tab, "Bench", bench_options, 10, 0)`.
+3. In `debug_menu.c`, add the name to `bench_options[]` at the same index and raise the count in `menu_add_item(menu, tab, "Bench", bench_options, 11, 0)`.
 4. Run it: Start → Debug → Bench = the new kind, Scene = Benchmark, A. Every step runs 60 warm-up and 240 measured frames, and the scene fades back to the demo at the end. `libdragon make BENCH=1 BENCH_KIND=<NAME>` builds a ROM that boots straight into it.
 
 | Row | Printed | Contents |

@@ -10,7 +10,7 @@ static const char *off_on_options[]  = {"Off", "On"};
 static const char *dump_options[]    = {"---", "Dump!"};
 static const char *reset_options[]   = {"---", "Reset!"};
 static const char *scene_options[]   = {"Demo", "Benchmark"};
-static const char *bench_options[]   = {"All", "Objects", "Particles", "Lights", "Textures", "Shadows", "Fillrate", "Overload", "Layout", "Audio"};
+static const char *bench_options[]   = {"All", "Objects", "Particles", "Lights", "Textures", "Shadows", "Fillrate", "Overload", "Layout", "Audio", "UI"};
 static const char *run_options[]     = {"---", "Run!"};
 static const char *capture_options[] = {"---", "Capture!"};
 static const char *crash_options[]   = {"---", "Assert!"};
@@ -44,7 +44,7 @@ void debug_menu_init(Menu *menu, int tab) {
     menu_add_item(menu, tab, "Dump CSV",    dump_options,   2, 0);
     menu_add_item(menu, tab, "Reset Peaks", reset_options,  2, 0);
     menu_add_item(menu, tab, "Scene",       scene_options,  2, 0);
-    menu_add_item(menu, tab, "Bench",       bench_options,  10, 0);
+    menu_add_item(menu, tab, "Bench",       bench_options,  11, 0);
     menu_add_item(menu, tab, "RDP Log",     capture_options, 2, 0);
     menu_add_item(menu, tab, "Crash Test",  crash_options,  2, 0);
     menu_add_item(menu, tab, "Reset Soak",  run_options,    2, 0);
@@ -73,7 +73,7 @@ static int item_value(DebugMenuItem item) {
 }
 
 static void item_set(DebugMenuItem item, int value) {
-    dbg_menu->tabs[dbg_tab].items[item].selected = value;
+    menu_set_value(dbg_menu, dbg_tab, item, value);
 }
 
 void debug_menu_update(void) {

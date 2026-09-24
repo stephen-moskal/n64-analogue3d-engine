@@ -14,6 +14,7 @@ build/
 # so committing them causes "invalid version" asserts on other machines.
 filesystem/*.sprite
 filesystem/audio/
+filesystem/fonts/
 
 # libdragon submodule working tree (the gitlink itself stays tracked)
 libdragon/

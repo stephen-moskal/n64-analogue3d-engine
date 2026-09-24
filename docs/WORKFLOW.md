@@ -107,6 +107,7 @@ Sources live in `assets/`; `make` converts them with the container's tools into 
 | `assets/audio/sfx/*.wav` | `audioconv64 $(AUDIOCONV_SFX_FLAGS)` (VADPCM) | `filesystem/audio/sfx/*.wav64` | opened by `snd_init()` from the `sound_bank` table, played with `snd_play()` / `snd_play_at()` |
 | `assets/audio/music/*.wav` | `audioconv64 $(AUDIOCONV_MUSIC_FLAGS)` (VADPCM) | `filesystem/audio/music/*.wav64` | `snd_music_play()` (looped, crossfaded) |
 | `assets/audio/music/demo.wav` (debug builds) | `audioconv64 --wav-compress 0` / `3` | `build/<variant>/fs-debug/audio/bench/*.wav64` | the audio benchmark's other encodings; debug ROMs only (AUDIO.md) |
+| `assets/fonts/*.ttf` | `mkfont --monochrome --range 20-7F` | `filesystem/fonts/*.font64` | UI fonts for cached text (docs/UI.md) |
 | `assets/audio/music/*.xm` | `audioconv64` | `filesystem/audio/music/*.xm64` | converted, but not playable yet: the audio module has no XM player |
 
 Generated outputs are ignored by git. Placeholder WAVs can be regenerated with `py tools/gen_placeholder_audio.py` (or `python3` on macOS). Models (`*.t3dm` via Tiny3D) arrive in ROADMAP_v2 Phase 4.
@@ -116,7 +117,7 @@ Adding a texture, a sound or any other content: the recipes are in [EXTENDING.md
 ## Version Control
 
 Committed: `src/`, `assets/`, `docs/` (including the benchmark CSVs in `docs/benchmarks/`), `tests/`, `tools/`, `Makefile`, `.github/`, `.vscode/` (tasks, settings), `.devcontainer/`, `.libdragon/config.json`, `.gitattributes`, `.gitignore`, `README.md`, `CLAUDE.md`, and the `libdragon` submodule pointer.
-Ignored: `build/` (at any depth, so also `tests/host/build/`), `*.z64/*.elf/*.dfs/*.sym/*.map`, object and dependency files, generated `filesystem/*.sprite` and `filesystem/audio/`, `*.pak` (emulator saves), `*.log`.
+Ignored: `build/` (at any depth, so also `tests/host/build/`), `*.z64/*.elf/*.dfs/*.sym/*.map`, object and dependency files, generated `filesystem/*.sprite`, `filesystem/audio/` and `filesystem/fonts/`, `*.pak` (emulator saves), `*.log`.
 
 Line endings are forced to LF by `.gitattributes`; on Windows also set `core.autocrlf=false` in the repo and the submodule (SETUP.md step 6).
 

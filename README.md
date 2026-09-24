@@ -183,7 +183,10 @@ n64-analogue3d-engine/
 │   │   └── sound_bank.c/h     # Sound asset table
 │   ├── ui/
 │   │   ├── text.c/h           # Font rendering, formatted text
-│   │   └── menu.c/h           # Tabbed data-driven menu system
+│   │   ├── menu.c/h           # Tabbed data-driven menu model and input
+│   │   ├── menu_view.c/h      # Menu drawing in a style, cached text
+│   │   ├── ui_layer.c/h       # Cached UI text slots (offscreen surface)
+│   │   └── ui_style.c/h, ui_draw.c/h  # Styles; rectangles and gauges
 │   ├── debug/                 # Build switches, Debug tab, profiler, stats, memory, frame time,
 │   │                          # overlay pages, RDP capture, Reset Soak / Menu Sweep
 │   └── engine/
@@ -247,6 +250,7 @@ RDP: Triangle Rasterize → Texture Sample → Z-Buffer → Framebuffer
 - [Scene System](docs/SCENE_SYSTEM.md) — Lifecycle, scene manager, transitions, soft reset
 - [Input System](docs/INPUT.md) — Controller layout, action mapping, analog handling
 - [Menu System](docs/MENU_SYSTEM.md) — API reference, data model, integration patterns
+- [UI](docs/UI.md) — Styles, cached text layers, menu view
 - [Debugging](docs/DEBUGGING.md) — Debug tab (incl. Reset Soak and Menu Sweep), log channels, RDP validator and capture, crash inspector, unit tests
 - [Profiling](docs/PROFILING.md) — CPU profiler, stats, memory, frame time, RDP counters, CSV rows
 - [Benchmarks](docs/BENCHMARKS.md) — Measured performance on the Analogue 3D and the benchmark baseline

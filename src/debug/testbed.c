@@ -131,14 +131,14 @@ static void sweep_update(void) {
     if (sw_hold > 0) { sw_hold--; return; }
 
     if (sw_opt < it->option_count) {
-        it->selected = sw_opt++;
+        menu_set_value(tb_menu, sw_tab, sw_item, sw_opt++);
         sw_options++;
         sw_hold = SWEEP_HOLD;
         return;
     }
 
     // Item done: restore it and move on
-    it->selected = sw_snapshot[sw_tab][sw_item];
+    menu_set_value(tb_menu, sw_tab, sw_item, sw_snapshot[sw_tab][sw_item]);
     sw_items++;
     sw_item++;
     sw_opt = 0;
@@ -152,7 +152,7 @@ static void sweep_update(void) {
 
     for (int t = 0; t < tb_menu->tab_count; t++)
         for (int i = 0; i < tb_menu->tabs[t].item_count; i++)
-            tb_menu->tabs[t].items[i].selected = sw_snapshot[t][i];
+            menu_set_value(tb_menu, t, i, sw_snapshot[t][i]);
     debugf("SWEEP,END,items=%d,options=%d\n", sw_items, sw_options);
     sweep_active = false;
 }

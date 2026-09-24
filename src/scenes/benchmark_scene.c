@@ -11,6 +11,8 @@
 #include "../render/atmosphere.h"
 #include "../input/action.h"
 #include "../ui/text.h"
+#include "../ui/menu.h"
+#include "../ui/menu_view.h"
 #include "../debug/engine_debug.h"
 #include "../debug/stats.h"
 #include "../debug/profiler.h"
@@ -37,7 +39,7 @@ typedef struct {
 } BenchStep;
 
 static const char *kind_names[BENCH_KIND_COUNT] = {
-    "all", "objects", "particles", "lights", "textures", "shadows", "fillrate", "overload", "layout", "audio",
+    "all", "objects", "particles", "lights", "textures", "shadows", "fillrate", "overload", "layout", "audio", "ui",
 };
 
 // One-line description shown under the status line (param is substituted)
@@ -52,6 +54,7 @@ static const char *kind_desc[BENCH_KIND_COUNT] = {
     "+%d ms CPU burn, floor + 16 pillars",
     "%d: variant*1000+pillars (0 shared, 1-4 at 0/2/4/6 KB, 5 reversed)",
     "%d: codec*100+poll*10+sfx (0 none 1 raw 2 vadpcm 3 opus)",
+    "%d: mode*10+input (0 direct 1 cached; 0 none 1 cursor 2 value 3 tab 4 reopen)",
 };
 
 static BenchKind  configured_kind = BENCH_ALL;
@@ -96,6 +99,18 @@ static int        layout_variant;
 static bool         audio_sfx;         // retrigger sound effects on every voice
 static const SoundId audio_track[4] = {SOUND_NONE, BGM_BENCH_RAW, BGM_DEMO, BGM_BENCH_OPUS};
 static SndPollPoint saved_poll_point;
+
+// UI: a copy of the Start menu, open, drawn by a view that renders every
+// text element every frame (mode 0, the pre-S5 cost) or re-renders only what
+// changed (mode 1). Input is scripted: none, a cursor move every 8 frames, a
+// value change every 2 frames, a tab switch every 30 frames, or closing
+// for 30 frames and reopening (the cached text must survive it).
+extern Menu start_menu;
+static Menu     ui_menu;
+static MenuView ui_view[2];
+static bool     ui_views_ready;
+static bool     ui_active;
+static int      ui_mode, ui_input;
 
 // ------------------------------------------------------------------------
 // Helpers
@@ -178,6 +193,10 @@ static void build_steps(BenchKind which) {
             if (codec != 0 && !snd_available(audio_track[codec])) continue;
             add_step(BENCH_AUDIO, p[i]);
         }
+    }
+    if (which == BENCH_UI) {
+        static const int p[] = {0, 10, 1, 11, 2, 12, 3, 13, 4, 14};
+        for (unsigned i = 0; i < sizeof(p) / sizeof(p[0]); i++) add_step(BENCH_UI, p[i]);
     }
 }
 
@@ -266,6 +285,7 @@ static void setup_step(Scene *scene) {
     instance_count = 0;
     burn_ms = 0;
     draw_floor = false;
+    ui_active = false;
     lighting_init(L);
     L->point_light_count = 0;
     for (int i = 0; i < MAX_POINT_LIGHTS; i++) L->point_lights[i].active = false;
@@ -332,6 +352,15 @@ static void setup_step(Scene *scene) {
         else            snd_music_play(audio_track[codec], 0.0f);
         break;
     }
+    case BENCH_UI:
+        layout_grid(16);
+        draw_floor = true;
+        ui_menu = start_menu;                 // a copy: the real settings stay untouched
+        menu_open(&ui_menu);
+        ui_mode = st->param / 10;
+        ui_input = st->param % 10;
+        ui_active = true;
+        break;
     default:
         break;   // BENCH_ALL step 0: empty reference scene
     }
@@ -415,11 +444,11 @@ static void finish_step(void) {
     if (g_prof_on) {
         const ProfilerFrame *pf = profiler_get();
         (void)pf;
-        debugf("BENCH_PROF,%s,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f\n",
+        debugf("BENCH_PROF,%s,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f\n",
                kind_names[st->kind], step_index, st->param,
                pf->avg_us[PROF_UPDATE], pf->avg_us[PROF_DRAW], pf->avg_us[PROF_OBJECTS],
                pf->avg_us[PROF_MESH_CULL], pf->avg_us[PROF_MESH_LIGHT], pf->avg_us[PROF_MESH_TRIS],
-               pf->avg_us[PROF_AUDIO]);
+               pf->avg_us[PROF_AUDIO], pf->avg_us[PROF_MENU], pf->avg_us[PROF_HUD]);
     }
 }
 
@@ -441,6 +470,11 @@ static void bench_init(Scene *scene) {
     for (int i = 0; i < NUM_TEX_BOXES; i++) build_tex_box(&tex_boxes[i], i);
     mesh_defs_init();
     if (configured_kind == BENCH_LAYOUT) build_layout_copies();
+    if (configured_kind == BENCH_UI && !ui_views_ready) {
+        menu_view_init(&ui_view[0], &ui_style_debug, false);
+        menu_view_init(&ui_view[1], &ui_style_debug, true);
+        ui_views_ready = true;
+    }
     saved_poll_point = snd_get_poll_point();
     audio_sfx = false;
     if (configured_kind == BENCH_AUDIO) {
@@ -470,7 +504,7 @@ static void bench_init(Scene *scene) {
     debugf("BENCH_HDR,kind,step,param,frames,fps,avg_ms,p99_ms,low1_fps,cpu_avg_ms,cpu_max_ms,"
            "rdp_busy_ms,rdp_busy_pct,tris,tex_uploads,heap_kb\n");
     debugf("BENCH_PROF_HDR,kind,step,param,update_us,draw_us,objects_us,mesh_cull_us,"
-           "mesh_light_us,mesh_tris_us,audio_us\n");
+           "mesh_light_us,mesh_tris_us,audio_us,menu_us,hud_us\n");
     setup_step(scene);
 }
 
@@ -502,6 +536,15 @@ static void bench_update(Scene *scene, float dt) {
     // AUDIO: keep the sound-effect voices busy (a new sound every 4 frames)
     if (audio_sfx && (step_frame % 4) == 0) {
         snd_play((SoundId)(SFX_MENU_OPEN + (step_frame / 4) % (SFX_COLLISION - SFX_MENU_OPEN + 1)));
+    }
+
+    // UI: scripted menu input
+    if (ui_active) {
+        if (ui_input == 1 && step_frame % 8 == 0)  menu_move_cursor(&ui_menu, 1);
+        if (ui_input == 2 && step_frame % 2 == 0)  menu_change_value(&ui_menu, 1);
+        if (ui_input == 3 && step_frame % 30 == 0) menu_switch_tab(&ui_menu, 1);
+        if (ui_input == 4 && step_frame % 100 == 70) menu_close(&ui_menu, false);  // closed for 30 frames,
+        if (ui_input == 4 && step_frame % 100 == 0 && !ui_menu.is_open) menu_open(&ui_menu); // then reopened
     }
 
     // Frame-locked camera path: identical on every run regardless of dt
@@ -603,6 +646,12 @@ static void bench_post_draw(Scene *scene) {
         }
     }
 
+    if (ui_active) {
+        PROF_BEGIN(PROF_MENU);
+        menu_draw(&ui_menu, &ui_view[ui_mode ? 1 : 0]);
+        PROF_END(PROF_MENU);
+    }
+
     // One status line (constant cost in every step)
     PROF_BEGIN(PROF_HUD);
     if (step_index < step_count) {
@@ -626,6 +675,12 @@ static void bench_cleanup(Scene *scene) {
     particle_cleanup();
     for (int i = 0; i < NUM_TEX_BOXES; i++) mesh_cleanup(&tex_boxes[i]);
     free_layout_copies();
+    ui_active = false;
+    if (ui_views_ready) {
+        menu_view_free(&ui_view[0]);
+        menu_view_free(&ui_view[1]);
+        ui_views_ready = false;
+    }
     snd_music_stop(0.0f);
     snd_stop_all_sfx();
     snd_set_poll_point(saved_poll_point);

@@ -65,6 +65,7 @@ Per-frame counters written with `STATS_INC(field)`, `STATS_ADD(field, n)` and `S
 | `particles_alive / drawn` | particle pool usage |
 | `colliders`, `collision_pairs`, `raycasts` | collision world size, overlapping pairs, raycasts this frame |
 | `physics_bodies`, `physics_steps` | active bodies, fixed steps run this frame |
+| `ui_renders`, `ui_blits` | UI text slots rendered this frame (cached layers: only what changed) and cached layers drawn ([UI.md](UI.md)) |
 | `snd_voices`, `snd_buffers` | sound-effect voices playing; audio buffers mixed this frame (about 0.8 on average at 60 FPS; 2 after a long frame) |
 
 ## Memory (`memstats.c/h`)

@@ -39,6 +39,10 @@ typedef struct {
     uint32_t snd_voices;             // sound-effect voices playing
     uint32_t snd_buffers;            // audio buffers mixed this frame
 
+    // UI (ui_layer.c)
+    uint32_t ui_renders;             // text slots rendered this frame (cached: only changes)
+    uint32_t ui_blits;               // cached text layers drawn this frame
+
     // RDP state traffic
     uint32_t mode_changes;           // rdpq_set_mode_standard() in mesh_draw
     uint32_t tex_uploads;            // texture loads issued (after culling)

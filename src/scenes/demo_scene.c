@@ -8,6 +8,7 @@
 #include "../input/action.h"
 #include "../ui/text.h"
 #include "../ui/menu.h"
+#include "../ui/menu_view.h"
 #include "../debug/engine_debug.h"
 #include "../debug/stats.h"
 #include "../debug/profiler.h"
@@ -177,6 +178,8 @@ static int last_camera_col = 0;
 
 // External references (owned by main.c)
 extern Menu start_menu;
+static MenuView start_menu_view;        // cached text; kept across scene resets
+static bool     start_menu_view_ready;
 extern int engine_target_fps;
 
 // ============================================================
@@ -790,7 +793,7 @@ static void demo_update(Scene *scene, float dt) {
     if (!start_menu.is_open) {
         int reset_val = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_RESET_SCENE);
         if (reset_val == 1) {
-            start_menu.tabs[TAB_SETTINGS].items[ITEM_RESET_SCENE].selected = 0;
+            menu_set_value(&start_menu, TAB_SETTINGS, ITEM_RESET_SCENE, 0);
             scene->reset_requested = true;
             return;
         }
@@ -900,14 +903,14 @@ static void demo_update(Scene *scene, float dt) {
         if (action_pressed(ACTION_CAM_MODE_PREV)) {
             int mode = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_CAMERA_MODE);
             mode = (mode + 2) % 3;
-            start_menu.tabs[TAB_SETTINGS].items[ITEM_CAMERA_MODE].selected = mode;
+            menu_set_value(&start_menu, TAB_SETTINGS, ITEM_CAMERA_MODE, mode);
             apply_camera_mode(scene, mode);
             last_camera_mode = mode;
         }
         if (action_pressed(ACTION_CAM_MODE_NEXT)) {
             int mode = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_CAMERA_MODE);
             mode = (mode + 1) % 3;
-            start_menu.tabs[TAB_SETTINGS].items[ITEM_CAMERA_MODE].selected = mode;
+            menu_set_value(&start_menu, TAB_SETTINGS, ITEM_CAMERA_MODE, mode);
             apply_camera_mode(scene, mode);
             last_camera_mode = mode;
         }
@@ -1044,8 +1047,8 @@ static void demo_update(Scene *scene, float dt) {
         lc->sun_color[2] = p->lighting.sun_color[2];
 
         // Sync menu toggles to reflect preset state
-        start_menu.tabs[TAB_ENVIRON].items[ITEM_FOG_TOGGLE].selected = 1;
-        start_menu.tabs[TAB_ENVIRON].items[ITEM_SKY_TOGGLE].selected = 1;
+        menu_set_value(&start_menu, TAB_ENVIRON, ITEM_FOG_TOGGLE, 1);
+        menu_set_value(&start_menu, TAB_ENVIRON, ITEM_SKY_TOGGLE, 1);
         fog_toggle = 1;
         sky_toggle = 1;
     } else if (atmo_preset == 0 &&
@@ -1334,7 +1337,11 @@ static void demo_post_draw(Scene *scene) {
     // Menu overlay
     if (start_menu.is_open) {
         PROF_BEGIN(PROF_MENU);
-        menu_draw(&start_menu);
+        if (!start_menu_view_ready) {
+            menu_view_init(&start_menu_view, &ui_style_debug, true);
+            start_menu_view_ready = true;
+        }
+        menu_draw(&start_menu, &start_menu_view);
         PROF_END(PROF_MENU);
     }
 }

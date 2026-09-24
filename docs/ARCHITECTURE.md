@@ -708,7 +708,8 @@ Static code and data come on top (`tools/rom_budget.py` reports text + data + bs
 | `src/input/action.c/h` | Action mapping: remappable bindings, contexts, pressed/held/released |
 | `src/input/input.c/h` | Camera input adapter (reads from action API) |
 | `src/ui/text.c/h` | Text rendering |
-| `src/ui/menu.c/h` | Tabbed menu system, scrollable, disabled items |
+| `src/ui/menu.c/h` | Tabbed menu model and input: scrolling, disabled items, cancel/revert |
+| `src/ui/menu_view.c/h`, `ui_layer.c/h`, `ui_style.c/h`, `ui_draw.c/h` | Menu drawing in a style; cached UI text; rectangles and gauges ([UI.md](UI.md)) |
 | `src/audio/audio.c/h` | Audio mixer, SFX/BGM playback |
 | `src/audio/sound_bank.c/h` | Sound event definitions and path mapping |
 | `src/debug/*.c/h` | Build switches, Debug tab, profiler, stats, memory, frame time, overlay pages, RDP capture, Reset Soak / Menu Sweep |
@@ -730,6 +731,7 @@ Static code and data come on top (`tools/rom_budget.py` reports text + data + bs
 | [PHYSICS.md](PHYSICS.md) | Physics engine: gravity, bounce, impulse, timestep |
 | [SCENE_SYSTEM.md](SCENE_SYSTEM.md) | Scene/world management |
 | [MENU_SYSTEM.md](MENU_SYSTEM.md) | Menu overlay system |
+| [UI.md](UI.md) | UI styles, cached text layers, primitives, menu view |
 | [INPUT.md](INPUT.md) | Controller input handling |
 | [EXTENDING.md](EXTENDING.md) | How-to recipes and the contribution stage gate |
 | [DEBUGGING.md](DEBUGGING.md) | Debug tab, logs, RDP validator and capture, crashes, unit tests |
