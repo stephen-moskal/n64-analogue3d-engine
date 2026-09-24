@@ -17,7 +17,7 @@ snd_set_volume(SND_VOL_MASTER, 0.0f, 0.25f);          // fade everything out
 
 ## Setup and channels
 
-`main.c` calls `snd_init()` once, after `dfs_init()`:
+`engine_init()` (`src/engine/engine.c`) calls `snd_init()` once, after `dfs_init()`:
 
 ```c
 audio_init(22050, 4);          // AUDIO_FREQ, AUDIO_BUFFERS
@@ -46,7 +46,7 @@ mixer_init(12);                // MIXER_CHANNELS
 | Function | Behaviour |
 |---|---|
 | `snd_init()` / `snd_cleanup()` | Set up audio and the mixer, open every SFX / close everything. `snd_cleanup()` is not called today, because the main loop never exits. |
-| `snd_update(dt)` | Advance the volume ramps and music fades, release voices that finished, then mix every free audio buffer. Called once per frame by `main.c` at the poll point below. |
+| `snd_update(dt)` | Advance the volume ramps and music fades, release voices that finished, then mix every free audio buffer. Called once per frame by the engine loop (`engine.c`) at the poll point below. |
 | `snd_play(id)` | Play a sound effect. Returns the voice used, or −1 if it was dropped. |
 | `snd_play_at(id, pos, gain)` | Positional sound effect (see below). `gain` (0–1) scales it, for example by impact speed. Returns −1 if dropped or out of range. |
 | `snd_stop(voice)` / `snd_stop_all_sfx()` | Cut one or every sound effect. |
@@ -236,7 +236,7 @@ The benchmark scene plays no sound, except in Bench = Audio, which sets every vo
 | [src/audio/audio.h](../src/audio/audio.h), [src/audio/audio.c](../src/audio/audio.c) | `snd_*` API: mixer setup, voices, music slots, volume ramps, per-frame update |
 | [src/audio/snd_mix.h](../src/audio/snd_mix.h), [src/audio/snd_mix.c](../src/audio/snd_mix.c) | pure helpers: voice choice and positional gains (host-tested) |
 | [src/audio/sound_bank.h](../src/audio/sound_bank.h), [src/audio/sound_bank.c](../src/audio/sound_bank.c) | `SoundId`, `SndBus`, `SoundDef` and the `sound_bank[]` table |
-| [src/main.c](../src/main.c) | `snd_init()`, and `audio_poll()` at the three poll points |
+| [src/engine/engine.c](../src/engine/engine.c) | `snd_init()`, and `audio_poll()` at the three poll points |
 | [tests/host/test_audio.c](../tests/host/test_audio.c) | voice stealing and positional gain tests |
 | [tools/gen_placeholder_audio.py](../tools/gen_placeholder_audio.py) | regenerates the placeholder WAVs |
 | [Makefile](../Makefile) | WAV/XM conversion, `AUDIOCONV_*_FLAGS`, `SND_OPUS`, debug-only data |

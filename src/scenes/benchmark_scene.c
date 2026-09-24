@@ -17,6 +17,7 @@
 #include "../ui/textbox.h"
 #include "../dialog/dialog.h"
 #include "../debug/engine_debug.h"
+#include "../engine/engine_config.h"
 #include "../debug/stats.h"
 #include "../debug/profiler.h"
 #include "../debug/frametime.h"
@@ -739,7 +740,7 @@ static void bench_post_draw(Scene *scene) {
                 RGBA32(0x40, 0x80, 0xFF, 0x60), RGBA32(0xFF, 0xFF, 0x40, 0x60),
             };
             rdpq_set_prim_color(layer_col[i % 4]);
-            rdpq_fill_rectangle(0, 0, 320, 240);
+            rdpq_fill_rectangle(0, 0, ENGINE_SCREEN_W, ENGINE_SCREEN_H);
             STATS_INC(fill_rects);
         }
     }

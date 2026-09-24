@@ -47,7 +47,7 @@ Automated robustness checks in `src/debug/testbed.c`, started from the Debug tab
 
 ## Log channels
 
-`src/main.c` enables both channels:
+`engine_init()` (`src/engine/engine.c`) enables both channels:
 
 - **Hardware:** `debug_init_usblog()` → `sc64deployer debug`. Start it before resetting the console. It holds the cart's COM port, so stop it before `sc64deployer upload`. It exits when its stdin closes; from scripts keep stdin open, e.g. `ping -n 86400 127.0.0.1 >nul | sc64deployer debug > log.txt` (cmd) or `sleep 86400 | sc64deployer debug` (bash).
 - **Emulator:** `debug_init_isviewer()` → ares with **Homebrew Mode** enabled.

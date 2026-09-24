@@ -1,4 +1,5 @@
 #include "camera.h"
+#include "../engine/engine_config.h"
 #include "../collision/collision.h"
 #include "../engine/hot.h"
 #include <math.h>
@@ -162,7 +163,7 @@ void camera_init(Camera *cam, const CameraConfig *config) {
     cam->distance   = config->distance;
     cam->target     = config->target;
     cam->fov_y      = config->fov_y;
-    cam->aspect     = 320.0f / 240.0f;
+    cam->aspect     = (float)ENGINE_SCREEN_W / (float)ENGINE_SCREEN_H;
     cam->near_plane = config->near_plane;
     cam->far_plane  = config->far_plane;
     cam->up         = (vec3_t){0.0f, 1.0f, 0.0f};

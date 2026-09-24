@@ -2,6 +2,7 @@
 #include "texture.h"
 #include "../debug/stats.h"
 #include "../engine/hot.h"
+#include "../engine/engine_config.h"
 #include <math.h>
 #include <string.h>
 
@@ -9,12 +10,6 @@
 // Floor uses Z_BIAS=0.005 pushing it deeper, so shadow at floor_y + small
 // offset will naturally be in front of floor in the Z-buffer.
 #define SHADOW_Y_OFFSET  0.01f
-
-// Guard band (same as mesh.c / floor.c)
-#define GUARD_X_MIN  -1024.0f
-#define GUARD_X_MAX   1344.0f
-#define GUARD_Y_MIN  -1024.0f
-#define GUARD_Y_MAX   1264.0f
 
 // Compute shadow color from darkness setting
 static ENGINE_HOT color_t shadow_color_from_darkness(float darkness) {
@@ -89,11 +84,11 @@ ENGINE_HOT void shadow_draw_blob(const Camera *cam, const LightConfig *light,
         if (clip.w < 1.0f) return;  // Behind camera — skip entire blob
 
         float inv_w = 1.0f / clip.w;
-        screen[i][0] = (clip.x * inv_w * 0.5f + 0.5f) * 320.0f;
-        screen[i][1] = (1.0f - (clip.y * inv_w * 0.5f + 0.5f)) * 240.0f;
+        screen[i][0] = (clip.x * inv_w * 0.5f + 0.5f) * (float)ENGINE_SCREEN_W;
+        screen[i][1] = (1.0f - (clip.y * inv_w * 0.5f + 0.5f)) * (float)ENGINE_SCREEN_H;
 
-        if (screen[i][0] < GUARD_X_MIN || screen[i][0] > GUARD_X_MAX ||
-            screen[i][1] < GUARD_Y_MIN || screen[i][1] > GUARD_Y_MAX)
+        if (screen[i][0] < ENGINE_GUARD_X_MIN || screen[i][0] > ENGINE_GUARD_X_MAX ||
+            screen[i][1] < ENGINE_GUARD_Y_MIN || screen[i][1] > ENGINE_GUARD_Y_MAX)
             return;  // Guard band — skip
 
         float depth = clip.z * inv_w * 0.5f + 0.5f;
@@ -129,10 +124,10 @@ static inline ENGINE_HOT bool shadow_project(const mat4_t *m, const MeshVertex *
     if (clip.w < 1.0f) return false;
 
     float inv_w = 1.0f / clip.w;
-    float scr_x = (clip.x * inv_w * 0.5f + 0.5f) * 320.0f;
-    float scr_y = (1.0f - (clip.y * inv_w * 0.5f + 0.5f)) * 240.0f;
-    if (scr_x < GUARD_X_MIN || scr_x > GUARD_X_MAX ||
-        scr_y < GUARD_Y_MIN || scr_y > GUARD_Y_MAX) return false;
+    float scr_x = (clip.x * inv_w * 0.5f + 0.5f) * (float)ENGINE_SCREEN_W;
+    float scr_y = (1.0f - (clip.y * inv_w * 0.5f + 0.5f)) * (float)ENGINE_SCREEN_H;
+    if (scr_x < ENGINE_GUARD_X_MIN || scr_x > ENGINE_GUARD_X_MAX ||
+        scr_y < ENGINE_GUARD_Y_MIN || scr_y > ENGINE_GUARD_Y_MAX) return false;
 
     float depth = clip.z * inv_w * 0.5f + 0.5f;
     if (depth < 0.0f) depth = 0.0f;

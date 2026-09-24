@@ -3,6 +3,7 @@
 #include "../debug/profiler.h"
 #include "../render/texture.h"
 #include "../render/atmosphere.h"
+#include "../engine/engine_config.h"
 #include <string.h>
 
 // --- Scene lifecycle ---
@@ -248,10 +249,11 @@ void scene_manager_draw(SceneManager *mgr) {
 
             // Fullscreen quad as two triangles
             // TRIFMT_FILL: {X, Y}
-            float v0[] = {  0.0f,   0.0f};
-            float v1[] = {320.0f,   0.0f};
-            float v2[] = {320.0f, 240.0f};
-            float v3[] = {  0.0f, 240.0f};
+            const float w = ENGINE_SCREEN_W, h = ENGINE_SCREEN_H;
+            float v0[] = {0.0f, 0.0f};
+            float v1[] = {w,    0.0f};
+            float v2[] = {w,    h};
+            float v3[] = {0.0f, h};
             rdpq_triangle(&TRIFMT_FILL, v0, v1, v2);
             rdpq_triangle(&TRIFMT_FILL, v0, v2, v3);
             STATS_ADD(tris_ui, 2);

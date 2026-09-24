@@ -105,7 +105,8 @@ DMA buffers (used by RSP) must be uncached and 8-byte aligned.
 ### Module Dependency Graph
 
 ```
-main.c
+main.c                  [the demo game: Start menu, scenes, scene switches]
+├── engine/engine       [init, frame loop, build constants: ENGINE.md]
 ├── input/action        [action mapping, joypad polling, context management]
 ├── ui/text             [font rendering]
 ├── ui/menu             [global start menu, built here (6 tabs)]
@@ -145,7 +146,7 @@ engine/hot.h, engine/hot_text.ld   [I-cache placement of the render hot path (HA
 ### Initialization Order
 
 ```c
-// System init (main.c)
+// System init: engine_init() (src/engine/engine.c)
 debug_init_isviewer();      // Debug output (ISViewer)
 debug_init_usblog();        // Debug output (USB)
 display_init(...);          // Framebuffers
@@ -154,17 +155,17 @@ rdpq_init();                // RDP command queue (validator off; Debug tab)
 dfs_init(...);              // ROM filesystem
 action_init();              // Joypad + action mapping
 text_init();                // Load fonts
-menu_init(&start_menu, ...);// Global start menu; tabs and items added here,
-debug_menu_init(...);       //   the Debug tab by debug_menu_init()
 snd_init();                 // Audio mixer, SFX preload
 atmosphere_init();          // Fog/sky global state
 surface_alloc(...);         // Z-buffer (shared across scenes)
 
-// Scene manager init
+// The game (main.c): menu, scene manager, first scene, then engine_run()
+menu_init(&start_menu, ...);// Global start menu; tabs and items added here,
+debug_menu_init(...);       //   the Debug tab by debug_menu_init()
 scene_manager_init(&mgr);
 testbed_init(&mgr, &start_menu);   // Reset Soak / Menu Sweep
 scene_manager_switch(&mgr, demo_scene_get(), TRANSITION_CUT, 0);  // benchmark in a BENCH=1 build
-profiler_init();
+engine_run(&app);          // profiler_init(), then the frame loop (never returns)
 
 // Inside scene_init() (called by manager):
 collision_world_init();     // Reset collision world
@@ -646,7 +647,7 @@ Measured on the Analogue 3D, debug build ([BENCHMARKS.md](BENCHMARKS.md); the Me
 | Resource | Size | Notes |
 |----------|------|-------|
 | Framebuffer x3 | 460,800 B | 320x240 x 2 bytes x 3, heap-allocated by `display_init()` |
-| Z-buffer | 153,600 B | 320x240 x 2 bytes, heap-allocated in `main.c` |
+| Z-buffer | 153,600 B | 320x240 x 2 bytes, heap-allocated by `engine_init()` |
 | Heap in use after the demo loads | ~0.9 MB | Includes the framebuffers and Z-buffer, meshes, sprites, audio |
 | Textures (sprites) | ~2 KB each | 8 x 32x32 RGBA16 in the demo |
 | TMEM per frame | 4KB max | RDP on-chip texture cache |
@@ -683,7 +684,8 @@ Static code and data come on top (`tools/rom_budget.py` reports text + data + bs
 
 | File | Purpose |
 |------|---------|
-| `src/main.c` | Entry point, display/input/menu init (builds the 6-tab start menu), variable-timestep game loop |
+| `src/main.c` | The demo game: builds the 6-tab start menu and the scenes, switches scenes (`on_frame`) |
+| `src/engine/engine.c/h`, `engine_config.h` | Hardware and subsystem init, the variable-timestep frame loop, build constants ([ENGINE.md](ENGINE.md)) |
 | `src/render/camera.c/h` | Multi-mode camera, 3D math, frustum culling, collision |
 | `src/render/mesh.h` | Mesh types and API, inline helpers (`mesh_world_bounds`, `mesh_normal_matrix`, `mesh_screen_area2`) |
 | `src/render/mesh_build.c` | Mesh builder, bounds and face-group analysis (host-tested) |

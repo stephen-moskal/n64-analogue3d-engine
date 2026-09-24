@@ -77,7 +77,7 @@ Steps:
 2. Call `action_update()` at the top of `on_update`. The main loop never polls the joypad; the demo and the benchmark both poll in their update. Start and the Debug shortcuts (D-Up, D-Down) read the same polled state.
 3. Draw 3D geometry in `on_draw`, but don't clear the screen or draw the sky: `scene_draw()` already did. Particles, text and the menu go in `on_post_draw`.
 4. Free in `on_cleanup` everything `on_init` created: meshes, emitters, hand-loaded textures, the BGM.
-5. In `main.c`, include the header and switch with `scene_manager_switch(&scene_mgr, my_scene_get(), TRANSITION_FADE_BLACK, 3.0f)` (the speed is fade progress per second; `TRANSITION_CUT` switches at once).
+5. In `main.c` (at boot, or in `app_frame()`), include the header and switch with `scene_manager_switch(&scene_mgr, my_scene_get(), TRANSITION_FADE_BLACK, 3.0f)` (the speed is fade progress per second; `TRANSITION_CUT` switches at once).
 6. To pick the scene from Debug → Scene: add a name to `scene_options[]` in `debug_menu.c`, raise the Scene item's option count in `debug_menu_init()`, and handle the new index where `main.c` calls `debug_consume_scene_request()` (0 = demo, 1 = benchmark today; the `else` branch falls back to the demo). When `main.c` changes scene by itself, call `debug_menu_set_active_scene()` so the item follows, as the benchmark's return to the demo does.
 7. Check for leaks with Debug → Reset Soak: one warm-up reset and 10 measured soft resets of the current scene, then a `SOAK,...,delta=` log line that should read 0.
 
@@ -253,11 +253,11 @@ Gotchas:
 
 ## Add a Debug tab item
 
-**Files:** `src/debug/debug_menu.h`, `src/debug/debug_menu.c`, and `src/main.c` if the main loop acts on the item. Background: [DEBUGGING.md](DEBUGGING.md).
+**Files:** `src/debug/debug_menu.h`, `src/debug/debug_menu.c`, and `src/engine/engine.c` (tooling) or `src/main.c` (game logic, `app_frame()`) if the loop acts on the item. Background: [DEBUGGING.md](DEBUGGING.md).
 
 1. Add `DBG_ITEM_<NAME>` to `DebugMenuItem` in `debug_menu.h`, at the end, before `DBG_ITEM_COUNT`.
 2. At the end of `debug_menu_init()`, add a static options array and the `menu_add_item()` call. The order of the calls must match the enum: items are read by enum index and nothing checks it. The tab is full (12 of 12, `MENU_MAX_ITEMS`): a new item needs a slot freed or a second debug tab.
-3. Handle the item in `debug_menu_update()`. `main.c` calls it every frame after the scene update, and it returns early while the menu is open, so values take effect when the menu closes with A (B reverts). Actions use the self-resetting `--- / Run!` pattern:
+3. Handle the item in `debug_menu_update()`. The engine loop calls it every frame after the scene update, and it returns early while the menu is open, so values take effect when the menu closes with A (B reverts). Actions use the self-resetting `--- / Run!` pattern:
 
    ```c
    if (item_value(DBG_ITEM_RESET_SOAK) == 1) {
@@ -267,7 +267,7 @@ Gotchas:
    }
    ```
 
-   When the main loop must do the work (a CSV dump, a scene switch), set a flag and add a `debug_consume_<name>_request()` for `main.c` to call, like `debug_consume_dump_request()`.
+   When the main loop must do the work (a CSV dump, a scene switch), set a flag and add a `debug_consume_<name>_request()` for the loop to call: tooling in `engine_run()` (like `debug_consume_dump_request()`), game logic in `app_frame()` in `main.c` (like `debug_consume_scene_request()`).
 4. For release builds, put debug-only code under `#if ENGINE_DEBUG`, and grey the item out with `menu_item_set_disabled()` in the `#if !ENGINE_DEBUG` block of `debug_menu_init()`, as RDP Check, Profiler, RDP Log and Crash Test are. The item stays in the tab so the enum indices stay valid; `ENGINE_LOG` compiles to nothing.
 
 Gotchas:

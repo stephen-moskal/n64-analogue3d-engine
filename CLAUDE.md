@@ -54,8 +54,7 @@ VS Code tasks (`.vscode/tasks.json`) wrap the same commands with per-OS variants
 
 ### Source Layout
 ```
-src/main.c                 entry point: debug init, display (320x240 16-bit, triple-buffered), rdpq, DFS,
-                           menu construction (6 tabs incl. Debug), audio, Z-buffer, scene manager, variable-timestep loop
+src/main.c                 the demo game: Start menu construction (6 tabs incl. Debug), scene manager, scene switches (app_frame)
 src/math/vec3.h            vec3 math (header-only)
 src/render/                camera (orbital/fixed/follow, frustum, collision), mesh (builder mesh_build.c + mesh_draw()),
                            mesh_defs (pillar/platform/pyramid/sphere), cube, lighting (Blinn-Phong, sun,
@@ -76,7 +75,10 @@ src/ui/                    text (fonts, text_draw), menu (model + input, host-te
 src/dialog/                dialog runner (pure, host-tested): banks compiled from assets/dialog/*.json; docs/DIALOG.md
 src/debug/                 engine_debug.h (build switches), debug_menu (Debug tab + D-Up/D-Down), stats,
                            profiler (+ RDP counters), memstats, frametime, overlay, rdp_debug, testbed (Reset Soak, Menu Sweep)
-src/engine/                hot.h (ENGINE_HOT, ENGINE_NOINIT), hot_text.ld (I-cache placement of the render path)
+src/engine/                engine.c/h (engine_init: display 320x240 16-bit triple-buffered, rdpq, DFS, input, text, audio,
+                           Z-buffer; engine_run: the variable-timestep frame loop), engine_config.h (screen size, FB count,
+                           max dt, guard band: use these, never literals), hot.h (ENGINE_HOT, ENGINE_NOINIT),
+                           hot_text.ld (I-cache placement of the render path); docs/ENGINE.md
 tests/host/                host unit tests with a libdragon shim (libdragon exec make -C tests/host run)
 tools/                     bench_compare.py, hot_text.py, rdp_log_to_hex.py, rom_budget.py, ci_build.sh, rspq_profile.ps1,
                            gen_placeholder_audio.py, dialog_build.py (dialog JSON -> .dlg, run by the Makefile)
@@ -117,6 +119,7 @@ CPU software transform + hardware RDP rasterization, hardware 16-bit Z-buffer (n
 - IDE will show clang errors for libdragon headers — expected (cross-compilation toolchain).
 
 ## Reference Documentation
+- Engine core: `docs/ENGINE.md`
 - Planning: `docs/ROADMAP_v2.md` (current), `docs/ROADMAP.md` (v1 record of Features 1–10)
 - Environment/workflow: `docs/SETUP.md`, `docs/WORKFLOW.md`, `docs/EXTENDING.md` (how-to recipes, contributing)
 - Tooling: `docs/DEBUGGING.md`, `docs/PROFILING.md`, `docs/BENCHMARKS.md`, `docs/HARDWARE.md`

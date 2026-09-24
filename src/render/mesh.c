@@ -4,16 +4,10 @@
 #include "../debug/profiler.h"
 #include "atmosphere.h"
 #include "../engine/hot.h"
+#include "../engine/engine_config.h"
 #include <math.h>
 
 // Mesh rendering. Building and bounds live in mesh_build.c.
-
-// Guard band: vertices outside these screen-space bounds overflow
-// RDP 12.2 fixed-point math and cause rendering artifacts.
-#define GUARD_X_MIN  -1024.0f
-#define GUARD_X_MAX   1344.0f
-#define GUARD_Y_MIN  -1024.0f
-#define GUARD_Y_MAX   1264.0f
 
 // Local point -> world (model is column-major: m[col][row])
 static inline ENGINE_HOT void model_point(const mat4_t *m, const float p[3], float out[3]) {
@@ -218,12 +212,12 @@ ENGINE_HOT void mesh_draw(const Mesh *mesh, const mat4_t *model,
                 float ndc_y = clip.y * inv_w;
                 float ndc_z = clip.z * inv_w;
 
-                screen[v][0] = (ndc_x * 0.5f + 0.5f) * 320.0f;
-                screen[v][1] = (1.0f - (ndc_y * 0.5f + 0.5f)) * 240.0f;
+                screen[v][0] = (ndc_x * 0.5f + 0.5f) * (float)ENGINE_SCREEN_W;
+                screen[v][1] = (1.0f - (ndc_y * 0.5f + 0.5f)) * (float)ENGINE_SCREEN_H;
 
                 // Guard band check
-                if (screen[v][0] < GUARD_X_MIN || screen[v][0] > GUARD_X_MAX ||
-                    screen[v][1] < GUARD_Y_MIN || screen[v][1] > GUARD_Y_MAX) {
+                if (screen[v][0] < ENGINE_GUARD_X_MIN || screen[v][0] > ENGINE_GUARD_X_MAX ||
+                    screen[v][1] < ENGINE_GUARD_Y_MIN || screen[v][1] > ENGINE_GUARD_Y_MAX) {
                     reject = true; STATS_INC(tris_rejected_guard); break;
                 }
 

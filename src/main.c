@@ -1,35 +1,20 @@
+// The demo game: the Start menu, the scenes and the switches between them.
+// The engine core (src/engine/engine.c) brings the hardware up and runs the
+// frame loop.
+
 #include <libdragon.h>
 
-#include "input/input.h"
+#include "engine/engine.h"
 #include "input/action.h"
-#include "ui/text.h"
 #include "ui/menu.h"
 #include "scene/scene.h"
 #include "scenes/demo_scene.h"
 #include "scenes/benchmark_scene.h"
-#include "audio/audio.h"
-#include "render/atmosphere.h"
-#include "debug/engine_debug.h"
 #include "debug/debug_menu.h"
-#include "debug/stats.h"
-#include "debug/profiler.h"
-#include "debug/memstats.h"
-#include "debug/frametime.h"
-#include "debug/overlay.h"
-#include "debug/rdp_debug.h"
 #include "debug/testbed.h"
-
-#define SCREEN_WIDTH 320
-#define SCREEN_HEIGHT 240
-#define FB_COUNT 3
-
-#define MAX_FRAME_DT   0.1f   // Cap to prevent spiral of death
 
 // Global menu (accessible by scenes via extern)
 Menu start_menu;
-
-// Frame rate target (set by scenes via extern, 0 = no limiter)
-int engine_target_fps = 0;
 
 // Menu options — Settings tab
 static const char *bg_options[] = {
@@ -78,37 +63,30 @@ static const char *btn_options[] = {
     "C-Up", "C-Down", "C-Left", "C-Right"
 };
 
-// Fill the audio buffers if this is the point of the frame the sound module
-// is set to poll at (SndPollPoint; the audio benchmark compares them)
-static inline void audio_poll(SndPollPoint point, float dt) {
-    if (snd_get_poll_point() != point) return;
-    PROF_BEGIN(PROF_AUDIO);
-    snd_update(dt);
-    PROF_END(PROF_AUDIO);
+static SceneManager scene_mgr;
+
+// Game logic that runs once per frame after the scene update: scene switches
+// requested from the Debug tab, and back to the demo when a benchmark ends
+static void app_frame(float dt) {
+    (void)dt;
+    int req_scene, req_bench;
+    if (debug_consume_scene_request(&req_scene, &req_bench)) {
+        if (req_scene == 1) {
+            benchmark_scene_configure((BenchKind)req_bench);
+            scene_manager_switch(&scene_mgr, benchmark_scene_get(), TRANSITION_FADE_BLACK, 3.0f);
+        } else {
+            scene_manager_switch(&scene_mgr, demo_scene_get(), TRANSITION_FADE_BLACK, 3.0f);
+        }
+    }
+    if (scene_manager_current(&scene_mgr) == benchmark_scene_get() &&
+        benchmark_scene_finished() && !scene_manager_is_transitioning(&scene_mgr)) {
+        debug_menu_set_active_scene(0);
+        scene_manager_switch(&scene_mgr, demo_scene_get(), TRANSITION_FADE_BLACK, 3.0f);
+    }
 }
 
 int main(void) {
-    // Initialize debug output
-    debug_init_isviewer();
-    debug_init_usblog();
-
-    // Initialize display (320x240, 16-bit color, triple buffered)
-    display_init(RESOLUTION_320x240, DEPTH_16_BPP, FB_COUNT, GAMMA_NONE, FILTERS_RESAMPLE);
-
-    // Memory stats: RDRAM size, heap, stack high-water mark (paints the stack now)
-    memstats_init(FB_COUNT, SCREEN_WIDTH, SCREEN_HEIGHT);
-
-    // Initialize RDP command queue
-    rdpq_init();
-    // RDP validator (rdpq_debug_start) is toggled from the Debug tab in debug builds.
-    // It is off at boot: its CPU cost can push frames past 16.7 ms (defect D18).
-
-    // Initialize DFS (required before sprite_load)
-    dfs_init(DFS_DEFAULT_LOCATION);
-
-    // Initialize subsystems
-    action_init();
-    text_init();
+    engine_init();
 
     // Initialize menu (global overlay, persists across scenes)
     menu_init(&start_menu, "Start Menu");
@@ -169,15 +147,7 @@ int main(void) {
     int tab_d = menu_add_tab(&start_menu, "Debug");
     debug_menu_init(&start_menu, tab_d);
 
-    // Initialize audio and atmosphere
-    snd_init();
-    atmosphere_init();
-
-    // Allocate Z-buffer (shared across all scenes)
-    surface_t zbuf = surface_alloc(FMT_RGBA16, SCREEN_WIDTH, SCREEN_HEIGHT);
-
-    // Initialize scene manager and load demo scene
-    SceneManager scene_mgr;
+    // Scene manager and the first scene
     scene_manager_init(&scene_mgr);
     testbed_init(&scene_mgr, &start_menu);
 #if defined(ENGINE_BOOT_BENCHMARK) && ENGINE_BOOT_BENCHMARK
@@ -194,118 +164,6 @@ int main(void) {
     scene_manager_switch(&scene_mgr, demo_scene_get(), TRANSITION_CUT, 0);
 #endif
 
-    debugf("SMozN64 Dev Engine [%s build, %s %s]\n", ENGINE_BUILD_NAME, __DATE__, __TIME__);
-
-    // Main game loop — variable timestep (logic runs once per render frame)
-    uint32_t last_ticks = TICKS_READ();
-
-    uint32_t frame_index = 0;
-    profiler_init();
-
-    while (1) {
-        // Measure real elapsed time since last frame
-        uint32_t now = TICKS_READ();
-        uint32_t frame_ticks = (uint32_t)TICKS_DISTANCE(last_ticks, now);
-        float dt = (float)frame_ticks / (float)TICKS_PER_SECOND;
-        last_ticks = now;
-
-        // Publish last frame's counters and timings, start this frame
-        if (frame_index > 0) {
-            profiler_frame_end(frame_ticks);
-            const ProfilerFrame *pf = profiler_get();
-            uint32_t f_us = pf->last_us[PROF_FRAME];
-            uint32_t idle = pf->last_us[PROF_WAIT_DISPLAY] + pf->last_us[PROF_LIMITER];
-            frametime_record(f_us, f_us > idle ? f_us - idle : 0);
-        }
-        memstats_update();
-        profiler_frame_begin();
-        profiler_set_enabled(debug_profiler_enabled());
-        stats_frame_begin();
-        frame_index++;
-
-        if (dt > MAX_FRAME_DT) dt = MAX_FRAME_DT;
-        if (dt <= 0.0f) dt = 1.0f / 60.0f;
-
-        // Update game logic once per frame with actual elapsed time
-        PROF_BEGIN(PROF_UPDATE);
-        scene_manager_update(&scene_mgr, dt);
-        PROF_END(PROF_UPDATE);
-
-        debug_menu_update();
-        testbed_update();
-        if (debug_consume_dump_request()) {
-            float budget_ms = (engine_target_fps == 30) ? 33.33f : 16.67f;
-            stats_dump_csv(frame_index);
-            profiler_dump_csv();
-            profiler_rsp_dump_csv(frame_index);
-            frametime_dump_csv(frame_index, budget_ms);
-            memstats_dump_csv(frame_index);
-        }
-        // Scene switching from the Debug tab, and returning when a benchmark ends
-        int req_scene, req_bench;
-        if (debug_consume_scene_request(&req_scene, &req_bench)) {
-            if (req_scene == 1) {
-                benchmark_scene_configure((BenchKind)req_bench);
-                scene_manager_switch(&scene_mgr, benchmark_scene_get(), TRANSITION_FADE_BLACK, 3.0f);
-            } else {
-                scene_manager_switch(&scene_mgr, demo_scene_get(), TRANSITION_FADE_BLACK, 3.0f);
-            }
-        }
-        if (scene_manager_current(&scene_mgr) == benchmark_scene_get() &&
-            benchmark_scene_finished() && !scene_manager_is_transitioning(&scene_mgr)) {
-            debug_menu_set_active_scene(0);
-            scene_manager_switch(&scene_mgr, demo_scene_get(), TRANSITION_FADE_BLACK, 3.0f);
-        }
-        if (debug_consume_reset_peaks_request()) {
-            profiler_reset_peaks();
-            frametime_reset();
-            memstats_reset_baseline();
-        }
-
-        // Render
-        rdp_debug_frame_begin();   // one-frame RDP capture, if requested
-
-        audio_poll(SND_POLL_BEFORE_DISPLAY, dt);
-
-        // Time blocked waiting for a free framebuffer is always measured
-        uint32_t t_wait = TICKS_READ();
-        surface_t *fb = display_get();
-        profiler_record(PROF_WAIT_DISPLAY, TICKS_DISTANCE(t_wait, TICKS_READ()));
-        audio_poll(SND_POLL_AFTER_DISPLAY, dt);
-
-        rdpq_attach(fb, &zbuf);
-        PROF_BEGIN(PROF_DRAW);
-        scene_manager_draw(&scene_mgr);
-        PROF_END(PROF_DRAW);
-
-        // Debug overlay page (hidden while the menu is open)
-        if (!start_menu.is_open) {
-            overlay_draw((engine_target_fps == 30) ? 33.33f : 16.67f);
-        }
-        const char *tb = testbed_status();
-        if (tb) {
-            TextBoxConfig tbc = { .x = 12, .y = 30, .font_id = FONT_DEBUG_MONO,
-                                  .color = RGBA32(0xFF, 0x80, 0x40, 0xFF) };
-            text_draw(&tbc, tb);
-        }
-        rdpq_detach_show();
-        rdp_debug_frame_end();
-        audio_poll(SND_POLL_AFTER_PRESENT, dt);
-
-        // Frame rate limiting (busy-wait until target frame time)
-        if (engine_target_fps > 0) {
-            uint32_t t_limit = TICKS_READ();
-            uint32_t target_ticks = TICKS_PER_SECOND / engine_target_fps;
-            while (TICKS_DISTANCE(now, TICKS_READ()) < (int32_t)target_ticks) {
-                // spin
-            }
-            profiler_record(PROF_LIMITER, TICKS_DISTANCE(t_limit, TICKS_READ()));
-        }
-    }
-
-    // Cleanup (unreachable in normal operation)
-    surface_free(&zbuf);
-    text_cleanup();
-
+    engine_run(&(EngineApp){ .scenes = &scene_mgr, .menu = &start_menu, .on_frame = app_frame });
     return 0;
 }

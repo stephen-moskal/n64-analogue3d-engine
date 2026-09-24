@@ -3,6 +3,7 @@
 #include "../debug/stats.h"
 #include "atmosphere.h"
 #include "../engine/hot.h"
+#include "../engine/engine_config.h"
 #include <math.h>
 
 #define FLOOR_HALF_SIZE  500.0f
@@ -16,13 +17,6 @@
 // past ~0.96).  A small additive bias gives several extra Z-buffer steps
 // of clearance without visible artifacts.
 #define Z_BIAS  0.005f
-
-// RDP coordinate guard band — vertices outside this range
-// overflow fixed-point math and cause rendering artifacts
-#define GUARD_X_MIN  -1024.0f
-#define GUARD_X_MAX   1344.0f
-#define GUARD_Y_MIN  -1024.0f
-#define GUARD_Y_MAX   1264.0f
 
 // Checkered tile colors (before lighting)
 #define TILE_LIGHT_R  0xB0
@@ -119,12 +113,12 @@ ENGINE_HOT void floor_draw(const Camera *cam, const LightConfig *light) {
             }
 
             float inv_w = 1.0f / clip.w;
-            float sx = (clip.x * inv_w * 0.5f + 0.5f) * 320.0f;
-            float sy = (1.0f - (clip.y * inv_w * 0.5f + 0.5f)) * 240.0f;
+            float sx = (clip.x * inv_w * 0.5f + 0.5f) * (float)ENGINE_SCREEN_W;
+            float sy = (1.0f - (clip.y * inv_w * 0.5f + 0.5f)) * (float)ENGINE_SCREEN_H;
 
             // Guard band: reject vertices that would overflow RDP fixed-point
-            if (sx < GUARD_X_MIN || sx > GUARD_X_MAX ||
-                sy < GUARD_Y_MIN || sy > GUARD_Y_MAX) {
+            if (sx < ENGINE_GUARD_X_MIN || sx > ENGINE_GUARD_X_MAX ||
+                sy < ENGINE_GUARD_Y_MIN || sy > ENGINE_GUARD_Y_MAX) {
                 grid_valid[row][col] = false;
                 continue;
             }

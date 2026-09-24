@@ -47,9 +47,9 @@ The engine uses a hardware 16-bit depth buffer for correct occlusion, replacing 
 
 ```c
 // Allocate once before game loop
-surface_t zbuf = surface_alloc(FMT_RGBA16, 320, 240);
+surface_t zbuf = surface_alloc(FMT_RGBA16, ENGINE_SCREEN_W, ENGINE_SCREEN_H);
 
-// Each frame: attach both color and depth (main.c)
+// Each frame: attach both color and depth (engine.c)
 rdpq_attach(fb, &zbuf);
 
 // scene_draw(): the sky replaces the colour clear when it covers the screen
@@ -239,7 +239,7 @@ This produces a semi-transparent overlay by blending with the existing framebuff
 
 ## Frame Structure
 
-The loop in `src/main.c`, simplified (profiler, stats and debug-tool calls omitted):
+The loop in `engine_run()` (`src/engine/engine.c`, [ENGINE.md](ENGINE.md)), simplified (profiler, stats and debug-tool calls omitted):
 
 ```c
 while (1) {
@@ -290,7 +290,7 @@ Result: ~4x fewer triangles, 200x fewer state changes, less CPU per-triangle. FP
 
 | File | Purpose |
 |------|---------|
-| [src/main.c](../src/main.c) | Frame loop, display init, Z-buffer setup |
+| [src/engine/engine.c](../src/engine/engine.c) | Frame loop, display init, Z-buffer setup |
 | [src/scene/scene.c](../src/scene/scene.c) | Per-frame background (sky or clear), draw order, transition fade |
 | [src/render/mesh.c](../src/render/mesh.c) | `mesh_draw()`: culling, lighting, transform, triangle submission |
 | [src/render/mesh.h](../src/render/mesh.h) | Mesh types, `mesh_world_bounds()`, `mesh_normal_matrix()`, `mesh_screen_area2()` |

@@ -520,3 +520,14 @@ Bench = UI gained two steps (the `dialog` profiler slot; `dialog_us` appended to
 - **Against S5.2** (`...-s5_2-ui-...`): 0 regressions at 5 % / 0.15 ms on the 14 shared steps, although the profiler was on in this run and off in the reference.
 
 `docs/benchmarks/2026-09-24-p2-s5_3-ui-debug-a3d.csv` is the UI comparison point; `...-s5_2-all-...` stays the Bench = All reference.
+
+## Phase 2 · S6.1 engine core (2026-09-24, debug build, Analogue 3D)
+
+The frame loop and hardware init moved from `main.c` to `src/engine/engine.c`, and the screen and guard-band literals to `engine_config.h` ([ENGINE.md](ENGINE.md)). No behaviour change was intended; the hot-text block kept its size. Bench = All: `docs/benchmarks/2026-09-24-p2-s6_1-all-debug-a3d.csv` (profiler **on**, ~0.1 ms per frame; the S5.2 and S4b.2 references ran with it off).
+
+- **Against S5.2: 0 regressions.** Most steps are 1–4 % faster; lights −4 to −6 %, particles 64–128 −7 to −10 %.
+- **D33 mostly gone.** Against S4b.2 (before the slowdown), particles 32–128 are −1.4 / +2.7 / +5.1 / +5.1 % (+0.19 and +0.23 ms at 96 and 128), of which ~0.1 ms is the profiler. In S5.1–S5.2 they were +11 to +16 %. Nothing in the particle code changed, so this is layout again: moving the loop code shifted every later function. The same-ROM A/B (S6.3) still decides whether the particle update should join the hot-text block.
+- Projected shadows (2): +1.5 % against S5.2, +5.5 % (+0.6 ms) against S4b.2, flagged by the 5 % gate with the profiler's share inside it. Watch it in S6.2.
+- Textures −4 to −6 % and objects −0.3 to −1.9 % against S4b.2.
+
+`docs/benchmarks/2026-09-24-p2-s6_1-all-debug-a3d.csv` is the comparison point for the next stage.

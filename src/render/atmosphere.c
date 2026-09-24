@@ -1,5 +1,6 @@
 #include "atmosphere.h"
 #include "../engine/hot.h"
+#include "../engine/engine_config.h"
 #include "../debug/stats.h"
 #include <string.h>
 
@@ -311,7 +312,7 @@ void sky_draw(void) {
     // Single color: fill entire screen
     if (g_sky.band_count == 1) {
         rdpq_set_mode_fill(g_sky.band_colors[0]);
-        rdpq_fill_rectangle(0, 0, 320, 240);
+        rdpq_fill_rectangle(0, 0, ENGINE_SCREEN_W, ENGINE_SCREEN_H);
         STATS_INC(fill_rects);
         return;
     }
@@ -320,13 +321,13 @@ void sky_draw(void) {
     // between band colors (treated as evenly-spaced gradient stops).
     // 4px strips = 60 fill rectangles — negligible RDP cost.
     const int strip_h = 4;
-    const int num_strips = 240 / strip_h;
+    const int num_strips = ENGINE_SCREEN_H / strip_h;
     const int stops = g_sky.band_count;
 
     rdpq_set_mode_fill(g_sky.band_colors[0]);   // mode once; strips change only the colour
     for (int s = 0; s < num_strips; s++) {
         int y0 = s * strip_h;
-        int y1 = (s == num_strips - 1) ? 240 : y0 + strip_h;
+        int y1 = (s == num_strips - 1) ? ENGINE_SCREEN_H : y0 + strip_h;
 
         // Normalized position [0, 1] across screen height
         float t = (float)s / (float)(num_strips - 1);
@@ -349,7 +350,7 @@ void sky_draw(void) {
         );
 
         rdpq_set_fill_color(c);
-        rdpq_fill_rectangle(0, y0, 320, y1);
+        rdpq_fill_rectangle(0, y0, ENGINE_SCREEN_W, y1);
         STATS_INC(fill_rects);
     }
 }

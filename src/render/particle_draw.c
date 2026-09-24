@@ -2,15 +2,9 @@
 #include "../debug/stats.h"
 #include "atmosphere.h"
 #include "../engine/hot.h"
+#include "../engine/engine_config.h"
 
 // Particle renderer (hot path). The simulation is in particle.c.
-
-// --- Guard band (same as mesh.c) ---
-
-#define GUARD_X_MIN  -1024.0f
-#define GUARD_X_MAX   1344.0f
-#define GUARD_Y_MIN  -1024.0f
-#define GUARD_Y_MAX   1264.0f
 
 ENGINE_HOT void particle_draw(const Camera *cam) {
     if (!particle_initialized) return;
@@ -30,8 +24,8 @@ ENGINE_HOT void particle_draw(const Camera *cam) {
     // gives all four corners exactly: half-size in pixels = scale * P / w,
     // with P the projection's x/y scale times half the screen size (D14; this
     // replaces four corner transforms and a frustum sphere test).
-    const float px = cam->proj.m[0][0] * 160.0f;
-    const float py = cam->proj.m[1][1] * 120.0f;
+    const float px = cam->proj.m[0][0] * (0.5f * ENGINE_SCREEN_W);
+    const float py = cam->proj.m[1][1] * (0.5f * ENGINE_SCREEN_H);
 
     // Set RDP mode ONCE for all particles (additive blend)
     // Z-read ON, Z-write OFF (same as shadows)
@@ -59,16 +53,16 @@ ENGINE_HOT void particle_draw(const Camera *cam) {
         float ndc_z = clip.z * inv_w;
         if (ndc_z > 1.0f) continue;                     // beyond the far plane
 
-        float cx = (clip.x * inv_w * 0.5f + 0.5f) * 320.0f;
-        float cy = (1.0f - (clip.y * inv_w * 0.5f + 0.5f)) * 240.0f;
+        float cx = (clip.x * inv_w * 0.5f + 0.5f) * (float)ENGINE_SCREEN_W;
+        float cy = (1.0f - (clip.y * inv_w * 0.5f + 0.5f)) * (float)ENGINE_SCREEN_H;
         float hx = p->scale * px * inv_w;
         float hy = p->scale * py * inv_w;
 
         // Entirely off screen, or past the guard band
-        if (cx + hx < 0.0f || cx - hx > 320.0f || cy + hy < 0.0f || cy - hy > 240.0f)
+        if (cx + hx < 0.0f || cx - hx > (float)ENGINE_SCREEN_W || cy + hy < 0.0f || cy - hy > (float)ENGINE_SCREEN_H)
             continue;
-        if (cx - hx < GUARD_X_MIN || cx + hx > GUARD_X_MAX ||
-            cy - hy < GUARD_Y_MIN || cy + hy > GUARD_Y_MAX)
+        if (cx - hx < ENGINE_GUARD_X_MIN || cx + hx > ENGINE_GUARD_X_MAX ||
+            cy - hy < ENGINE_GUARD_Y_MIN || cy + hy > ENGINE_GUARD_Y_MAX)
             continue;
 
         float depth = ndc_z * 0.5f + 0.5f;

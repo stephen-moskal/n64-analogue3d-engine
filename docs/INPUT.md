@@ -137,7 +137,7 @@ typedef struct {
 ## Input Flow
 
 ```
-action_init()                        [once at startup in main.c — calls joypad_init()]
+action_init()                        [once at startup in engine_init() — calls joypad_init()]
     ↓
 action_update()                      [once per frame, first thing in the scene's on_update — calls joypad_poll()]
     ↓
@@ -150,7 +150,7 @@ joypad_get_buttons_pressed().start   [checked directly for menu toggle]
     ↓
 menu_update() OR game controls       [depending on menu state]
     ↓
-debug_menu_update()                  [main.c, after the scene update: D-Up/D-Down shortcuts]
+debug_menu_update()                  [engine loop, after the scene update: D-Up/D-Down shortcuts]
 ```
 
 Nothing else polls the joypad: a scene that does not call `action_update()` receives no input, and the debug shortcuts stop working while it runs. The demo and benchmark scenes both call it.

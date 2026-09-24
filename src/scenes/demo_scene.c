@@ -17,6 +17,7 @@
 #include "../dialog/dialog.h"
 #include "../debug/debug_menu.h"
 #include "../debug/engine_debug.h"
+#include "../engine/engine.h"
 #include "../debug/stats.h"
 #include "../debug/profiler.h"
 #include "../render/billboard.h"
@@ -187,7 +188,6 @@ static int last_camera_col = 0;
 extern Menu start_menu;
 static MenuView start_menu_view;        // cached text; kept across scene resets
 static bool     start_menu_view_ready;
-extern int engine_target_fps;
 
 // ============================================================
 // HUD: two panels of cached text (ui_hud.h) in the current UI style
@@ -1391,7 +1391,7 @@ static void demo_post_draw(Scene *scene) {
                 hud_fps_ticks = now;
             }
             float cpu = profiler_cpu_ms();
-            hud_cpu_frac = cpu / (engine_target_fps == 30 ? 33.33f : 16.67f);
+            hud_cpu_frac = cpu / engine_frame_budget_ms();
             hud_panel_setf(&hud_bottom, hl_fps, st->hud_accent, "FPS: %.0f CPU:%.1fms", hud_fps, cpu);
 
             // Right side: selection (object mode only), camera mode and position

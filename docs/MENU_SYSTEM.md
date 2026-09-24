@@ -168,7 +168,7 @@ Driving it is the scene's job, and only the demo scene does it (`demo_scene.c`):
 
 - `demo_update()` polls input with `action_update()`, toggles the menu on Start (raw joypad), calls `menu_update()` while it is open, and after it closes reads values with `menu_get_value()` and applies the ones that changed (it caches the last applied value of each item).
 - `demo_post_draw()` calls `menu_draw(&start_menu, &start_menu_view)` last, after the HUD. The view is created on first use and kept across scene resets.
-- `debug_menu_update()`, called from the main loop in `main.c`, applies the Debug tab while the menu is closed. The debug overlay page is hidden while the menu is open.
+- `debug_menu_update()`, called from the engine loop (`engine.c`), applies the Debug tab while the menu is closed. The debug overlay page is hidden while the menu is open.
 
 The benchmark scene has no menu (Start aborts the run). A new scene that wants the menu must poll input, toggle, update and draw it the same way.
 
