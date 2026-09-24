@@ -369,12 +369,31 @@ static const color_t bg_colors[] = {
 static const char *camera_mode_names[] = {"ORBITAL", "FIXED", "FOLLOW"};
 
 #define FIXED_MOVE_SPEED  150.0f
+#define BOUNCE_SOUND_MIN_SPEED   60.0f    // slower impacts are silent (rolling, resting)
+#define BOUNCE_SOUND_FULL_SPEED  400.0f   // impact speed of a full-volume bounce
 #define FIXED_Y_SPEED     5.0f
 
 static int last_fps_option = 1;
-static int last_sound_master = 1;  // Off
-static int last_sfx_vol = 8;      // 80%
-static int last_bgm_vol = 6;      // 60%
+static int last_sound_master = -1;  // -1: apply the Sound tab on the next check
+static int last_sfx_vol = -1;
+static int last_bgm_vol = -1;
+static float ball_prev_vy = 0.0f;   // bounce detection for the collision sound
+
+// Sound tab → sound module volumes, when a value changes (the caches start at
+// -1, so demo_init applies the tab before any music starts). Master Off fades
+// everything out, and silent music stops decoding (docs/AUDIO.md).
+static void apply_sound_settings(void) {
+    int master  = menu_get_value(&start_menu, TAB_SOUND, ITEM_SOUND_MASTER);  // 0 = On
+    int sfx_idx = menu_get_value(&start_menu, TAB_SOUND, ITEM_SFX_VOL);        // 0..10
+    int bgm_idx = menu_get_value(&start_menu, TAB_SOUND, ITEM_BGM_VOL);        // 0..10
+    if (master == last_sound_master && sfx_idx == last_sfx_vol && bgm_idx == last_bgm_vol) return;
+    snd_set_volume(SND_VOL_MASTER, master == 0 ? 1.0f : 0.0f, 0.25f);
+    snd_set_volume(SND_VOL_SFX, sfx_idx / 10.0f, 0.0f);
+    snd_set_volume(SND_VOL_MUSIC, bgm_idx / 10.0f, 0.0f);
+    last_sound_master = master;
+    last_sfx_vol = sfx_idx;
+    last_bgm_vol = bgm_idx;
+}
 static float hud_fps = 0.0f;
 static uint32_t hud_fps_ticks = 0;
 
@@ -636,9 +655,10 @@ static void demo_init(Scene *scene) {
     last_camera_mode = 0;
     last_camera_col = 0;
     last_fps_option = 1;
-    last_sound_master = 1;  // Off
-    last_sfx_vol = 8;
-    last_bgm_vol = 6;
+    last_sound_master = -1;
+    last_sfx_vol = -1;
+    last_bgm_vol = -1;
+    ball_prev_vy = 0.0f;
 
     // Lighting defaults
     last_sun_dir = 0;
@@ -683,8 +703,9 @@ static void demo_init(Scene *scene) {
     menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_INTENSITY, true);
     menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_RADIUS, true);
 
-    // Start background music
-    snd_play_bgm(BGM_DEMO);
+    // Background music: the Sound tab first, so a muted start never decodes
+    apply_sound_settings();
+    snd_music_play(BGM_DEMO, 1.0f);
 }
 
 // ============================================================
@@ -758,10 +779,10 @@ static void demo_update(Scene *scene, float dt) {
     if (raw_pressed.start) {
         if (start_menu.is_open) {
             menu_close(&start_menu, true);
-            snd_play_sfx(SFX_MENU_CLOSE);
+            snd_play(SFX_MENU_CLOSE);
         } else {
             menu_open(&start_menu);
-            snd_play_sfx(SFX_MENU_OPEN);
+            snd_play(SFX_MENU_OPEN);
         }
     }
 
@@ -803,7 +824,7 @@ static void demo_update(Scene *scene, float dt) {
             }
             particle_emitter_burst(emitter_fire);
             particle_emitter_burst(emitter_magic);
-            snd_play_sfx(SFX_MODE_CHANGE);
+            snd_play(SFX_MODE_CHANGE);
         }
 
         // Select mode: toggle object select
@@ -812,11 +833,11 @@ static void demo_update(Scene *scene, float dt) {
                 interaction_mode = MODE_OBJECT_SELECT;
                 if (selected_object < 0 && selectable_object_count > 0)
                     selected_object = 0;
-                snd_play_sfx(SFX_OBJ_SELECT);
+                snd_play(SFX_OBJ_SELECT);
             } else {
                 interaction_mode = MODE_NORMAL;
                 selected_object = -1;
-                snd_play_sfx(SFX_OBJ_DESELECT);
+                snd_play(SFX_OBJ_DESELECT);
             }
         }
 
@@ -825,17 +846,17 @@ static void demo_update(Scene *scene, float dt) {
             if (action_pressed(ACTION_CYCLE_PREV) && selectable_object_count > 0) {
                 selected_object--;
                 if (selected_object < 0) selected_object = selectable_object_count - 1;
-                snd_play_sfx(SFX_MENU_NAV);
+                snd_play(SFX_MENU_NAV);
             }
             if (action_pressed(ACTION_CYCLE_NEXT) && selectable_object_count > 0) {
                 selected_object = (selected_object + 1) % selectable_object_count;
-                snd_play_sfx(SFX_MENU_NAV);
+                snd_play(SFX_MENU_NAV);
             }
             // Confirm: enter transform mode
             if (action_pressed(ACTION_CONFIRM)) {
                 interaction_mode = MODE_OBJECT_TRANSFORM;
                 transform_mode = TRANSFORM_MOVE;
-                snd_play_sfx(SFX_MODE_CHANGE);
+                snd_play(SFX_MODE_CHANGE);
             }
             // Cancel: exit to normal
             if (action_pressed(ACTION_CANCEL)) {
@@ -846,12 +867,12 @@ static void demo_update(Scene *scene, float dt) {
             // Confirm: cycle transform mode
             if (action_pressed(ACTION_CONFIRM)) {
                 transform_mode = (transform_mode + 1) % 3;
-                snd_play_sfx(SFX_MODE_CHANGE);
+                snd_play(SFX_MODE_CHANGE);
             }
             // Cancel: back to select
             if (action_pressed(ACTION_CANCEL)) {
                 interaction_mode = MODE_OBJECT_SELECT;
-                snd_play_sfx(SFX_OBJ_DESELECT);
+                snd_play(SFX_OBJ_DESELECT);
             }
             // Manipulate object with analog/C-buttons
             handle_object_manipulation(scene, &input_state);
@@ -868,11 +889,11 @@ static void demo_update(Scene *scene, float dt) {
         if (start_menu.is_open) {
             int new_cursor = start_menu.tabs[start_menu.active_tab].cursor;
             if (new_cursor != old_cursor || start_menu.active_tab != old_tab) {
-                snd_play_sfx(SFX_MENU_NAV);
+                snd_play(SFX_MENU_NAV);
             }
         }
         if (was_open && !start_menu.is_open) {
-            snd_play_sfx(SFX_MENU_SELECT);
+            snd_play(SFX_MENU_SELECT);
         }
     } else if (interaction_mode != MODE_OBJECT_TRANSFORM) {
         // Camera mode cycling
@@ -947,26 +968,8 @@ static void demo_update(Scene *scene, float dt) {
         last_fps_option = fps_opt;
     }
 
-    // Check for sound settings from Sound tab
-    int snd_master = menu_get_value(&start_menu, TAB_SOUND, ITEM_SOUND_MASTER);
-    int sfx_vol_idx = menu_get_value(&start_menu, TAB_SOUND, ITEM_SFX_VOL);
-    int bgm_vol_idx = menu_get_value(&start_menu, TAB_SOUND, ITEM_BGM_VOL);
-
-    if (snd_master != last_sound_master || sfx_vol_idx != last_sfx_vol ||
-        bgm_vol_idx != last_bgm_vol) {
-        if (snd_master == 0) {
-            // Master On — apply volume sliders (index 0-10 → 0-128)
-            snd_set_sfx_volume(sfx_vol_idx * 13);
-            snd_set_bgm_volume(bgm_vol_idx * 13);
-        } else {
-            // Master Off — mute everything
-            snd_set_sfx_volume(0);
-            snd_set_bgm_volume(0);
-        }
-        last_sound_master = snd_master;
-        last_sfx_vol = sfx_vol_idx;
-        last_bgm_vol = bgm_vol_idx;
-    }
+    // Sound tab (Master, SFX and BGM volumes), on change
+    apply_sound_settings();
 
     // --- Apply lighting settings from Lighting tab ---
 
@@ -1173,7 +1176,26 @@ static void demo_update(Scene *scene, float dt) {
         SceneObject *ball_obj = scene_get_object(scene, ball_object_index);
         if (body && ball_obj) {
             ball_obj->position = body->position;
+
+            // Bounce: falling velocity turned upward. The sound is heard from
+            // the ball's position and scales with the impact speed.
+            float vy = body->velocity.y;
+            if (ball_prev_vy < -BOUNCE_SOUND_MIN_SPEED && vy >= 0.0f) {
+                float gain = -ball_prev_vy / BOUNCE_SOUND_FULL_SPEED;
+                snd_play_at(SFX_COLLISION, body->position, gain > 1.0f ? 1.0f : gain);
+            }
+            ball_prev_vy = vy;
         }
+    }
+
+    // The listener is the camera (positional sounds pan with its right vector)
+    {
+        vec3_t up = {0.0f, 1.0f, 0.0f};
+        vec3_t right = vec3_cross(&scene->camera.view_dir, &up);
+        float len = vec3_length(&right);
+        if (len > 1e-4f) right = vec3_scale(&right, 1.0f / len);
+        else right = (vec3_t){1.0f, 0.0f, 0.0f};
+        snd_set_listener(scene->camera.position, right);
     }
 
     // Update particles
@@ -1323,7 +1345,8 @@ static void demo_post_draw(Scene *scene) {
 
 static void demo_cleanup(Scene *scene) {
     (void)scene;
-    snd_stop_bgm();
+    snd_music_stop(0.0f);
+    snd_stop_all_sfx();
     particle_cleanup();
     emitter_fire = -1;
     emitter_magic = -1;

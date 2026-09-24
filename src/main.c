@@ -77,6 +77,15 @@ static const char *btn_options[] = {
     "C-Up", "C-Down", "C-Left", "C-Right"
 };
 
+// Fill the audio buffers if this is the point of the frame the sound module
+// is set to poll at (SndPollPoint; the audio benchmark compares them)
+static inline void audio_poll(SndPollPoint point, float dt) {
+    if (snd_get_poll_point() != point) return;
+    PROF_BEGIN(PROF_AUDIO);
+    snd_update(dt);
+    PROF_END(PROF_AUDIO);
+}
+
 int main(void) {
     // Initialize debug output
     debug_init_isviewer();
@@ -170,9 +179,13 @@ int main(void) {
     scene_manager_init(&scene_mgr);
     testbed_init(&scene_mgr, &start_menu);
 #if defined(ENGINE_BOOT_BENCHMARK) && ENGINE_BOOT_BENCHMARK
-    // Unattended benchmark run: make BENCH=1 -> engine-debug-bench.z64 (the
-    // debug build: release compiles debugf out and prints no CSV)
-    benchmark_scene_configure(BENCH_ALL);
+    // Unattended benchmark run: make BENCH=1 [BENCH_KIND=<kind>] ->
+    // engine-debug-bench.z64 (the debug build: release compiles debugf out
+    // and prints no CSV)
+#ifndef ENGINE_BOOT_BENCHMARK_KIND
+#define ENGINE_BOOT_BENCHMARK_KIND BENCH_ALL
+#endif
+    benchmark_scene_configure(ENGINE_BOOT_BENCHMARK_KIND);
     debug_menu_set_active_scene(1);
     scene_manager_switch(&scene_mgr, benchmark_scene_get(), TRANSITION_CUT, 0);
 #else
@@ -250,10 +263,13 @@ int main(void) {
         // Render
         rdp_debug_frame_begin();   // one-frame RDP capture, if requested
 
+        audio_poll(SND_POLL_BEFORE_DISPLAY, dt);
+
         // Time blocked waiting for a free framebuffer is always measured
         uint32_t t_wait = TICKS_READ();
         surface_t *fb = display_get();
         profiler_record(PROF_WAIT_DISPLAY, TICKS_DISTANCE(t_wait, TICKS_READ()));
+        audio_poll(SND_POLL_AFTER_DISPLAY, dt);
 
         rdpq_attach(fb, &zbuf);
         PROF_BEGIN(PROF_DRAW);
@@ -272,11 +288,7 @@ int main(void) {
         }
         rdpq_detach_show();
         rdp_debug_frame_end();
-
-        // Feed audio mixer
-        PROF_BEGIN(PROF_AUDIO);
-        snd_update();
-        PROF_END(PROF_AUDIO);
+        audio_poll(SND_POLL_AFTER_PRESENT, dt);
 
         // Frame rate limiting (busy-wait until target frame time)
         if (engine_target_fps > 0) {

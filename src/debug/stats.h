@@ -35,6 +35,10 @@ typedef struct {
     uint32_t tris_rejected_guard;    // mesh triangles dropped by the guard band
     uint32_t tris_culled_backface;   // mesh triangles dropped by the per-triangle winding test
 
+    // Audio (set by snd_update)
+    uint32_t snd_voices;             // sound-effect voices playing
+    uint32_t snd_buffers;            // audio buffers mixed this frame
+
     // RDP state traffic
     uint32_t mode_changes;           // rdpq_set_mode_standard() in mesh_draw
     uint32_t tex_uploads;            // texture loads issued (after culling)

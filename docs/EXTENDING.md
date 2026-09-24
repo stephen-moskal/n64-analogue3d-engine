@@ -340,8 +340,8 @@ Gotchas:
    - `setup_step()`: a `case` that sets the scene up for one step. Its preamble resets emitters, fill layers, instances, the CPU burn, the floor and the lighting before every step; reset any state you add there too.
    - `bench_update()`, `bench_draw()`, `bench_post_draw()`: the load itself. Keep it deterministic: the camera path is frame-locked and particles update with a fixed 1/60 s step.
    - `bench_cleanup()`: free what the kind allocated.
-3. In `debug_menu.c`, add the name to `bench_options[]` at the same index and raise the count in `menu_add_item(menu, tab, "Bench", bench_options, 8, 0)`.
-4. Run it: Start → Debug → Bench = the new kind, Scene = Benchmark, A. Every step runs 60 warm-up and 240 measured frames, and the scene fades back to the demo at the end. `libdragon make BENCH=1` boots straight into All only.
+3. In `debug_menu.c`, add the name to `bench_options[]` at the same index and raise the count in `menu_add_item(menu, tab, "Bench", bench_options, 10, 0)`.
+4. Run it: Start → Debug → Bench = the new kind, Scene = Benchmark, A. Every step runs 60 warm-up and 240 measured frames, and the scene fades back to the demo at the end. `libdragon make BENCH=1 BENCH_KIND=<NAME>` builds a ROM that boots straight into it.
 
 | Row | Printed | Contents |
 |---|---|---|
@@ -436,22 +436,26 @@ Gotchas:
 
 **Files:** `assets/audio/sfx/` or `assets/audio/music/`, `src/audio/sound_bank.h`, `src/audio/sound_bank.c`, and the code that plays the sound. Background: [AUDIO.md](AUDIO.md).
 
-1. Put the WAV in `assets/audio/sfx/` (effects) or `assets/audio/music/` (music). The Makefile converts it with `audioconv64` to `filesystem/audio/<sfx|music>/<name>.wav64`.
-2. Add an id to `SoundId` in `sound_bank.h`, before `SOUND_COUNT`.
-3. Add its entry to `sound_bank[]` in `sound_bank.c`, with the `.wav64` path, the type and a volume from 0 to 128:
+1. Put the WAV in `assets/audio/sfx/` (effects, **mono**) or `assets/audio/music/` (music). The Makefile converts it with `audioconv64` (VADPCM by default: `AUDIOCONV_SFX_FLAGS` / `AUDIOCONV_MUSIC_FLAGS`) to `filesystem/audio/<sfx|music>/<name>.wav64`.
+2. Add an id to `SoundId` in `sound_bank.h`: an effect next to the other effects (between `SFX_MENU_OPEN` and `SFX_COLLISION` it joins the Bench = Audio effect load), music next to `BGM_DEMO`.
+3. Add its row to `sound_bank[]` in `sound_bank.c`: path, bus, volume (0–1), priority, and for a positional effect the distance at which it starts to fade and the distance at which it is silent (0, 0 otherwise):
 
    ```c
-   [SFX_MENU_OPEN]    = { "rom:/audio/sfx/menu_open.wav64",     SOUND_TYPE_SFX, 100 },
+   [SFX_DOOR_OPEN] = { "rom:/audio/sfx/door_open.wav64", SND_BUS_SFX, 0.80f, PRIO_WORLD, 150.0f, 1200.0f },
+   [BGM_TOWN]      = { "rom:/audio/music/town.wav64",    SND_BUS_MUSIC, 0.65f, 0, 0, 0 },
    ```
-4. Play it with `snd_play_sfx(id)` (one-shot) or `snd_play_bgm(id)` (loops, replacing the current track).
+4. Play it: `snd_play(id)` (UI sounds, centred), `snd_play_at(id, position, gain)` (world sounds, panned and attenuated from the listener), or `snd_music_play(id, fade_s)` (music: loops and crossfades from the current track).
 5. Build, then listen with Sound → Master = On: the demo boots muted.
 
 Gotchas:
 
-- A wrong path, or one naming the `.wav` instead of the `.wav64`, stops the ROM with a libdragon assertion: at boot for an effect (`snd_init()` opens every SFX), when it starts for music.
-- Background music must be wav64. The Makefile also converts `*.xm` to `.xm64`, but the `snd_*` wrapper has no XM player.
-- Keep effects mono: a stereo wav64 takes two consecutive mixer channels and would overlap the next round-robin SFX channel.
-- Generated audio is git-ignored and tied to the libdragon version: after a submodule change run `libdragon make clean` (a stale file asserts `invalid version`).
+- A missing file, or a path naming the `.wav` instead of the `.wav64`, asserts in debug builds (at boot for an effect, since `snd_init()` opens every SFX; when it starts for music). Release builds skip the sound.
+- Effects must be mono (debug builds assert at boot otherwise; a stereo effect would take the next voice's channel) and share one encoding: a voice's sample ring is reused from effect to effect, and libdragon asserts when a ring moves between encodings after Opus or ULC (D31). Music can mix encodings.
+- Any sample rate plays: `snd_init()` raises the channel limits to the fastest sound (D30). Rates above the 22,050 Hz output only cost memory and mixer time, so resample them (`--wav-resample 22050` in the `AUDIOCONV_*` flags) unless the source needs them.
+- An effect only takes a voice from a sound of equal or lower priority; when all eight voices hold more important sounds it is dropped (`snd_stats()`). UI sounds use `PRIO_UI`, world sounds `PRIO_WORLD`.
+- Positional gains are set when the sound starts; keep the listener current with `snd_set_listener()` every frame (the demo passes its camera).
+- Music must be wav64: the Makefile also converts `*.xm` to `.xm64`, but nothing plays it. Opus music needs `SND_OPUS=1` (AUDIO.md).
+- Generated audio is git-ignored and tied to the libdragon version: after a submodule change run `libdragon make clean` (a stale file asserts `invalid version`). Changing an `AUDIOCONV_*` flag does not re-encode files that already exist; clean then too.
 
 ---
 
@@ -472,6 +476,6 @@ Every change passes the stage gate of [ROADMAP_v2.md §6.4](ROADMAP_v2.md#64-har
    `bench_compare.py` reads UTF-8 or UTF-16 files (Windows PowerShell 5.1's `Tee-Object` and `>` write UTF-16) and ignores everything but `BENCH` rows, so the raw log works. A step regresses when its CPU average grows by more than 5 % **and** more than 0.15 ms (`--threshold`, `--noise-ms`), or when it held 60 FPS (≥ 59.5) and no longer does. Exit status 0 = clean, 1 = regression, 2 = bad input. No regression above 5 % unless the stage intends it; paste the output into the commit message.
 5. **Record it.** Add a BENCHMARKS.md row with the stage's proof and commit the `BENCH` lines as `docs/benchmarks/<date>-p2-s<N>-debug-a3d.csv`, for example `Select-String '^BENCH' capture.log | % Line | Set-Content -Encoding utf8 <file>`. Each stage's CSV is the next stage's comparison point (a moving baseline); the 2026-09-23 baseline stays the reference for the Phase 2 exit.
 
-**Unattended runs.** `libdragon make BENCH=1` builds `engine-debug-bench.z64` in `build/debug-bench` (a separate directory, because make doesn't track `CFLAGS`); it boots straight into All and returns to the demo afterwards. `libdragon make BUILD=release BENCH=1` gives `engine-bench.z64` in `build/release-bench`, but release builds print no CSV, so capture with the debug variant.
+**Unattended runs.** `libdragon make BENCH=1` builds `engine-debug-bench.z64` in `build/debug-bench` (a separate directory, because make doesn't track `CFLAGS`); it boots straight into All, or into one kind with `BENCH_KIND=<kind>` (the `BenchKind` name without `BENCH_`, e.g. `AUDIO`), and returns to the demo afterwards. On the A3D the first step right after boot can be slow (D32). `libdragon make BUILD=release BENCH=1` gives `engine-bench.z64` in `build/release-bench`, but release builds print no CSV, so capture with the debug variant.
 
 **When to use a same-ROM A/B.** Timings depend on code and data layout, not only on the code you changed. Separate builds moved by about 6 % from unrelated edits (I-cache placement, D25), and identical code running on two copies of the same mesh data differed by up to 9 % (D-cache aliasing, D26). When a render change lands near the 5 % limit, build the old and the new code into **one** ROM, run them interleaved as extra benchmark steps with distinct params, decide, then remove the scaffolding. The S2 Mesh A/B did this: commit 44203e6 is the measured build, 95e2d40 removed it, and the method and results are in BENCHMARKS.md (Phase 2 · S2) and HARDWARE.md.

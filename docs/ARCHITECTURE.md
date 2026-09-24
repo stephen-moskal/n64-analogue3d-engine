@@ -202,6 +202,7 @@ while (1) {
 
     // Render
     surface_t *fb = display_get();    // Waits for a free framebuffer
+    audio_poll(SND_POLL_AFTER_DISPLAY, dt);   // snd_update(): mix the audio (default poll point)
     rdpq_attach(fb, &zbuf);
     scene_manager_draw(&mgr);
     //   -> scene_draw(current)
@@ -212,7 +213,6 @@ while (1) {
     //   -> transition overlay (if transitioning)
     overlay_draw(budget_ms);           // Debug overlay page
     rdpq_detach_show();
-    snd_update();                      // Feed the audio mixer
 
     // Busy-wait frame limiter (for 30 FPS target)
     if (engine_target_fps > 0) { /* spin until target frame time */ }
@@ -632,11 +632,12 @@ Text is expensive on the CPU (about 15–20 µs per glyph on the Analogue 3D wit
 
 ## Audio
 
-A thin `snd_*` wrapper over libdragon's audio and mixer (`src/audio/audio.c`). Full documentation: [AUDIO.md](AUDIO.md).
+The `snd_*` sound module over libdragon's audio, mixer and wav64 (`src/audio/`, stable libdragon API only). Full documentation: [AUDIO.md](AUDIO.md).
 
-- 22,050 Hz output, 4 DMA buffers, 16 mixer channels; background music on channel 0 (a looping `wav64`), sound effects round-robin on channels 2–7.
-- Sounds are `SoundId` entries in `sound_bank.h` / `sound_bank.c` (path, SFX or BGM, volume 0–128); game code never uses paths. `snd_init()` opens every SFX once at boot.
-- `snd_update()` feeds the mixer once per frame from the main loop (`audio` profiler slot). The demo's Sound tab sets the SFX and BGM volumes; Master defaults to Off.
+- 22,050 Hz output, 4 buffers, 12 mixer channels: two music slots (a channel pair each, for crossfades) and eight sound-effect voices chosen by priority.
+- Sounds are `SoundId` entries in `sound_bank.h` / `sound_bank.c` (path, music or SFX bus, volume 0–1, priority, optional positional range); game code never uses paths. `snd_init()` opens every SFX once at boot.
+- Master, music and SFX volumes ramp; muted music stops decoding. `snd_play_at()` pans and attenuates an effect from the listener (the demo's camera).
+- `snd_update(dt)` runs once per frame right after `display_get()` (`audio` profiler slot): there the mixer's high-priority RSP job waits least (Bench = Audio, 0.48 ms per frame with music). The demo's Sound tab sets the three volumes; Master defaults to Off.
 
 ## Memory Budget (4MB)
 

@@ -104,8 +104,9 @@ Sources live in `assets/`; `make` converts them with the container's tools into 
 | Source | Tool (Makefile rule) | Output | Loaded with |
 |--------|----------------------|--------|-------------|
 | `assets/*.png` (32×32) | `mksprite --format RGBA16` | `filesystem/*.sprite` | `sprite_load("rom:/name.sprite")` |
-| `assets/audio/sfx/*.wav` | `audioconv64` | `filesystem/audio/sfx/*.wav64` | opened by `snd_init()` from the `sound_bank` table, played with `snd_play_sfx()` |
-| `assets/audio/music/*.wav` | `audioconv64` | `filesystem/audio/music/*.wav64` | `snd_play_bgm()` (looped on mixer channel 0) |
+| `assets/audio/sfx/*.wav` | `audioconv64 $(AUDIOCONV_SFX_FLAGS)` (VADPCM) | `filesystem/audio/sfx/*.wav64` | opened by `snd_init()` from the `sound_bank` table, played with `snd_play()` / `snd_play_at()` |
+| `assets/audio/music/*.wav` | `audioconv64 $(AUDIOCONV_MUSIC_FLAGS)` (VADPCM) | `filesystem/audio/music/*.wav64` | `snd_music_play()` (looped, crossfaded) |
+| `assets/audio/music/demo.wav` (debug builds) | `audioconv64 --wav-compress 0` / `3` | `build/<variant>/fs-debug/audio/bench/*.wav64` | the audio benchmark's other encodings; debug ROMs only (AUDIO.md) |
 | `assets/audio/music/*.xm` | `audioconv64` | `filesystem/audio/music/*.xm64` | converted, but not playable yet: the audio module has no XM player |
 
 Generated outputs are ignored by git. Placeholder WAVs can be regenerated with `py tools/gen_placeholder_audio.py` (or `python3` on macOS). Models (`*.t3dm` via Tiny3D) arrive in ROADMAP_v2 Phase 4.

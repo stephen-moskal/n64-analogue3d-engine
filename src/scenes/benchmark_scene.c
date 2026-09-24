@@ -16,6 +16,7 @@
 #include "../debug/profiler.h"
 #include "../debug/frametime.h"
 #include "../debug/memstats.h"
+#include "../audio/audio.h"
 
 // ------------------------------------------------------------------------
 // Configuration
@@ -36,7 +37,7 @@ typedef struct {
 } BenchStep;
 
 static const char *kind_names[BENCH_KIND_COUNT] = {
-    "all", "objects", "particles", "lights", "textures", "shadows", "fillrate", "overload", "layout",
+    "all", "objects", "particles", "lights", "textures", "shadows", "fillrate", "overload", "layout", "audio",
 };
 
 // One-line description shown under the status line (param is substituted)
@@ -50,6 +51,7 @@ static const char *kind_desc[BENCH_KIND_COUNT] = {
     "%d full-screen blended layers",
     "+%d ms CPU burn, floor + 16 pillars",
     "%d: variant*1000+pillars (0 shared, 1-4 at 0/2/4/6 KB, 5 reversed)",
+    "%d: codec*100+poll*10+sfx (0 none 1 raw 2 vadpcm 3 opus)",
 };
 
 static BenchKind  configured_kind = BENCH_ALL;
@@ -88,6 +90,12 @@ static const bool layout_reverse[LAYOUT_COPIES] = {false, false, false, false, t
 static Mesh       layout_copy[LAYOUT_COPIES];
 static void      *layout_pool;         // 16 KB, 8 KB aligned
 static int        layout_variant;
+
+// AUDIO: music encoding × poll point × sound-effect load, over a demo-like
+// render load (floor + 16 pillars) so the mixer competes with rdpq for the RSP
+static bool         audio_sfx;         // retrigger sound effects on every voice
+static const SoundId audio_track[4] = {SOUND_NONE, BGM_BENCH_RAW, BGM_DEMO, BGM_BENCH_OPUS};
+static SndPollPoint saved_poll_point;
 
 // ------------------------------------------------------------------------
 // Helpers
@@ -147,6 +155,29 @@ static void build_steps(BenchKind which) {
         static const int n[] = {32, 64};
         for (unsigned i = 0; i < sizeof(n) / sizeof(n[0]); i++)
             for (int v = 0; v <= LAYOUT_COPIES; v++) add_step(BENCH_LAYOUT, v * 1000 + n[i]);
+    }
+    if (which == BENCH_AUDIO) {
+        // param = codec*100 + poll point*10 + sfx. Codec: 0 no music, 1 raw,
+        // 2 VADPCM (the demo track), 3 Opus. Poll point: SndPollPoint.
+        // Opus first: the raw track then takes the other music slot and the
+        // VADPCM track the one Opus used, so a codec change on one channel is
+        // exercised as well (audio.c, channel_play)
+        static const int p[] = {
+              20,                         // silence
+             300, 320,                    // Opus (only with SND_OPUS=1)
+             100, 120,                    // raw
+             200, 210, 220,               // VADPCM at each poll point
+             201, 221,                    // VADPCM + a new sound effect every 4 frames
+        };
+        for (unsigned i = 0; i < sizeof(p) / sizeof(p[0]); i++) {
+            int codec = p[i] / 100;
+#if !defined(SND_ENABLE_OPUS) || !SND_ENABLE_OPUS
+            if (codec == 3) continue;             // no decoder linked (SND_OPUS=0)
+#endif
+            // The other encodings are packed into debug ROMs only
+            if (codec != 0 && !snd_available(audio_track[codec])) continue;
+            add_step(BENCH_AUDIO, p[i]);
+        }
     }
 }
 
@@ -291,6 +322,16 @@ static void setup_step(Scene *scene) {
         layout_grid(st->param % 1000);
         layout_variant = (layout_pool != NULL) ? st->param / 1000 : 0;
         break;
+    case BENCH_AUDIO: {
+        layout_grid(16);
+        draw_floor = true;
+        int codec = st->param / 100;
+        snd_set_poll_point((SndPollPoint)((st->param / 10) % 10));
+        audio_sfx = (st->param % 10) != 0;
+        if (codec == 0) snd_music_stop(0.0f);
+        else            snd_music_play(audio_track[codec], 0.0f);
+        break;
+    }
     default:
         break;   // BENCH_ALL step 0: empty reference scene
     }
@@ -374,10 +415,11 @@ static void finish_step(void) {
     if (g_prof_on) {
         const ProfilerFrame *pf = profiler_get();
         (void)pf;
-        debugf("BENCH_PROF,%s,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f\n",
+        debugf("BENCH_PROF,%s,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f\n",
                kind_names[st->kind], step_index, st->param,
                pf->avg_us[PROF_UPDATE], pf->avg_us[PROF_DRAW], pf->avg_us[PROF_OBJECTS],
-               pf->avg_us[PROF_MESH_CULL], pf->avg_us[PROF_MESH_LIGHT], pf->avg_us[PROF_MESH_TRIS]);
+               pf->avg_us[PROF_MESH_CULL], pf->avg_us[PROF_MESH_LIGHT], pf->avg_us[PROF_MESH_TRIS],
+               pf->avg_us[PROF_AUDIO]);
     }
 }
 
@@ -399,6 +441,14 @@ static void bench_init(Scene *scene) {
     for (int i = 0; i < NUM_TEX_BOXES; i++) build_tex_box(&tex_boxes[i], i);
     mesh_defs_init();
     if (configured_kind == BENCH_LAYOUT) build_layout_copies();
+    saved_poll_point = snd_get_poll_point();
+    audio_sfx = false;
+    if (configured_kind == BENCH_AUDIO) {
+        // Audible, so the music really decodes (the demo reapplies its Sound tab on return)
+        snd_set_volume(SND_VOL_MASTER, 1.0f, 0.0f);
+        snd_set_volume(SND_VOL_MUSIC, 1.0f, 0.0f);
+        snd_set_volume(SND_VOL_SFX, 1.0f, 0.0f);
+    }
     particle_init();
 
     // Fog and sky off for comparable numbers; restored on exit
@@ -420,7 +470,7 @@ static void bench_init(Scene *scene) {
     debugf("BENCH_HDR,kind,step,param,frames,fps,avg_ms,p99_ms,low1_fps,cpu_avg_ms,cpu_max_ms,"
            "rdp_busy_ms,rdp_busy_pct,tris,tex_uploads,heap_kb\n");
     debugf("BENCH_PROF_HDR,kind,step,param,update_us,draw_us,objects_us,mesh_cull_us,"
-           "mesh_light_us,mesh_tris_us\n");
+           "mesh_light_us,mesh_tris_us,audio_us\n");
     setup_step(scene);
 }
 
@@ -447,6 +497,11 @@ static void bench_update(Scene *scene, float dt) {
         uint32_t t0 = TICKS_READ();
         uint32_t burn = (uint32_t)burn_ms * (TICKS_PER_SECOND / 1000);
         while ((uint32_t)TICKS_DISTANCE(t0, TICKS_READ()) < burn) { }
+    }
+
+    // AUDIO: keep the sound-effect voices busy (a new sound every 4 frames)
+    if (audio_sfx && (step_frame % 4) == 0) {
+        snd_play((SoundId)(SFX_MENU_OPEN + (step_frame / 4) % (SFX_COLLISION - SFX_MENU_OPEN + 1)));
     }
 
     // Frame-locked camera path: identical on every run regardless of dt
@@ -571,6 +626,9 @@ static void bench_cleanup(Scene *scene) {
     particle_cleanup();
     for (int i = 0; i < NUM_TEX_BOXES; i++) mesh_cleanup(&tex_boxes[i]);
     free_layout_copies();
+    snd_music_stop(0.0f);
+    snd_stop_all_sfx();
+    snd_set_poll_point(saved_poll_point);
     mesh_defs_cleanup();
     texture_cleanup();
     atmosphere_set_fog_enabled(saved_fog);

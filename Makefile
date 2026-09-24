@@ -4,6 +4,7 @@
 #   make BUILD=release    release build -> engine.z64        (debug code compiled out)
 #   make BENCH=1          debug build that boots straight into the full benchmark
 #                         -> engine-debug-bench.z64 (own build dir: build/debug-bench)
+#   make BENCH=1 BENCH_KIND=AUDIO   ... into one benchmark kind instead of All
 #
 # Via the Docker toolchain: `libdragon make` / `libdragon make BUILD=release`.
 
@@ -12,10 +13,11 @@ ifeq ($(filter $(BUILD),debug release),)
 $(error BUILD must be 'debug' or 'release' (got '$(BUILD)'))
 endif
 
-# BENCH=1 boots straight into the full benchmark run (unattended capture). It
-# builds into its own directory and ROM: make does not track CFLAGS, so a
-# shared build directory would mix objects with and without the flag.
+# BENCH=1 boots straight into a benchmark run (unattended capture): All, or
+# the kind named by BENCH_KIND (a BenchKind name without BENCH_, e.g. AUDIO).
+# It builds into its own directory and ROM, so the normal build is untouched.
 BENCH_SUFFIX := $(if $(filter 1,$(BENCH)),-bench,)
+BENCH_KIND ?= ALL
 
 BUILD_DIR  = build/$(BUILD)$(BENCH_SUFFIX)
 SOURCE_DIR = src
@@ -39,13 +41,27 @@ N64_ROM_SAVETYPE = none
 
 CFLAGS += -I$(SOURCE_DIR)
 
+# Build options (make VAR=value):
+#   SND_OPUS=1   links libdragon's Opus decoder (about 94 KB more RAM) so music
+#                encoded with --wav-compress 3 plays (AUDIOCONV_MUSIC_FLAGS
+#                below); the audio benchmark then measures Opus too
+SND_OPUS ?= 0
+CFLAGS += -DSND_ENABLE_OPUS=$(SND_OPUS)
+
+# make does not track CFLAGS: the option values are kept in a stamp file,
+# rewritten only when they change, that every object and the DFS depend on
+BUILD_OPTIONS := SND_OPUS=$(SND_OPUS)$(if $(filter 1,$(BENCH)), BENCH_KIND=$(BENCH_KIND))
+OPTIONS_STAMP := $(BUILD_DIR)/options.stamp
+$(shell mkdir -p $(BUILD_DIR) && (echo '$(BUILD_OPTIONS)' | cmp -s - $(OPTIONS_STAMP) || echo '$(BUILD_OPTIONS)' > $(OPTIONS_STAMP)))
+
 ifeq ($(BENCH),1)
-CFLAGS += -DENGINE_BOOT_BENCHMARK=1
+CFLAGS += -DENGINE_BOOT_BENCHMARK=1 -DENGINE_BOOT_BENCHMARK_KIND=BENCH_$(BENCH_KIND)
 endif
 
 # All sources under src/ (one directory level deep)
 SRCS := $(wildcard $(SOURCE_DIR)/*.c $(SOURCE_DIR)/*/*.c)
 OBJS := $(SRCS:$(SOURCE_DIR)/%.c=$(BUILD_DIR)/%.o)
+$(OBJS): $(OPTIONS_STAMP)
 
 # Asset conversion — sprites
 assets_png  = $(wildcard assets/*.png)
@@ -61,6 +77,25 @@ assets_sfx_wav64   = $(addprefix filesystem/audio/sfx/,$(notdir $(assets_sfx_wav
 assets_music_wav64 = $(addprefix filesystem/audio/music/,$(notdir $(assets_music_wav:%.wav=%.wav64)))
 assets_music_xm64  = $(addprefix filesystem/audio/music/,$(notdir $(assets_music_xm:%.xm=%.xm64)))
 
+# Debug-only data, built under $(DEBUG_FS)/ instead of filesystem/: a debug ROM
+# packs a staging copy of filesystem/ plus these files, a release ROM packs
+# filesystem/ alone. Now: the demo track in the other encodings the audio
+# benchmark compares (Bench = Audio; it skips a track that is not packed).
+DEBUG_FS  := $(BUILD_DIR)/fs-debug
+DFS_STAGE := $(BUILD_DIR)/fs-stage
+ifeq ($(BUILD),debug)
+debug_assets := $(DEBUG_FS)/audio/bench/demo_raw.wav64
+ifeq ($(SND_OPUS),1)
+debug_assets += $(DEBUG_FS)/audio/bench/demo_opus.wav64
+endif
+endif
+
+# Audio encodings (audioconv64 --wav-compress: 0 raw, 1 VADPCM, 2 ULC, 3 Opus).
+# VADPCM is libdragon's default: about 4:1 smaller than raw and decoded by the
+# RSP mixer. docs/AUDIO.md has the measured cost of each (Bench = Audio).
+AUDIOCONV_SFX_FLAGS   ?= --wav-compress 1
+AUDIOCONV_MUSIC_FLAGS ?= --wav-compress 1
+
 all: $(ROM_NAME).z64
 .DEFAULT_GOAL := all
 
@@ -74,12 +109,26 @@ filesystem/%.sprite: assets/%.png
 filesystem/audio/sfx/%.wav64: assets/audio/sfx/%.wav
 	@mkdir -p $(dir $@)
 	@echo "    [WAV64] $@"
-	@$(N64_AUDIOCONV) -o $(dir $@) "$<"
+	@$(N64_AUDIOCONV) $(AUDIOCONV_SFX_FLAGS) -o $(dir $@) "$<"
 
 filesystem/audio/music/%.wav64: assets/audio/music/%.wav
 	@mkdir -p $(dir $@)
 	@echo "    [WAV64] $@"
-	@$(N64_AUDIOCONV) -o $(dir $@) "$<"
+	@$(N64_AUDIOCONV) $(AUDIOCONV_MUSIC_FLAGS) -o $(dir $@) "$<"
+
+# audioconv64 names its output after the input file: convert into a scratch
+# directory, then rename
+$(DEBUG_FS)/audio/bench/demo_raw.wav64: assets/audio/music/demo.wav
+	@mkdir -p $(dir $@) $(BUILD_DIR)/audio_raw
+	@echo "    [WAV64] $@"
+	@$(N64_AUDIOCONV) --wav-compress 0 -o $(BUILD_DIR)/audio_raw "$<"
+	@mv $(BUILD_DIR)/audio_raw/demo.wav64 $@
+
+$(DEBUG_FS)/audio/bench/demo_opus.wav64: assets/audio/music/demo.wav
+	@mkdir -p $(dir $@) $(BUILD_DIR)/audio_opus
+	@echo "    [WAV64] $@"
+	@$(N64_AUDIOCONV) --wav-compress 3 -o $(BUILD_DIR)/audio_opus "$<"
+	@mv $(BUILD_DIR)/audio_opus/demo.wav64 $@
 
 filesystem/audio/music/%.xm64: assets/audio/music/%.xm
 	@mkdir -p $(dir $@)
@@ -106,7 +155,17 @@ $(ENGINE_LD): $(N64_LIBDIR)/n64.ld $(HOT_TEXT_LD)
 
 $(ROM_NAME).z64: $(BUILD_DIR)/$(ROM_NAME).dfs
 
-$(BUILD_DIR)/$(ROM_NAME).dfs: $(assets_conv) $(assets_sfx_wav64) $(assets_music_wav64) $(assets_music_xm64)
+$(BUILD_DIR)/$(ROM_NAME).dfs: $(assets_conv) $(assets_sfx_wav64) $(assets_music_wav64) $(assets_music_xm64) \
+                              $(debug_assets) $(OPTIONS_STAMP)
+ifeq ($(BUILD),debug)
+	@mkdir -p $(dir $@)
+	@echo "    [DFS] $@"
+	@rm -rf $(DFS_STAGE) && mkdir -p $(DFS_STAGE)
+	@cp -r $(N64_MKDFS_ROOT)/. $(DFS_STAGE)/
+	$(if $(debug_assets),@cd $(DEBUG_FS) && cp --parents $(patsubst $(DEBUG_FS)/%,%,$(debug_assets)) $(abspath $(DFS_STAGE))/)
+	@$(N64_MKDFS) $@ "$(DFS_STAGE)" >/dev/null
+endif
+# (release: n64.mk's rule packs $(N64_MKDFS_ROOT), i.e. filesystem/)
 $(BUILD_DIR)/$(ROM_NAME).elf: $(OBJS) $(ENGINE_LD)
 
 # Header dependency tracking (n64.mk compiles with -MMD)

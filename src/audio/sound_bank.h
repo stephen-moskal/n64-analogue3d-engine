@@ -2,11 +2,12 @@
 #define SOUND_BANK_H
 
 // ============================================================
-// Sound Event Definitions
+// Sound definitions
 //
-// This file defines all sound events in the engine. To add a
-// new sound, add an enum entry here and a path entry in
-// sound_bank.c. Then drop the audio file in assets/audio/.
+// Every sound the engine can play: an id here and a row in sound_bank.c.
+// Game code only uses SoundId values, never file paths. To add a sound, add
+// an id, a row, and the WAV under assets/audio/sfx/ or assets/audio/music/
+// (docs/AUDIO.md, docs/EXTENDING.md "Add a sound").
 // ============================================================
 
 typedef enum {
@@ -23,24 +24,33 @@ typedef enum {
     SFX_OBJ_DESELECT,
     SFX_MODE_CHANGE,
 
-    // Collision SFX
+    // World SFX (positional)
     SFX_COLLISION,
 
-    // Background music
+    // Music
     BGM_DEMO,
+
+    // Benchmark only: the demo track in other encodings (Bench = Audio)
+    BGM_BENCH_RAW,
+    BGM_BENCH_OPUS,
 
     SOUND_COUNT
 } SoundId;
 
+// Mix bus a sound plays on (its volume is the bus volume times the master)
 typedef enum {
-    SOUND_TYPE_SFX,
-    SOUND_TYPE_BGM,
-} SoundType;
+    SND_BUS_SFX,
+    SND_BUS_MUSIC,
+} SndBus;
 
 typedef struct {
-    const char *path;   // DFS path (e.g., "rom:/audio/sfx/menu_open.wav64")
-    SoundType type;
-    int volume;         // 0-128
+    const char *path;   // DFS path, e.g. "rom:/audio/sfx/menu_open.wav64"
+    SndBus bus;
+    float volume;       // 0..1, multiplied with the bus and master volumes
+    int priority;       // SFX: when every voice is busy, a sound replaces the
+                        // oldest voice of equal or lower priority (else it is dropped)
+    float min_dist;     // positional SFX (snd_play_at): full volume within
+    float max_dist;     //   min_dist, silent beyond max_dist (world units)
 } SoundDef;
 
 extern const SoundDef sound_bank[SOUND_COUNT];

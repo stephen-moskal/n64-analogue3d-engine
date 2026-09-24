@@ -32,6 +32,7 @@ typedef enum {
     BENCH_FILLRATE,
     BENCH_OVERLOAD,     // deliberate CPU overrun (not part of "All"); reproduces D18
     BENCH_LAYOUT,       // data-placement sensitivity (not part of "All"); roadmap D26
+    BENCH_AUDIO,        // mixer cost per music encoding and poll point (not part of "All")
     BENCH_KIND_COUNT
 } BenchKind;
 

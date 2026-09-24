@@ -20,7 +20,7 @@ A Nintendo 64 homebrew game engine built with [libdragon](https://github.com/Dra
 | **Particles** | Emitter-based system with pool allocation, additive blend, direct RDP batch renderer | [PARTICLES.md](docs/PARTICLES.md) |
 | **Atmosphere** | Fog (hardware + CPU hybrid), sky gradients, 7 presets with linked lighting | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | **Physics** | Semi-fixed timestep, gravity, bounce, impulse, ground detection, body presets | [PHYSICS.md](docs/PHYSICS.md) |
-| **Audio** | Looping background music, SFX playback, mixer with 16 channels | [AUDIO.md](docs/AUDIO.md) |
+| **Audio** | Crossfading music, 8 prioritised SFX voices, positional sound, master/music/SFX volumes | [AUDIO.md](docs/AUDIO.md) |
 | **Collision** | Sphere and AABB colliders, raycasting, camera pushout | [COLLISION.md](docs/COLLISION.md) |
 | **Scene** | Object management, update/draw callbacks, scene reset, multi-object scenes | [SCENE_SYSTEM.md](docs/SCENE_SYSTEM.md) |
 | **Input / Action Mapping** | Remappable game actions, per-context bindings, analog stick, runtime rebinding via menu | [INPUT.md](docs/INPUT.md) |
@@ -178,7 +178,8 @@ n64-analogue3d-engine/
 │   │   ├── demo_scene.c/h     # Demo scene with all engine features
 │   │   └── benchmark_scene.c/h # Benchmark scene (stress steps, BENCH CSV rows)
 │   ├── audio/
-│   │   ├── audio.c/h          # Audio init, mixer, BGM/SFX playback
+│   │   ├── audio.c/h          # Sound module: music slots, SFX voices, volumes, per-frame mixing
+│   │   ├── snd_mix.c/h        # Voice stealing and positional gains (host-tested)
 │   │   └── sound_bank.c/h     # Sound asset table
 │   ├── ui/
 │   │   ├── text.c/h           # Font rendering, formatted text
@@ -238,7 +239,7 @@ RDP: Triangle Rasterize → Texture Sample → Z-Buffer → Framebuffer
 - [Mesh System](docs/MESH_SYSTEM.md) — Mesh builder API, shape library, universal renderer
 - [Particles](docs/PARTICLES.md) — Emitters, effect definitions, the batch renderer
 - [Billboards](docs/BILLBOARDS.md) — Camera-facing textured quads
-- [Audio](docs/AUDIO.md) — Mixer, sound bank, BGM/SFX playback
+- [Audio](docs/AUDIO.md) — Sound module, sound bank, encodings, poll point and measured cost
 - [Camera System](docs/CAMERA.md) — Orbital camera, coordinate system, math library, frustum culling
 - [Texture System](docs/TEXTURES.md) — Asset pipeline, TMEM constraints, sprite slots, per-scene loading
 - [Collision System](docs/COLLISION.md) — Colliders, raycasting, layers, overlap queries

@@ -1,0 +1,21 @@
+BENCH_META,build=debug,date=Sep 24 2026 00:40:35,rdram=8388608,benchmark=audio,steps=8,warmup=60,measure=240
+BENCH_HDR,kind,step,param,frames,fps,avg_ms,p99_ms,low1_fps,cpu_avg_ms,cpu_max_ms,rdp_busy_ms,rdp_busy_pct,tris,tex_uploads,heap_kb
+BENCH_PROF_HDR,kind,step,param,update_us,draw_us,objects_us,mesh_cull_us,mesh_light_us,mesh_tris_us,audio_us
+BENCH_LAYOUT,draw_frame=0x807ffcf8,pillar_vtx=0x80158740,pillar_vtx_bytes=1600,pillar_idx=0x80158d80,pillar_idx_bytes=192,pillar_mesh=0x800826d0
+BENCH,audio,0,20,239,60.0,16.67,17.06,58.5,9.78,11.88,6.02,36.1,453,0.0,806
+BENCH_PROF,audio,0,20,140,9367,6099,100,920,4525,86
+BENCH,audio,1,200,239,60.0,16.67,21.54,46.4,11.81,16.66,5.99,36.1,453,0.0,807
+BENCH_PROF,audio,1,200,145,9359,6089,100,919,4527,2074
+BENCH,audio,2,210,239,60.0,16.67,17.00,58.7,13.05,14.64,6.07,36.4,453,0.0,807
+BENCH_PROF,audio,2,210,143,9476,6097,101,920,4529,3342
+BENCH,audio,3,220,239,60.0,16.66,17.55,56.8,10.26,12.50,6.03,36.2,453,0.0,807
+BENCH_PROF,audio,3,220,143,9464,6098,101,919,4529,475
+BENCH,audio,4,100,239,60.0,16.67,21.59,46.3,11.79,16.68,6.03,36.2,453,0.0,809
+BENCH_PROF,audio,4,100,144,9470,6095,101,919,4530,1805
+BENCH,audio,5,120,239,60.0,16.67,17.67,56.4,10.30,12.50,6.03,36.2,453,0.0,809
+BENCH_PROF,audio,5,120,142,9466,6097,101,920,4529,519
+BENCH,audio,6,201,239,60.0,16.66,21.69,46.1,12.09,16.77,6.04,36.3,453,0.0,814
+BENCH_PROF,audio,6,201,169,9473,6095,101,919,4529,1987
+BENCH,audio,7,221,239,60.0,16.67,18.48,53.9,10.74,13.27,6.03,36.2,453,0.0,814
+BENCH_PROF,audio,7,221,168,9469,6099,101,919,4531,935
+BENCH,END,8,40.0

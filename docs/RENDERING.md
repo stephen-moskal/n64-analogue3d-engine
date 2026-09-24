@@ -249,12 +249,12 @@ while (1) {
 
     // === RENDER ===
     surface_t *fb = display_get();    // Wait for a free framebuffer (triple buffering)
+    snd_update(dt);                   // Mix the audio (poll point: AUDIO.md)
     rdpq_attach(fb, &zbuf);           // Attach color + depth
     scene_manager_draw(&mgr);         // scene_draw(), then the transition fade
     overlay_draw(budget_ms);          // Debug overlay page (not while the menu is open)
     rdpq_detach_show();               // Present frame
 
-    snd_update();                     // Feed the audio mixer
     // 30 FPS mode: busy-wait until the frame time is reached
 }
 ```

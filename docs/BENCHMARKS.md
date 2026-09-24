@@ -123,7 +123,7 @@ Findings:
 1. Build and upload the **debug** ROM (`engine-debug.z64`). Release builds compile `debugf` out, so they print no CSV. Both variants are `-O2`; the debug build adds asserts and profiler scopes, measured at ~0.1 ms, so its numbers stand for release.
 2. Start the capture: `sc64deployer debug | Tee-Object docs/benchmarks/<date>-<label>.log` (the SC64 must not be busy with another `debug` session).
 3. Reset the console, then Start → **Debug** → **Bench** (All or one test) → **Scene = Benchmark** → A. The scene fades in, runs every step (60 warm-up + 240 measured frames each, fixed camera path), and fades back to the demo. Start aborts.
-4. For unattended runs, `libdragon make BENCH=1` builds a ROM that boots straight into "All": `engine-debug-bench.z64`, built in its own directory (`build/debug-bench/`), so the normal build and ROM are untouched and no clean is needed. Upload that ROM instead.
+4. For unattended runs, `libdragon make BENCH=1` builds a ROM that boots straight into "All" (or into one kind with `BENCH_KIND=<kind>`, e.g. `AUDIO`): `engine-debug-bench.z64`, built in its own directory (`build/debug-bench/`), so the normal build and ROM are untouched and no clean is needed. Upload that ROM instead. On the A3D the first step of such a run can be slow (D32): repeat it, or discard it.
 5. Compare the capture with the baseline. `bench_compare.py` reads the `BENCH` step rows (and `BENCH_META` as a label) and ignores every other line, so a raw capture works; it reads UTF-8 and UTF-16 files. To keep just the benchmark rows: `Select-String '^BENCH' capture.log | % Line > new.csv`.
 
 ```powershell
@@ -134,7 +134,7 @@ py tools/bench_compare.py docs/benchmarks/2026-09-23-baseline-debug-a3d.csv new.
 
 Timings depend on code and data layout (D25, D26): compare runs of the same day where possible, and compare renderer changes inside one ROM when a result is close to the limit.
 
-With the profiler on (the debug default), each step also prints a `BENCH_PROF` row: the moving-average µs of `update`, `draw`, `objects`, `mesh_cull`, `mesh_light` and `mesh_tris`, to pin a CPU regression to a stage of `mesh_draw`. Once per run a `BENCH_LAYOUT` row logs the addresses of `bench_draw`'s stack frame and of the pillar mesh's vertex and index arrays, to relate timing changes to D-cache aliasing (D26). `bench_compare.py` ignores both row types.
+With the profiler on (the debug default), each step also prints a `BENCH_PROF` row: the moving-average µs of `update`, `draw`, `objects`, `mesh_cull`, `mesh_light`, `mesh_tris` and `audio`, to pin a CPU regression to a stage of `mesh_draw` (or to the mixer). Once per run a `BENCH_LAYOUT` row logs the addresses of `bench_draw`'s stack frame and of the pillar mesh's vertex and index arrays, to relate timing changes to D-cache aliasing (D26). `bench_compare.py` ignores both row types.
 
 The tests run with fog and sky off (restored afterwards) on the benchmark scene's dark background; only Overload draws the floor. "All" runs every kind except Overload, 26 steps:
 
@@ -149,6 +149,7 @@ The tests run with fog and sky off (restored afterwards) on the benchmark scene'
 | fillrate | 1, 2, 4, 8 | N full-screen blended rectangles (RDP read-modify-write) |
 | layout | 32, 64 × variants 0–5 | data-placement check (D26): the shared pillar (0), copies at D-cache colours 0/2/4/6 KB (1–4), a reversed-winding copy (5); param = variant × 1000 + pillars. Debug only, not in All |
 | overload | 0, 10, 14, 17, 20, 25 | floor + 16 pillars + N ms of CPU busy-wait per frame: deliberate overruns, for the D18 flicker (not in All) |
+| audio | 8 steps (10 with `SND_OPUS=1`) | floor + 16 pillars with the music at full volume; param = codec × 100 + poll point × 10 + effects (codec 0 none, 1 raw, 2 VADPCM, 3 Opus; poll point 0 after present, 1 before `display_get`, 2 after; effects 1 = a new sound every 4 frames). Opus runs first, so VADPCM later reuses its channel (D31). Steps whose track is not in the ROM are skipped; not in All ([AUDIO.md](AUDIO.md)) |
 
 ### Baseline (2026-09-23, debug build, Analogue 3D, `docs/benchmarks/2026-09-23-baseline-debug-a3d.csv`)
 
@@ -348,3 +349,77 @@ libdragon `10f3bd43e` (2026-02-27) → `39d0d6096` (preview, 2026-09-15; 466 com
 | RAM footprint (release ELF) | 453.5 → 502.0 KB (+48.5 KB: code +41 KB, bss +7 KB; mostly the Opus/ULC codecs that `wav64` now always links) |
 | ROM (release) | 352 → 400 KB |
 | Demo `audio` slot | **2.69 ms average, 10.2 ms peak** with the music playing: the music is now VADPCM (the new `audioconv64` default) and is decoded on the RSP while the mixer waits. Addressed by the S4b.2 audio rework |
+
+## Phase 2 · S4b.2 sound module rework (2026-09-23, debug build, Analogue 3D)
+
+The `snd_*` module was rewritten ([AUDIO.md](AUDIO.md)):
+- music crossfades, and stops decoding while muted;
+- eight effect voices steal by priority;
+- positional effects (the physics ball's bounces now make a sound);
+- master, music and SFX volumes ramp;
+- the mixing runs right after `display_get()` instead of after `rdpq_detach_show()`.
+
+The new Audio benchmark kind measures the mixer per encoding and per poll point.
+
+**Bench = Audio** (`docs/benchmarks/2026-09-23-p2-s4b2-audio-debug-a3d.csv`): floor + 16 pillars, music at full volume. `audio` is the profiler slot's average per frame:
+
+| Param | Music | Poll point | Effects | `audio` ms | CPU avg / max ms | p99 ms | 1 % low FPS |
+|---|---|---|---|---|---|---|---|
+| 20 | none | after `display_get` | — | 0.09 | 9.78 / 11.9 | 17.1 | 58.5 |
+| 200 | VADPCM | after present (old) | — | 2.07 | 11.81 / 16.7 | **21.5** | **46.4** |
+| 210 | VADPCM | before `display_get` | — | 3.34 | 13.05 / 14.6 | 17.0 | 58.7 |
+| 220 | VADPCM | after `display_get` (default) | — | **0.48** | 10.26 / 12.5 | 17.6 | 56.8 |
+| 100 | raw PCM | after present | — | 1.81 | 11.79 / 16.7 | 21.6 | 46.3 |
+| 120 | raw PCM | after `display_get` | — | 0.52 | 10.30 / 12.5 | 17.7 | 56.4 |
+| 201 | VADPCM | after present | every 4 frames | 1.99 | 12.09 / 16.8 | 21.7 | 46.1 |
+| 221 | VADPCM | after `display_get` | every 4 frames | 0.94 | 10.74 / 13.3 | 18.5 | 53.9 |
+
+- **The poll point decides the cost.** With music, mixing after `display_get()` costs 0.48 ms per frame, against 2.07 ms after present and 3.34 ms before `display_get`.
+  - The CPU waits for each buffer's high-priority RSP job. At 60 FPS the loop has no limiter and is paced by `display_get()`, so the other two points run just after the previous frame was queued, while the RSP is most likely still busy with it.
+  - Before `display_get` the wait apparently replaces time the loop would spend blocked there anyway: frames stay on time, but the CPU is busy longer.
+- **The old placement drops frames with music playing** (p99 21.5 ms, 1 % low 46 FPS). That was S4b.1's demo `audio` slot of 2.69 ms average and 10.2 ms peak.
+- **Encoding does not matter for cost.** VADPCM costs the same as raw PCM, so VADPCM stays the default (the demo track is 46 KB instead of 176 KB).
+- **Busy effect voices add ~0.45 ms per frame.**
+- **The mixer now runs twice as often.** The upgrade doubled libdragon's audio buffer rate (`BUFFERS_PER_SECOND` 25 → 50), so the mixer runs ~0.8 times per frame at 60 FPS instead of ~0.4.
+- **Opus** was not in this build (`SND_OPUS=0`); it was measured separately, below.
+
+**Opus** (`...-p2-s4b2-audio-opus-...`, a `make BENCH=1 BENCH_KIND=AUDIO SND_OPUS=1` ROM, which runs the Opus steps first):
+
+| Param | Music | Poll point | `audio` ms | CPU avg / max ms | p99 ms | 1 % low FPS |
+|---|---|---|---|---|---|---|
+| 300 | Opus | after present | 4.23 | 14.88 / 35.2 | 32.0 | 29.9 |
+| 320 | Opus | after `display_get` | **3.15** | 13.32 / 17.2 | 22.0 | 44.4 |
+| 220 | VADPCM | after `display_get` | 0.46 | 10.19 / 12.2 | 17.4 | 57.4 |
+
+- **Opus costs ~2.7 ms more CPU per frame than VADPCM** at the default point, because most of the decoder is CPU code. At this load it pushes frames over budget.
+- **Opus adds ~33 KB of heap while it plays** (`heap_kb` 794 → 827): decoder state and a 48 kHz ring. The other steps match the first run within a few percent.
+- **Step 0 (silence) was slow** in this run: CPU and RDP ~40 % slower than usual, and `audio` at 4.1 ms. It is the first ~5 s after reset, the only difference from the other steps and runs (D32).
+- **The first Opus attempt asserted twice, both fixed in this stage:**
+  - *frequency 48000 exceeds configured limit 22047 on channel 0*: channels are limited to the output rate unless raised, and Opus is 48 kHz (D30);
+  - after that fix, ares hit *samplebuffer too small* when VADPCM followed Opus on the same channel, a libdragon ring-reuse bug worked around with a fresh ring per track (D31).
+
+**Full benchmark vs S4b.1** (`...-p2-s4b2-all-...`, `bench_compare.py`): **0 regressions.** This file is the comparison point for the next stage.
+
+| Step | S4b.1 → S4b.2 CPU ms | Change |
+|---|---|---|
+| empty | 1.14 → 0.97 | −14.9 % |
+| fillrate 1–8 | 1.14–1.17 → 1.02–1.03 | −10 to −13 % |
+| shadows blob / projected | 9.10 → 7.82 / 13.37 → 11.52 | −14.1 / −13.8 % |
+| shadows off, lights 0–4 | 7.64–8.13 → 7.22–7.99 | −1.7 to −5.9 % |
+| objects 16 / 24 | 7.58 → 7.19 / 10.91 → 10.14 | −5.1 / −7.1 % |
+| objects 32 / 48 / 64 | 16.77 → 17.15 / 25.60 → 26.30 / 33.97 → 34.89 | +2.3 / +2.7 / +2.7 % |
+| everything else | | within ±2 % |
+
+The mixer runs even with no music playing, and it no longer waits behind the frame's RSP work. That saves most on the triangle-heavy steps.
+
+Two things differ from the S4b.1 run:
+- **The profiler was off** in this run and on in S4b.1. It costs ~0.1 ms per frame, which is most of the empty step's gain.
+- **The pillar data landed partly on the render stack's D-cache sets** (`BENCH_LAYOUT` `pillar_vtx` 0x80153360, sets 0x1360–0x1A60; D26). That fits the +2–3 % on the overloaded objects steps.
+
+| Check | Result |
+|---|---|
+| Sound check on the A3D | music fade-in, menu sounds, the positional bounce sound, Sound tab volumes and mute all as expected |
+| Reset Soak ×3 (30 resets, music on) | **0 B, 0 B, +320 B.** A CSV dump fired inside the third soak, and the dump's own MEM row already shows the +320 B. The nine resets after it added nothing, so it is a one-time allocation during the dump, not a per-reset leak. |
+| Stability (D28) | **no RSP crash** in about 40 minutes of testing across several boots: Reset Soak ×4 (40 resets; the fourth also 0 B), Menu Sweep (24 items, 123 options), Bench = All, and Bench = Audio three times, once with Opus. The first Opus attempt stopped on the D30 assert, which is a CPU assertion, not an RSP crash. |
+| RAM (release ELF) | 502.0 → 511.6 KB (+9.6 KB: the sound module and the Audio benchmark). `SND_OPUS=1` would add ~94 KB (the full Opus decoder); keeping it opt-in saved that much against the first S4b.2 build. |
+| ROM (release) | 400 KB, unchanged. The benchmark tracks are debug-only; the debug ROM carries the 176 KB raw track. |

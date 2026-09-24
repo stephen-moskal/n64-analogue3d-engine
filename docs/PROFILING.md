@@ -41,7 +41,7 @@ frame                 loop top to loop top (wall time)
     sky / floor / shadows / objects / particle_draw / hud / menu
       objects > mesh_cull / mesh_light / mesh_tris
   overlay             debug overlay page
-  audio               snd_update
+  audio               snd_update, at the sound poll point (default: right after display_get; AUDIO.md)
 ```
 
 `sky` and `objects` are timed in `scene_draw()` (the sky is the frame's background there; the benchmark times its own object loop); `floor`, `shadows`, `particle_draw`, `hud` and `menu` in the scene callbacks; the `mesh_*` slots inside `mesh_draw()`.
@@ -65,6 +65,7 @@ Per-frame counters written with `STATS_INC(field)`, `STATS_ADD(field, n)` and `S
 | `particles_alive / drawn` | particle pool usage |
 | `colliders`, `collision_pairs`, `raycasts` | collision world size, overlapping pairs, raycasts this frame |
 | `physics_bodies`, `physics_steps` | active bodies, fixed steps run this frame |
+| `snd_voices`, `snd_buffers` | sound-effect voices playing; audio buffers mixed this frame (about 0.8 on average at 60 FPS; 2 after a long frame) |
 
 ## Memory (`memstats.c/h`)
 
