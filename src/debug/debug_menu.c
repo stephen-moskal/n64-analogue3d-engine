@@ -3,21 +3,24 @@
 #include "../input/action.h"
 #include "rdp_debug.h"
 #include "testbed.h"
+#include "../scenes/benchmark_scene.h"
+#include "../engine/util.h"
 
-static const char *overlay_options[] = {"Off", "Stats", "Profiler", "Memory", "Frame", "RSP"};
-static const char *on_off_options[]  = {"On", "Off"};
-static const char *off_on_options[]  = {"Off", "On"};
-static const char *dump_options[]    = {"---", "Dump!"};
-static const char *reset_options[]   = {"---", "Reset!"};
-static const char *scene_options[]   = {"Demo", "Benchmark"};
-static const char *bench_options[]   = {"All", "Objects", "Particles", "Lights", "Textures", "Shadows", "Fillrate", "Overload", "Layout", "Audio", "UI"};
-static const char *run_options[]     = {"---", "Run!"};
-static const char *capture_options[] = {"---", "Capture!"};
-static const char *crash_options[]   = {"---", "Assert!"};
-static const char *talk_options[]    = {"---", "Talk!"};
+static const char *const overlay_options[] = {"Off", "Stats", "Profiler", "Memory", "Frame", "RSP"};
+static const char *const on_off_options[]  = {"On", "Off"};
+static const char *const off_on_options[]  = {"Off", "On"};
+static const char *const dump_options[]    = {"---", "Dump!"};
+static const char *const reset_options[]   = {"---", "Reset!"};
+static const char *const scene_options[]   = {"Demo", "Benchmark"};
+static const char *const bench_options[]   = {"All", "Objects", "Particles", "Lights", "Textures", "Shadows", "Fillrate", "Overload", "Layout", "Audio", "UI"};
+static const char *const run_options[]     = {"---", "Run!"};
+static const char *const capture_options[] = {"---", "Capture!"};
+static const char *const crash_options[]   = {"---", "Assert!"};
+static const char *const talk_options[]    = {"---", "Talk!"};
 
-_Static_assert(sizeof(overlay_options) / sizeof(overlay_options[0]) == OVERLAY_PAGE_COUNT,
-               "overlay_options must match OverlayPage");
+_Static_assert(ARRAY_LEN(overlay_options) == OVERLAY_PAGE_COUNT, "overlay_options must match OverlayPage");
+_Static_assert(ARRAY_LEN(bench_options) == BENCH_KIND_COUNT, "bench_options must match BenchKind");
+_Static_assert(DBG_ITEM_COUNT <= MENU_MAX_ITEMS, "the Debug tab holds every DebugMenuItem");
 
 #define DUMP_SETTLE_FRAMES 120   // ~2 s: under 2 % of the menu frames left in the averages
 
@@ -41,18 +44,18 @@ void debug_menu_init(Menu *menu, int tab) {
     dbg_tab  = tab;
 
     // Order must match DebugMenuItem
-    menu_add_item(menu, tab, "Overlay",     overlay_options, OVERLAY_PAGE_COUNT, OVERLAY_OFF);
-    menu_add_item(menu, tab, "Profiler",    on_off_options, 2, 0);
-    menu_add_item(menu, tab, "RDP Check",   off_on_options, 2, 0);
-    menu_add_item(menu, tab, "Dump CSV",    dump_options,   2, 0);
-    menu_add_item(menu, tab, "Reset Peaks", reset_options,  2, 0);
-    menu_add_item(menu, tab, "Scene",       scene_options,  2, 0);
-    menu_add_item(menu, tab, "Bench",       bench_options,  11, 0);
-    menu_add_item(menu, tab, "RDP Log",     capture_options, 2, 0);
-    menu_add_item(menu, tab, "Crash Test",  crash_options,  2, 0);
-    menu_add_item(menu, tab, "Reset Soak",  run_options,    2, 0);
-    menu_add_item(menu, tab, "Menu Sweep",  run_options,    2, 0);
-    menu_add_item(menu, tab, "Dialog",      talk_options,   2, 0);
+    menu_add_item(menu, tab, "Overlay",     overlay_options, ARRAY_LEN(overlay_options), OVERLAY_OFF);
+    menu_add_item(menu, tab, "Profiler",    on_off_options,  ARRAY_LEN(on_off_options), 0);
+    menu_add_item(menu, tab, "RDP Check",   off_on_options,  ARRAY_LEN(off_on_options), 0);
+    menu_add_item(menu, tab, "Dump CSV",    dump_options,    ARRAY_LEN(dump_options), 0);
+    menu_add_item(menu, tab, "Reset Peaks", reset_options,   ARRAY_LEN(reset_options), 0);
+    menu_add_item(menu, tab, "Scene",       scene_options,   ARRAY_LEN(scene_options), 0);
+    menu_add_item(menu, tab, "Bench",       bench_options,   ARRAY_LEN(bench_options), 0);
+    menu_add_item(menu, tab, "RDP Log",     capture_options, ARRAY_LEN(capture_options), 0);
+    menu_add_item(menu, tab, "Crash Test",  crash_options,   ARRAY_LEN(crash_options), 0);
+    menu_add_item(menu, tab, "Reset Soak",  run_options,     ARRAY_LEN(run_options), 0);
+    menu_add_item(menu, tab, "Menu Sweep",  run_options,     ARRAY_LEN(run_options), 0);
+    menu_add_item(menu, tab, "Dialog",      talk_options,    ARRAY_LEN(talk_options), 0);
 
 #if !ENGINE_DEBUG
     // Validator and profiler are compiled out of release builds

@@ -43,5 +43,6 @@ void run_audio_tests(void);
 void run_menu_tests(void);
 void run_dialog_tests(void);
 void run_scene_tests(void);
+void run_settings_tests(void);
 
 #endif

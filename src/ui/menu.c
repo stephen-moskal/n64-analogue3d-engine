@@ -21,7 +21,7 @@ int menu_add_tab(Menu *menu, const char *label) {
 }
 
 int menu_add_item(Menu *menu, int tab, const char *label,
-                  const char **options, int count, int default_idx) {
+                  const char *const *options, int count, int default_idx) {
     if (tab < 0 || tab >= menu->tab_count) return -1;
     MenuTab *t = &menu->tabs[tab];
     if (t->item_count >= MENU_MAX_ITEMS) return -1;

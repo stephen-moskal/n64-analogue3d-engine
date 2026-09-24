@@ -85,7 +85,7 @@ Steps:
 
 Gotchas:
 
-- **The Start menu belongs to the demo.** `demo_update()` opens and updates it and `demo_post_draw()` draws it. In any other scene Start doesn't open the menu (the benchmark uses it to abort), so the Debug tab (Scene, Reset Soak) is out of reach. Either drive the menu yourself, or give the scene an exit the way `benchmark_scene_finished()` does (`main.c` polls it and returns to the demo). The Settings, Sound, Lighting, Environ and Controls tabs only take effect in the demo, which owns their meaning (D10).
+- **The Start menu belongs to the demo.** `demo_update()` opens and updates it and `demo_post_draw()` draws it. In any other scene Start doesn't open the menu (the benchmark uses it to abort), so the Debug tab (Scene, Reset Soak) is out of reach. Either drive the menu yourself, or give the scene an exit the way `benchmark_scene_finished()` does (`main.c` polls it and returns to the demo). The Settings, Sound, Lighting, Environ and Controls tabs are defined in `src/ui/settings.c` and only take effect in the demo, which applies them.
 
   ```c
   extern Menu start_menu;                          // owned by main.c
@@ -210,46 +210,46 @@ Gotchas:
 
 ## Add a Start menu item
 
-**Files:** `src/main.c` (options and items) and `src/scenes/demo_scene.c` (what the item does). Background: [MENU_SYSTEM.md](MENU_SYSTEM.md).
+**Files:** `src/ui/settings.h` and `src/ui/settings.c` (the option), and the code that applies it (`src/scenes/demo_scene.c`). Background: [MENU_SYSTEM.md](MENU_SYSTEM.md), "Settings".
 
 | Limit (`menu.h`) | Value | In use today |
 |---|---|---|
 | `MENU_MAX_TABS` | 6 | 6: Settings, Sound, Lighting, Environ, Controls, Debug |
-| `MENU_MAX_ITEMS` (per tab) | 12 | 7, 3, 10, 6, 11, 11 |
-| `MENU_MAX_OPTIONS` (per item) | 16 | extra options are dropped silently |
+| `MENU_MAX_ITEMS` (per tab) | 12 | 7, 3, 10, 6, 11, 12 |
+| `MENU_MAX_OPTIONS` (per item) | 16 | a longer choice list doesn't compile (`CHOICE_TABLE`) |
 | `MENU_VISIBLE_ITEMS` | 7 | longer tabs scroll |
 
-`menu_add_tab()` and `menu_add_item()` return -1 when full, and `menu_get_value()` returns 0 for an item that doesn't exist, so a failed add goes unnoticed. A seventh tab needs a larger `MENU_MAX_TABS`.
-
-1. In `main.c`, add a file-scope options array (the menu keeps the pointers) and a `menu_add_item()` call at the **end** of the tab's list, so existing item indices stay valid:
-
-   ```c
-   static const char *shadow_options[] = {"Off", "Blob", "Projected"};
-   ...
-   menu_add_item(&start_menu, tab_l, "Shadows", shadow_options, 3, 0);   // Default: Off
-   ```
-2. In `demo_scene.c`, add `#define ITEM_<NAME> <index>` to that tab's block. The `TAB_` and `ITEM_` macros must match the order in `main.c`, and nothing checks it (D10; stage S8 plans a settings module with static asserts). A table that maps options to values (like `fog_near_values[]`) needs one entry per option.
-3. Apply the value in `demo_update()` only when it changes (S3, D23), with a cache per item:
+1. In `settings.h`, add `SETTING_<NAME>` to `SettingId` in its tab's block, where it should appear: the menu shows the options in enum order. Note its value type in the comment.
+2. In `settings.c`, declare its choices and their values side by side, and check them:
 
    ```c
-   int fps_opt = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_FRAME_RATE);
-   if (fps_opt != last_fps_option) {
-       switch (fps_opt) {
-       case 0: engine_set_fps_limit(30); break;
-       case 1: engine_set_fps_limit(0);  break;  // the display rate (60)
-       }
-       last_fps_option = fps_opt;
-   }
+   static const char *const speed_names[] = {"Slow", "Normal", "Fast"};
+   static const float speed_values[] = {0.5f, 1.0f, 2.0f};
+   CHOICE_TABLE(speed_names, speed_values);
    ```
 
-   Reset the cache in `demo_init()`: Reset Scene re-runs it while the menu keeps its values. A cache reset to -1 forces an apply on the first update (the point lights, the Controls bindings and the Environ disabled states do this); a cache reset to the item's default skips that first apply, so the scene must already be in that state (the other blocks, like the frame rate above, work this way).
-4. Optionally grey an item out with `menu_item_set_disabled(&start_menu, tab, item, true)`; the cursor can visit it but its value cannot change. Update disabled states on change too. Set values from code with `menu_set_value()`.
-5. Test with Debug → Menu Sweep, which steps every option of every item (except the Controls and Debug tabs and Reset Scene), holding each for 15 frames. Run it with RDP Check on.
+   then add its row to `defs[]`: tab, label, choices, default choice, value type and values:
+
+   ```c
+   [SETTING_GAME_SPEED] = { G, "Game Speed", CHOICES(speed_names), 1, VALUES(SETTING_TYPE_FLOAT, speed_values) },
+   ```
+
+   Toggles reuse `off_on` / `on_off` with their bool tables; an action ("---" / "Go!") is `.type = SETTING_TYPE_ACTION` with no values. A full tab, a choice list longer than 16 or two tables of different lengths stop the build; `tests/host/test_settings.c` checks the rest of the table.
+3. Apply it where the game uses it, when it changes:
+
+   ```c
+   if (settings_take(SETTING_GAME_SPEED))
+       game_speed = settings_float(SETTING_GAME_SPEED);
+   ```
+
+   Options that feed one piece of state are applied together: `settings_take_range(first, last)` takes a group and answers whether any of it changed (the demo's lighting, point lights and sound). Don't take an option in two places: the first take consumes the change. The demo calls `settings_invalidate()` in `demo_init()`, so every option is applied again after Reset Scene and the scene always matches the menu (D27).
+4. Grey an option out with `settings_set_disabled()` (the cursor visits it; its value can't change), and change it from code with `settings_set_choice()`, `settings_step_choice()` or `settings_set_bool()`. An action option fires through `settings_trigger()`, which also resets it.
+5. Test: `libdragon exec make -C tests/host run`, then Debug → Menu Sweep on the A3D, which steps every option of every item (except the Controls and Debug tabs and Reset Scene), holding each for 15 frames. Run it with RDP Check on.
 
 Gotchas:
 
-- The demo reads its tabs every frame, so values apply while the menu is still open. B reverts every tab to the snapshot taken by `menu_open()`, and the demo re-applies the old values. Reset Scene is acted on only after the menu closes.
-- Controls items are indexed by `GameAction` and their options by `PhysicalButton` (the demo loops over `ACTION_COUNT`). A new action needs a Controls item, and that tab has one slot left.
+- Options apply while the menu is still open. B reverts every tab to the snapshot taken by `menu_open()`; the reverted options count as changed and are applied again. Reset Scene is acted on only after the menu closes.
+- The Controls tab is generated from the action module (`action_name()`, `action_button_name()`, the Exploration bindings): a new `GameAction` gets its option automatically, and the tab has one slot left.
 - Only the demo drives the Start menu (see [Add a scene](#add-a-scene)).
 
 ---

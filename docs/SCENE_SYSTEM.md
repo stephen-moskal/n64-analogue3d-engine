@@ -416,7 +416,7 @@ The demo scene (`src/scenes/demo_scene.c`) exercises most of the engine:
 - B spawns (then re-launches) a physics ball, a scene object with a body and a sphere collider that casts a shadow and can be selected, and fires particle bursts on the pillar tops; torch flames burn while point lights are on
 - Object selection (Z, D-Left/Right) and move/rotate/scale (A cycles the mode, stick and C-buttons manipulate). Colliders move with their objects: the platform's collider is its box, so the ball lands on the platform wherever it is moved. A ball being transformed is held in place (kinematic) and drops when the mode ends
 - The Start menu: background, lighting, shadows, point lights, atmosphere presets, camera mode and collision, frame rate, sound, control remapping, Reset Scene, and the Debug tab
-- Most menu values are applied only when they change, not every frame
+- Its options (`src/ui/settings.c`) are applied when they change, and all of them after every (re)init, so the scene always matches the menu (D27)
 - HUD: title, object counts, triangles/uploads/collisions/raycast distance, FPS and CPU time, camera mode and position
 
 The benchmark scene (`src/scenes/benchmark_scene.c`) is a second, menu-less scene; see [BENCHMARKS.md](BENCHMARKS.md).

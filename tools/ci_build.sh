@@ -9,12 +9,25 @@ cd "$(dirname "$0")/.."
 
 JOBS="$(nproc 2>/dev/null || echo 4)"
 
+# Builds with the output shown, and fails on any compiler warning: libdragon's
+# n64.mk keeps the -Wunused-* family out of -Werror, so without this an unused
+# variable only prints (S8: one that exists only for an assert, in release)
+build_rom() {
+    local log
+    log="$(mktemp)"
+    make -j"$JOBS" "$@" 2>&1 | tee "$log"
+    if grep -q "warning:" "$log"; then
+        echo "::error::compiler warnings in the $* build (listed above)"
+        exit 1
+    fi
+}
+
 echo "::group::Debug ROM"
-make -j"$JOBS" BUILD=debug
+build_rom BUILD=debug
 echo "::endgroup::"
 
 echo "::group::Release ROM"
-make -j"$JOBS" BUILD=release
+build_rom BUILD=release
 echo "::endgroup::"
 
 echo "::group::Host unit tests"

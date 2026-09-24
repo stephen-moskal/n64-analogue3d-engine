@@ -11,6 +11,7 @@
 #include "../ui/text.h"
 #include "../ui/menu.h"
 #include "../ui/menu_view.h"
+#include "../ui/settings.h"
 #include "../ui/ui_hud.h"
 #include "../ui/ui_draw.h"
 #include "../ui/textbox.h"
@@ -163,10 +164,6 @@ static int ball_object = -1;    // object index, -1 until the first launch
 #define BALL_SPAWN_Z    -300.0f
 #define BALL_RELAUNCH_VY  400.0f
 
-// Track current camera mode to detect menu changes
-static int last_camera_mode = 0;
-static int last_camera_col = 0;
-
 // External references (owned by main.c)
 extern Menu start_menu;
 static MenuView start_menu_view;        // cached text; kept across scene resets
@@ -201,126 +198,10 @@ static void hud_setup(void) {
     hud_ready = true;
 }
 
-// --- Menu tab/item indices (must match main.c order) ---
-#define TAB_SETTINGS       0
-#define TAB_SOUND          1
+// The Start menu's options and what each choice means are in ui/settings.c;
+// the groups are applied in demo_update() when they change (settings_take).
 
-#define ITEM_BG_COLOR      0
-#define ITEM_DEBUG_TEXT     1
-#define ITEM_CAMERA_MODE   2
-#define ITEM_CAMERA_COL    3
-#define ITEM_FRAME_RATE    4
-#define ITEM_RESET_SCENE   5
-#define ITEM_UI_STYLE      6
-
-#define ITEM_SOUND_MASTER  0
-#define ITEM_SFX_VOL       1
-#define ITEM_BGM_VOL       2
-
-// --- Lighting tab indices ---
-#define TAB_LIGHTING       2
-
-#define ITEM_SUN_DIR       0
-#define ITEM_SUN_COLOR     1
-#define ITEM_BRIGHTNESS    2
-#define ITEM_AMBIENT       3
-#define ITEM_SHADOWS       4
-#define ITEM_SHADOW_DK     5
-#define ITEM_PT_LIGHTS     6
-#define ITEM_PT_COLOR      7
-#define ITEM_PT_INTENSITY  8
-#define ITEM_PT_RADIUS     9
-
-// --- Environ tab indices ---
-#define TAB_ENVIRON        3
-
-#define ITEM_ATMO_PRESET   0
-#define ITEM_FOG_TOGGLE    1
-#define ITEM_FOG_NEAR      2
-#define ITEM_FOG_FAR       3
-#define ITEM_FOG_COLOR     4
-#define ITEM_SKY_TOGGLE    5
-
-// --- Controls tab indices (item order matches GameAction enum) ---
-#define TAB_CONTROLS       4
-
-// --- Lighting preset tables ---
-
-static const float sun_dir_presets[][3] = {
-    { 0.577f,  0.577f,  0.577f},   // Front (original default)
-    {-0.707f,  0.707f,  0.000f},   // Side (from left, 45 deg)
-    { 0.000f,  1.000f,  0.000f},   // Top (directly overhead)
-    { 0.866f,  0.200f,  0.458f},   // Sunset (low angle)
-    {-0.866f,  0.200f, -0.458f},   // Dawn (opposite sunset)
-};
-
-static const float sun_color_presets[][3] = {
-    {0.85f, 0.80f, 0.70f},   // Warm (original)
-    {0.70f, 0.80f, 0.90f},   // Cool (blue-ish)
-    {0.85f, 0.85f, 0.85f},   // Neutral (white)
-    {1.00f, 0.75f, 0.40f},   // Golden (sunset)
-};
-
-static const float brightness_presets[] = { 0.20f, 0.40f, 0.60f, 0.80f, 1.00f };
-static const float ambient_presets[]    = { 0.10f, 0.20f, 0.30f, 0.40f, 0.50f };
-static const float shadow_dark_presets[] = { 0.3f, 0.6f, 0.9f };
-
-// --- Atmosphere preset tables ---
-
-static const color_t fog_color_presets[] = {
-    {0x80, 0x80, 0x90, 0xFF},  // Grey
-    {0x60, 0x80, 0xD0, 0xFF},  // Blue
-    {0xC0, 0xC0, 0xC0, 0xFF},  // White
-    {0xD0, 0x80, 0x40, 0xFF},  // Warm
-    {0x50, 0x30, 0x60, 0xFF},  // Purple
-    {0x10, 0x10, 0x20, 0xFF},  // Dark
-};
-static const float fog_near_values[] = {50, 100, 150, 200, 300, 400};
-static const float fog_far_values[]  = {400, 600, 800, 1000, 1200, 1400};
-
-// --- Point light tuning tables ---
-
-static const float ptlight_color_presets[][3] = {
-    {1.0f, 0.7f, 0.3f},   // Warm (torch)
-    {0.5f, 0.7f, 1.0f},   // Cool (blue)
-    {1.0f, 0.3f, 0.2f},   // Red
-    {0.3f, 1.0f, 0.3f},   // Green
-    {0.3f, 0.3f, 1.0f},   // Blue
-    {1.0f, 1.0f, 1.0f},   // White
-};
-static const float ptlight_intensity_values[] = {0.4f, 0.8f, 1.2f, 2.0f, 3.0f, 5.0f, 8.0f, 12.0f, 16.0f, 24.0f};
-static const float ptlight_radius_values[]    = {100.0f, 200.0f, 300.0f, 400.0f, 600.0f, 800.0f, 1000.0f, 1200.0f, 1500.0f, 2000.0f};
-
-// Track last lighting menu values to detect changes
-static int last_sun_dir = 0;
-static int last_sun_color = 0;
-static int last_brightness = 4;
-static int last_ambient = 1;
-static int last_shadows = 0;
-static int last_shadow_dark = 1;
-// Track atmosphere menu values
-static int last_atmo_preset = 0;
-static int last_fog_toggle = 0;
-static int last_fog_near = 3;
-static int last_fog_far = 4;
-static int last_fog_color = 0;
-static int last_sky_toggle = 0;
-// Applied only when they change (roadmap D23); -1 forces the next update to apply
-static int last_pt_lights = -1, last_pt_color = -1, last_pt_int = -1, last_pt_rad = -1;
-static int environ_disabled_for = -1;          // atmosphere preset the Environ disabled states match
-static int last_binding[ACTION_COUNT];
-
-// Background color options
-static const color_t bg_colors[] = {
-    {0x10, 0x10, 0x30, 0xFF},  // Dark Blue (default)
-    {0x00, 0x00, 0x00, 0xFF},  // Black
-    {0x30, 0x10, 0x10, 0xFF},  // Dark Red
-    {0x10, 0x30, 0x10, 0xFF},  // Dark Green
-    {0x20, 0x10, 0x30, 0xFF},  // Dark Purple
-    {0x60, 0x80, 0xD0, 0xFF},  // Light Blue
-    {0xFF, 0xFF, 0xFF, 0xFF},  // White
-};
-
+// HUD names, in CameraMode order
 static const char *camera_mode_names[] = {"ORBITAL", "FIXED", "FOLLOW"};
 
 #define FIXED_MOVE_SPEED  150.0f
@@ -328,27 +209,17 @@ static const char *camera_mode_names[] = {"ORBITAL", "FIXED", "FOLLOW"};
 #define BOUNCE_SOUND_FULL_SPEED  400.0f   // impact speed of a full-volume bounce
 #define FIXED_Y_SPEED     5.0f
 
-static int last_fps_option = 1;
-static int last_ui_style = -1;       // -1: apply the UI Style item on the next check
-static int last_sound_master = -1;  // -1: apply the Sound tab on the next check
-static int last_sfx_vol = -1;
-static int last_bgm_vol = -1;
 static float ball_prev_vy = 0.0f;   // bounce detection for the collision sound
 
-// Sound tab → sound module volumes, when a value changes (the caches start at
-// -1, so demo_init applies the tab before any music starts). Master Off fades
-// everything out, and silent music stops decoding (docs/AUDIO.md).
+// Sound tab → sound module volumes, when one of its options changed (after
+// demo_init every option counts as changed, so the tab applies before any
+// music starts). Master Off fades everything out, and silent music stops
+// decoding (docs/AUDIO.md).
 static void apply_sound_settings(void) {
-    int master  = menu_get_value(&start_menu, TAB_SOUND, ITEM_SOUND_MASTER);  // 0 = On
-    int sfx_idx = menu_get_value(&start_menu, TAB_SOUND, ITEM_SFX_VOL);        // 0..10
-    int bgm_idx = menu_get_value(&start_menu, TAB_SOUND, ITEM_BGM_VOL);        // 0..10
-    if (master == last_sound_master && sfx_idx == last_sfx_vol && bgm_idx == last_bgm_vol) return;
-    snd_set_volume(SND_VOL_MASTER, master == 0 ? 1.0f : 0.0f, 0.25f);
-    snd_set_volume(SND_VOL_SFX, sfx_idx / 10.0f, 0.0f);
-    snd_set_volume(SND_VOL_MUSIC, bgm_idx / 10.0f, 0.0f);
-    last_sound_master = master;
-    last_sfx_vol = sfx_idx;
-    last_bgm_vol = bgm_idx;
+    if (!settings_take_range(SETTING_SOUND, SETTING_MUSIC_VOLUME)) return;
+    snd_set_volume(SND_VOL_MASTER, settings_bool(SETTING_SOUND) ? 1.0f : 0.0f, 0.25f);
+    snd_set_volume(SND_VOL_SFX, settings_float(SETTING_SFX_VOLUME), 0.0f);
+    snd_set_volume(SND_VOL_MUSIC, settings_float(SETTING_MUSIC_VOLUME), 0.0f);
 }
 static float hud_fps = 0.0f;
 static uint32_t hud_fps_ticks = 0;
@@ -472,18 +343,18 @@ static int spawn_billboard(Scene *scene, int tex_slot, BillboardMode mode,
 // Camera mode application
 // ============================================================
 
-static void apply_camera_mode(Scene *scene, int mode_idx) {
-    switch (mode_idx) {
-    case 0: // Orbital
+static void apply_camera_mode(Scene *scene, CameraMode mode) {
+    switch (mode) {
+    case CAMERA_MODE_ORBITAL:
         camera_set_mode(&scene->camera, CAMERA_MODE_ORBITAL);
         break;
-    case 1: { // Fixed — elevated side view looking at origin
+    case CAMERA_MODE_FIXED: { // elevated side view looking at origin
         camera_set_fixed(&scene->camera,
             (vec3_t){250.0f, 200.0f, 250.0f},
             (vec3_t){0.0f, 0.0f, 0.0f});
         break;
     }
-    case 2: { // Follow — track first object (cube)
+    case CAMERA_MODE_FOLLOW: { // track the first object (the cube)
         SceneObject *cube_obj = scene_get_object(scene, 0);
         const vec3_t *follow_pos = cube_obj ? &cube_obj->position : NULL;
         if (follow_pos) {
@@ -622,6 +493,11 @@ static void demo_init(Scene *scene) {
     // Store scene pointer for object_draw selection check
     current_scene = scene;
 
+    // The scene state below starts from defaults (lighting_init, camera_init,
+    // no torches): every option counts as changed, so the next update applies
+    // them all and the scene matches the menu (D27)
+    settings_invalidate();
+
     // Reset object data pool
     object_data_count = 0;
 
@@ -709,32 +585,7 @@ static void demo_init(Scene *scene) {
     spawn_billboard(scene, TEX_BILLBOARD_TREE, BILLBOARD_CYLINDRICAL,
         100.0f, 130.0f, (vec3_t){-350, -30, 200}, 255, 255, 255);
 
-    // Camera collision OFF by default
-    last_camera_mode = 0;
-    last_camera_col = 0;
-    last_fps_option = 1;
-    last_ui_style = -1;
-    last_sound_master = -1;
-    last_sfx_vol = -1;
-    last_bgm_vol = -1;
     ball_prev_vy = 0.0f;
-
-    // Lighting defaults
-    last_sun_dir = 0;
-    last_sun_color = 0;
-    last_brightness = 4;
-    last_ambient = 1;
-    last_shadows = 0;
-    last_shadow_dark = 1;
-    last_atmo_preset = 0;
-    last_fog_toggle = 0;
-    last_fog_near = 3;
-    last_fog_far = 4;
-    last_fog_color = 0;
-    last_sky_toggle = 0;
-    last_pt_lights = last_pt_color = last_pt_int = last_pt_rad = -1;
-    environ_disabled_for = -1;
-    for (int i = 0; i < ACTION_COUNT; i++) last_binding[i] = -1;
     hud_fps = 0.0f;
     hud_fps_ticks = 0;
     interaction_mode = MODE_NORMAL;
@@ -753,12 +604,6 @@ static void demo_init(Scene *scene) {
         (vec3_t){250.0f, 100.0f, 0.0f}, 40);
     emitter_torch_l = -1;
     emitter_torch_r = -1;
-
-    // Set initial disabled states for menu items
-    // Point light sub-options disabled by default (Pt Lights = Off)
-    menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_COLOR, true);
-    menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_INTENSITY, true);
-    menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_RADIUS, true);
 
     // Background music: the Sound tab first, so a muted start never decodes
     apply_sound_settings();
@@ -827,6 +672,111 @@ static void handle_object_manipulation(Scene *scene, const InputState *input) {
 }
 
 // ============================================================
+// Options → scene (called from demo_update when their options change)
+// ============================================================
+
+// Lighting tab → the sun, ambient light and shadows. An atmosphere preset
+// brings its own sun colour, brightness and ambient light, and the Lighting
+// tab greys those three out while one is active (apply_atmosphere).
+static void apply_lighting(Scene *scene) {
+    LightConfig *lc = &scene->lighting;
+    const float *dir = settings_vec3(SETTING_SUN_DIR);
+    const float *sun = settings_vec3(SETTING_SUN_COLOR);
+    float amb = settings_float(SETTING_AMBIENT);
+    for (int i = 0; i < 3; i++) {
+        lc->direction[i] = dir[i];
+        lc->sun_color[i] = sun[i];
+    }
+    lc->sun_intensity = settings_float(SETTING_BRIGHTNESS);
+    lc->ambient[0] = amb;
+    lc->ambient[1] = amb;
+    lc->ambient[2] = amb * 1.1f;                 // a slightly blue tint
+    if (lc->ambient[2] > 1.0f) lc->ambient[2] = 1.0f;
+    lc->shadow.mode = (ShadowMode)settings_int(SETTING_SHADOWS);
+    lc->shadow.darkness = settings_float(SETTING_SHADOW_DARKNESS);
+    lc->shadow.floor_y = FLOOR_Y;
+    lc->shadow.blob_radius = 80.0f;
+
+    int preset = settings_int(SETTING_ATMOSPHERE);
+    if (preset >= 0) {
+        const LightingHint *hint = &atmosphere_get_preset((AtmospherePresetID)preset)->lighting;
+        lc->sun_intensity = hint->sun_intensity;
+        for (int i = 0; i < 3; i++) {
+            lc->sun_color[i] = hint->sun_color[i];
+            lc->ambient[i] = hint->ambient[i];
+        }
+    }
+}
+
+// Environ tab → atmosphere. A preset sets fog and sky itself; the fog and sky
+// options then read On and are greyed out, with the Lighting options the
+// preset owns (apply_lighting). Custom applies the options one by one.
+static void apply_atmosphere(void) {
+    int preset = settings_int(SETTING_ATMOSPHERE);
+    bool custom = (preset < 0);
+    if (!custom) {
+        atmosphere_apply_preset((AtmospherePresetID)preset);
+        settings_set_bool(SETTING_FOG, true);
+        settings_set_bool(SETTING_SKY, true);
+        settings_take_range(SETTING_FOG, SETTING_SKY);   // shown, not applied
+    } else {
+        atmosphere_set_fog_enabled(settings_bool(SETTING_FOG));
+        atmosphere_set_fog_near(settings_float(SETTING_FOG_NEAR));
+        atmosphere_set_fog_far(settings_float(SETTING_FOG_FAR));
+        atmosphere_set_fog_color(settings_color(SETTING_FOG_COLOR));
+        atmosphere_set_sky_enabled(settings_bool(SETTING_SKY));
+    }
+    for (int s = SETTING_FOG; s <= SETTING_SKY; s++)
+        settings_set_disabled((SettingId)s, !custom);
+    settings_set_disabled(SETTING_SUN_COLOR, !custom);
+    settings_set_disabled(SETTING_BRIGHTNESS, !custom);
+    settings_set_disabled(SETTING_AMBIENT, !custom);
+}
+
+// Point lights → two lights over the pillars and their torch flames. Their
+// colour, intensity and radius options are greyed out while they're off.
+static void apply_point_lights(Scene *scene) {
+    LightConfig *lc = &scene->lighting;
+    bool on = settings_bool(SETTING_POINT_LIGHTS);
+    if (on) {
+        const float *c = settings_vec3(SETTING_POINT_COLOR);
+        const vec3_t pos[2] = {{-250.0f, 50.0f, 30.0f}, {250.0f, 50.0f, 30.0f}};
+        lc->point_light_count = 2;
+        for (int i = 0; i < 2; i++) {
+            lc->point_lights[i] = (PointLight){
+                .position  = pos[i],
+                .color     = {c[0], c[1], c[2]},
+                .intensity = settings_float(SETTING_POINT_INTENSITY),
+                .radius    = settings_float(SETTING_POINT_RADIUS),
+                .active    = true,
+            };
+        }
+    } else {
+        lc->point_light_count = 0;
+    }
+
+    // Torch flames on the pillars while the lights are on
+    bool have_torches = (emitter_torch_l >= 0);
+    if (on && !have_torches) {
+        emitter_torch_l = particle_emitter_create(&torch_flame,
+            (vec3_t){-250.0f, 100.0f, 0.0f}, 16);
+        emitter_torch_r = particle_emitter_create(&torch_flame,
+            (vec3_t){250.0f, 100.0f, 0.0f}, 16);
+        if (emitter_torch_l >= 0) particle_emitter_set_active(emitter_torch_l, true);
+        if (emitter_torch_r >= 0) particle_emitter_set_active(emitter_torch_r, true);
+    } else if (!on && have_torches) {
+        if (emitter_torch_l >= 0) particle_emitter_destroy(emitter_torch_l);
+        if (emitter_torch_r >= 0) particle_emitter_destroy(emitter_torch_r);
+        emitter_torch_l = -1;
+        emitter_torch_r = -1;
+    }
+
+    settings_set_disabled(SETTING_POINT_COLOR, !on);
+    settings_set_disabled(SETTING_POINT_INTENSITY, !on);
+    settings_set_disabled(SETTING_POINT_RADIUS, !on);
+}
+
+// ============================================================
 // Scene update
 // ============================================================
 
@@ -851,14 +801,10 @@ static void demo_update(Scene *scene, float dt) {
         }
     }
 
-    // --- Check for scene reset (only after menu closes with Apply) ---
-    if (!start_menu.is_open) {
-        int reset_val = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_RESET_SCENE);
-        if (reset_val == 1) {
-            menu_set_value(&start_menu, TAB_SETTINGS, ITEM_RESET_SCENE, 0);
-            scene->reset_requested = true;
-            return;
-        }
+    // --- Reset Scene acts once the menu is closed with it on "Reset!" ---
+    if (!start_menu.is_open && settings_trigger(SETTING_RESET_SCENE)) {
+        scene->reset_requested = true;
+        return;
     }
 
     // --- Dialog: modal while open (game and camera input wait) ---
@@ -957,21 +903,9 @@ static void demo_update(Scene *scene, float dt) {
             snd_play(SFX_MENU_SELECT);
         }
     } else if (interaction_mode != MODE_OBJECT_TRANSFORM && !in_dialog) {
-        // Camera mode cycling
-        if (action_pressed(ACTION_CAM_MODE_PREV)) {
-            int mode = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_CAMERA_MODE);
-            mode = (mode + 2) % 3;
-            menu_set_value(&start_menu, TAB_SETTINGS, ITEM_CAMERA_MODE, mode);
-            apply_camera_mode(scene, mode);
-            last_camera_mode = mode;
-        }
-        if (action_pressed(ACTION_CAM_MODE_NEXT)) {
-            int mode = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_CAMERA_MODE);
-            mode = (mode + 1) % 3;
-            menu_set_value(&start_menu, TAB_SETTINGS, ITEM_CAMERA_MODE, mode);
-            apply_camera_mode(scene, mode);
-            last_camera_mode = mode;
-        }
+        // Camera mode cycling: steps the Camera option (applied below)
+        if (action_pressed(ACTION_CAM_MODE_PREV)) settings_step_choice(SETTING_CAMERA_MODE, -1);
+        if (action_pressed(ACTION_CAM_MODE_NEXT)) settings_step_choice(SETTING_CAMERA_MODE, 1);
 
         if (input_state.has_input) {
             switch (scene->camera.mode) {
@@ -1000,239 +934,55 @@ static void demo_update(Scene *scene, float dt) {
         }
     }
 
-    // Check for camera mode change from menu
-    int cam_mode = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_CAMERA_MODE);
-    if (cam_mode != last_camera_mode) {
-        apply_camera_mode(scene, cam_mode);
-        last_camera_mode = cam_mode;
-    }
+    // --- Options (ui/settings.c) ---
+    // Each group is applied when one of its options changes, and every group
+    // after demo_init (settings_invalidate), so the scene always matches the
+    // menu (D27). They apply live while the menu is open; Cancel reverts the
+    // menu, and so the scene.
 
-    // Check for camera collision toggle from menu
-    int cam_col = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_CAMERA_COL);
-    if (cam_col != last_camera_col) {
-        if (cam_col == 1) {
-            camera_set_collision(&scene->camera, &scene->collision,
-                                 COLLISION_LAYER_ENV);
-        } else {
+    if (settings_take(SETTING_CAMERA_MODE))
+        apply_camera_mode(scene, (CameraMode)settings_int(SETTING_CAMERA_MODE));
+    if (settings_take(SETTING_CAMERA_COLLIDE)) {
+        if (settings_bool(SETTING_CAMERA_COLLIDE))
+            camera_set_collision(&scene->camera, &scene->collision, COLLISION_LAYER_ENV);
+        else
             camera_set_collision(&scene->camera, NULL, 0);
-        }
-        last_camera_col = cam_col;
     }
-
-    // Check for frame rate change from menu
-    int fps_opt = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_FRAME_RATE);
-    if (fps_opt != last_fps_option) {
-        switch (fps_opt) {
-        case 0: engine_set_fps_limit(30); break;
-        case 1: engine_set_fps_limit(0);  break;  // the display rate (60)
-        }
-        last_fps_option = fps_opt;
-    }
-
-    // Sound tab (Master, SFX and BGM volumes), on change
+    if (settings_take(SETTING_FRAME_RATE))
+        engine_set_fps_limit(settings_int(SETTING_FRAME_RATE));
     apply_sound_settings();
 
     // UI style: menu and HUD restyle live, even while the menu is open
-    int ui_style_idx = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_UI_STYLE);
-    if (ui_style_idx != last_ui_style && ui_style_idx >= 0 && ui_style_idx < UI_STYLE_COUNT) {
-        ui_style_cur = ui_styles[ui_style_idx];
+    if (settings_take(SETTING_UI_STYLE)) {
+        ui_style_cur = ui_styles[settings_int(SETTING_UI_STYLE)];
         if (start_menu_view_ready) menu_view_set_style(&start_menu_view, ui_style_cur);
-        last_ui_style = ui_style_idx;
     }
 
-    // --- Apply lighting settings from Lighting tab ---
+    // Environ tab, then the lighting it overrides, then the point lights
+    bool preset_changed = settings_take(SETTING_ATMOSPHERE);
+    bool custom_changed = settings_take_range(SETTING_FOG, SETTING_SKY);
+    int preset = settings_int(SETTING_ATMOSPHERE);            // -1: Custom
+    if (preset_changed || (custom_changed && preset < 0))
+        apply_atmosphere();
+    if (settings_take_range(SETTING_SUN_DIR, SETTING_SHADOW_DARKNESS) || preset_changed)
+        apply_lighting(scene);
+    if (settings_take_range(SETTING_POINT_LIGHTS, SETTING_POINT_RADIUS))
+        apply_point_lights(scene);
 
-    int sun_dir_idx    = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_SUN_DIR);
-    int sun_color_idx  = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_SUN_COLOR);
-    int brightness_idx = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_BRIGHTNESS);
-    int ambient_idx    = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_AMBIENT);
-    int shadow_idx     = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_SHADOWS);
-    int shadow_dk_idx  = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_SHADOW_DK);
-    if (sun_dir_idx != last_sun_dir || sun_color_idx != last_sun_color ||
-        brightness_idx != last_brightness || ambient_idx != last_ambient ||
-        shadow_idx != last_shadows || shadow_dk_idx != last_shadow_dark) {
-
-        LightConfig *lc = &scene->lighting;
-
-        // Sun direction
-        lc->direction[0] = sun_dir_presets[sun_dir_idx][0];
-        lc->direction[1] = sun_dir_presets[sun_dir_idx][1];
-        lc->direction[2] = sun_dir_presets[sun_dir_idx][2];
-
-        // Sun color + brightness
-        lc->sun_color[0] = sun_color_presets[sun_color_idx][0];
-        lc->sun_color[1] = sun_color_presets[sun_color_idx][1];
-        lc->sun_color[2] = sun_color_presets[sun_color_idx][2];
-        lc->sun_intensity = brightness_presets[brightness_idx];
-
-        // Ambient (slightly blue tint)
-        float amb = ambient_presets[ambient_idx];
-        lc->ambient[0] = amb;
-        lc->ambient[1] = amb;
-        lc->ambient[2] = amb * 1.1f;
-        if (lc->ambient[2] > 1.0f) lc->ambient[2] = 1.0f;
-
-        // Shadows
-        lc->shadow.mode = (ShadowMode)shadow_idx;
-        lc->shadow.darkness = shadow_dark_presets[shadow_dk_idx];
-        lc->shadow.floor_y = FLOOR_Y;
-        lc->shadow.blob_radius = 80.0f;
-
-        last_sun_dir = sun_dir_idx;
-        last_sun_color = sun_color_idx;
-        last_brightness = brightness_idx;
-        last_ambient = ambient_idx;
-        last_shadows = shadow_idx;
-        last_shadow_dark = shadow_dk_idx;
+    // Controls tab: one binding per action
+    for (int a = 0; a < ACTION_COUNT; a++) {
+        if (settings_take(SETTING_BINDING(a)))
+            action_set_binding((GameAction)a, (PhysicalButton)settings_int(SETTING_BINDING(a)));
     }
 
-    // --- Apply atmosphere settings from Environ tab ---
-
-    int atmo_preset  = menu_get_value(&start_menu, TAB_ENVIRON, ITEM_ATMO_PRESET);
-    int fog_toggle   = menu_get_value(&start_menu, TAB_ENVIRON, ITEM_FOG_TOGGLE);
-    int fog_near_idx = menu_get_value(&start_menu, TAB_ENVIRON, ITEM_FOG_NEAR);
-    int fog_far_idx  = menu_get_value(&start_menu, TAB_ENVIRON, ITEM_FOG_FAR);
-    int fog_color_idx= menu_get_value(&start_menu, TAB_ENVIRON, ITEM_FOG_COLOR);
-    int sky_toggle   = menu_get_value(&start_menu, TAB_ENVIRON, ITEM_SKY_TOGGLE);
-
-    if (atmo_preset != last_atmo_preset && atmo_preset > 0) {
-        // Named preset selected: apply all atmosphere + lighting settings
-        AtmospherePresetID id = (AtmospherePresetID)(atmo_preset - 1);
-        atmosphere_apply_preset(id);
-        const AtmospherePreset *p = atmosphere_get_preset(id);
-        scene->bg_color = p->bg_color;
-
-        // Apply preset lighting hints to scene
-        LightConfig *lc = &scene->lighting;
-        lc->sun_intensity = p->lighting.sun_intensity;
-        lc->ambient[0] = p->lighting.ambient[0];
-        lc->ambient[1] = p->lighting.ambient[1];
-        lc->ambient[2] = p->lighting.ambient[2];
-        lc->sun_color[0] = p->lighting.sun_color[0];
-        lc->sun_color[1] = p->lighting.sun_color[1];
-        lc->sun_color[2] = p->lighting.sun_color[2];
-
-        // Sync menu toggles to reflect preset state
-        menu_set_value(&start_menu, TAB_ENVIRON, ITEM_FOG_TOGGLE, 1);
-        menu_set_value(&start_menu, TAB_ENVIRON, ITEM_SKY_TOGGLE, 1);
-        fog_toggle = 1;
-        sky_toggle = 1;
-    } else if (atmo_preset == 0 &&
-               (atmo_preset != last_atmo_preset || fog_toggle != last_fog_toggle ||
-                fog_near_idx != last_fog_near || fog_far_idx != last_fog_far ||
-                fog_color_idx != last_fog_color || sky_toggle != last_sky_toggle)) {
-        // Custom mode: apply individual settings
-        atmosphere_set_fog_enabled(fog_toggle == 1);
-        atmosphere_set_fog_near(fog_near_values[fog_near_idx]);
-        atmosphere_set_fog_far(fog_far_values[fog_far_idx]);
-        atmosphere_set_fog_color(fog_color_presets[fog_color_idx]);
-        atmosphere_set_sky_enabled(sky_toggle == 1);
-    }
-
-    // Disabled state for Environ sub-options (custom mode only), on change
-    if (atmo_preset != environ_disabled_for) {
-        bool is_custom = (atmo_preset == 0);
-        menu_item_set_disabled(&start_menu, TAB_ENVIRON, ITEM_FOG_TOGGLE, !is_custom);
-        menu_item_set_disabled(&start_menu, TAB_ENVIRON, ITEM_FOG_NEAR, !is_custom);
-        menu_item_set_disabled(&start_menu, TAB_ENVIRON, ITEM_FOG_FAR, !is_custom);
-        menu_item_set_disabled(&start_menu, TAB_ENVIRON, ITEM_FOG_COLOR, !is_custom);
-        menu_item_set_disabled(&start_menu, TAB_ENVIRON, ITEM_SKY_TOGGLE, !is_custom);
-        environ_disabled_for = atmo_preset;
-    }
-
-    last_atmo_preset = atmo_preset;
-    last_fog_toggle = fog_toggle;
-    last_fog_near = fog_near_idx;
-    last_fog_far = fog_far_idx;
-    last_fog_color = fog_color_idx;
-    last_sky_toggle = sky_toggle;
-
-    // --- Point lights and torch emitters, applied when their items change (D23) ---
-    // (Atmosphere presets and the lighting block never touch point lights;
-    // lighting_init on Reset Scene does, and demo_init resets the caches.)
-    int pt_lights_idx = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_LIGHTS);
-    int pt_color_idx  = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_COLOR);
-    int pt_int_idx    = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_INTENSITY);
-    int pt_rad_idx    = menu_get_value(&start_menu, TAB_LIGHTING, ITEM_PT_RADIUS);
-    if (pt_lights_idx != last_pt_lights || pt_color_idx != last_pt_color ||
-        pt_int_idx != last_pt_int || pt_rad_idx != last_pt_rad) {
-        LightConfig *lc = &scene->lighting;
-
-        if (pt_lights_idx == 1) {
-            float pt_r = ptlight_color_presets[pt_color_idx][0];
-            float pt_g = ptlight_color_presets[pt_color_idx][1];
-            float pt_b = ptlight_color_presets[pt_color_idx][2];
-            float pt_intensity = ptlight_intensity_values[pt_int_idx];
-            float pt_radius = ptlight_radius_values[pt_rad_idx];
-
-            lc->point_light_count = 2;
-            lc->point_lights[0] = (PointLight){
-                .position  = {-250.0f, 50.0f, 30.0f},
-                .color     = {pt_r, pt_g, pt_b},
-                .intensity = pt_intensity,
-                .radius    = pt_radius,
-                .active    = true,
-            };
-            lc->point_lights[1] = (PointLight){
-                .position  = {250.0f, 50.0f, 30.0f},
-                .color     = {pt_r, pt_g, pt_b},
-                .intensity = pt_intensity,
-                .radius    = pt_radius,
-                .active    = true,
-            };
-        } else {
-            lc->point_light_count = 0;
-        }
-
-        // Torch emitter lifecycle — state-based (survives preset changes)
-        bool want_torches = (pt_lights_idx == 1);
-        bool have_torches = (emitter_torch_l >= 0);
-
-        if (want_torches && !have_torches) {
-            emitter_torch_l = particle_emitter_create(&torch_flame,
-                (vec3_t){-250.0f, 100.0f, 0.0f}, 16);
-            emitter_torch_r = particle_emitter_create(&torch_flame,
-                (vec3_t){250.0f, 100.0f, 0.0f}, 16);
-            if (emitter_torch_l >= 0) particle_emitter_set_active(emitter_torch_l, true);
-            if (emitter_torch_r >= 0) particle_emitter_set_active(emitter_torch_r, true);
-        } else if (!want_torches && have_torches) {
-            if (emitter_torch_l >= 0) particle_emitter_destroy(emitter_torch_l);
-            if (emitter_torch_r >= 0) particle_emitter_destroy(emitter_torch_r);
-            emitter_torch_l = -1;
-            emitter_torch_r = -1;
-        }
-
-        // Disabled state for point light sub-options
-        bool pt_on = (pt_lights_idx == 1);
-        menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_COLOR, !pt_on);
-        menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_INTENSITY, !pt_on);
-        menu_item_set_disabled(&start_menu, TAB_LIGHTING, ITEM_PT_RADIUS, !pt_on);
-
-        last_pt_lights = pt_lights_idx;
-        last_pt_color = pt_color_idx;
-        last_pt_int = pt_int_idx;
-        last_pt_rad = pt_rad_idx;
-    }
-
-    // --- Apply control rebindings from Controls tab, on change (D23) ---
-    // Menu item indices match GameAction enum; option indices match PhysicalButton enum
-    for (int i = 0; i < ACTION_COUNT; i++) {
-        int btn_idx = menu_get_value(&start_menu, TAB_CONTROLS, i);
-        if (btn_idx != last_binding[i]) {
-            action_set_binding((GameAction)i, (PhysicalButton)btn_idx);
-            last_binding[i] = btn_idx;
-        }
-    }
-
-    // Background color: atmosphere preset overrides Settings tab
-    if (atmo_preset > 0) {
-        // Preset already set bg_color above
-    } else if (atmosphere_get_fog_enabled()) {
-        // Custom fog: match bg to fog color for seamless blending
-        scene->bg_color = fog_color_presets[fog_color_idx];
-    } else {
-        scene->bg_color = bg_colors[menu_get_value(&start_menu, TAB_SETTINGS, ITEM_BG_COLOR)];
-    }
+    // Background: the preset's; under custom fog, the fog colour (the far
+    // geometry fades into it); else BG Color
+    if (preset >= 0)
+        scene->bg_color = atmosphere_get_preset((AtmospherePresetID)preset)->bg_color;
+    else if (atmosphere_get_fog_enabled())
+        scene->bg_color = settings_color(SETTING_FOG_COLOR);
+    else
+        scene->bg_color = settings_color(SETTING_BG_COLOR);
 
     // Ball bounce: falling velocity turned upward since the last update (the
     // scene steps physics and moves the ball after this function). The sound
@@ -1337,7 +1087,7 @@ static void demo_post_draw(Scene *scene) {
     PROF_BEGIN(PROF_HUD);
     // Debug text overlay (HUD work only runs when the HUD is shown; defect D7).
     // The readouts are gathered only when the panels are due (~6 Hz).
-    bool show_debug = (menu_get_value(&start_menu, TAB_SETTINGS, ITEM_DEBUG_TEXT) == 0);
+    bool show_debug = settings_bool(SETTING_DEBUG_TEXT);
     if (show_debug) {
         hud_setup();
         const UiStyle *st = ui_style_cur;
@@ -1386,9 +1136,8 @@ static void demo_post_draw(Scene *scene) {
             } else {
                 hud_panel_set(&hud_bottom, hl_sel, st->hud_accent, "");
             }
-            int cam_mode_idx = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_CAMERA_MODE);
             hud_panel_setf(&hud_bottom, hl_cam, st->hud_text, "CAM:%s%s",
-                           camera_mode_names[cam_mode_idx],
+                           camera_mode_names[settings_int(SETTING_CAMERA_MODE)],
                            scene->camera.collision_enabled ? " COL" : "");
             hud_panel_setf(&hud_bottom, hl_pos, st->hud_text, "XYZ:%.0f,%.0f,%.0f",
                            scene->camera.position.x, scene->camera.position.y,

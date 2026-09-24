@@ -96,15 +96,12 @@ action_set_context(&combat_controls);
 
 The Controls tab (tab 4) in the start menu lists all 11 game actions. Each action shows its currently assigned button and can be cycled through all 13 physical buttons.
 
-Menu option indices match the `PhysicalButton` enum order (A=0, B=1, Z=2, ..., C-Right=12), and item indices match the `GameAction` order, so remapping is a direct cast. The demo applies a binding only when its menu value changes (`demo_update()`):
+`settings_init()` generates the tab from this module: one option per `GameAction`, labelled `action_name()`, its choices the `action_button_name()` of every `PhysicalButton` (value = the button), its default the Exploration context's binding (`src/ui/settings.c`). The demo applies a binding when its option changes (`demo_update()`):
 
 ```c
-for (int i = 0; i < ACTION_COUNT; i++) {
-    int btn_idx = menu_get_value(&start_menu, TAB_CONTROLS, i);
-    if (btn_idx != last_binding[i]) {
-        action_set_binding((GameAction)i, (PhysicalButton)btn_idx);
-        last_binding[i] = btn_idx;
-    }
+for (int a = 0; a < ACTION_COUNT; a++) {
+    if (settings_take(SETTING_BINDING(a)))
+        action_set_binding((GameAction)a, (PhysicalButton)settings_int(SETTING_BINDING(a)));
 }
 ```
 

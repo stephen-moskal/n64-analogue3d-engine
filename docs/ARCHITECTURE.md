@@ -490,15 +490,12 @@ Developers define new contexts as `static const` data arrays — no code changes
 
 ### Runtime Remapping
 
-The Controls menu tab (tab 4) lists all 11 game actions. Each action's option list contains all 13 physical buttons. Menu option indices match `PhysicalButton` enum order, so remapping is a cast; the demo applies a binding only when its menu value changes:
+The Controls menu tab (tab 4) lists all 11 game actions, generated from the action module by `settings_init()`. Each action's choices are all 13 physical buttons, and its value is the button; the demo applies a binding when its option changes:
 
 ```c
-for (int i = 0; i < ACTION_COUNT; i++) {
-    int btn_idx = menu_get_value(&start_menu, TAB_CONTROLS, i);
-    if (btn_idx != last_binding[i]) {
-        action_set_binding((GameAction)i, (PhysicalButton)btn_idx);
-        last_binding[i] = btn_idx;
-    }
+for (int a = 0; a < ACTION_COUNT; a++) {
+    if (settings_take(SETTING_BINDING(a)))
+        action_set_binding((GameAction)a, (PhysicalButton)settings_int(SETTING_BINDING(a)));
 }
 ```
 

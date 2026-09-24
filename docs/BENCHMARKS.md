@@ -711,3 +711,12 @@ Four boot-to-benchmark Bench = All runs (`make BENCH=1`, 15 s settle). The S7.1 
 - **Against S6.3** a flat ~0.1 ms per frame remains: `hud` +50 µs, `update` +10–20 µs (S7's physics and sync steps and the moved update code), and ~5 µs for the two out-of-line object loops. It reads as +10 % in the 1 ms idle and fill-rate steps and +2–5 % in the particle steps; the particle renderer itself is within +1 %.
 
 Captures: `docs/benchmarks/2026-09-24-p2-s7_1a-all-bootbench-debug-a3d.csv` and `...-s7_1a-...-pad448-...` (runs 1–2), `...-s7_1-all-bootbench-debug-a3d.csv` (run 3, the new Bench = All comparison point) and `...-s7_1-...-pad448-...` (run 4).
+
+## Phase 2 · S8 settings module (2026-09-24, debug build, Analogue 3D)
+
+Boot-to-benchmark Bench = All, then the demo: a walk-through of every tab, Cancel, Reset Scene with shadows and point lights on, and Debug → Menu Sweep (25 items, 126 options). No asserts. S8 does not touch the draw path.
+
+- **Against S7.1: 0 regressions.** Every step is 1.2–4 % faster: objects 16 6.71 → 6.55 ms, objects 32 12.17 → 11.88 ms, projected shadows 10.70 → 10.57 ms.
+- The gain is layout, not S8's code. The pillar's heap vertex data moved to colour 0x0650, off the pinned camera copy's lines (D26). S7.1's `LAYOUT_PAD=448` build had the same heap colour and the same result (objects 16: 6.54 ms). The idle and fill-rate steps are 3–7 % faster from the HUD text's cold code alone.
+
+Capture: `docs/benchmarks/2026-09-24-p2-s8-all-bootbench-debug-a3d.csv` (the new comparison point).

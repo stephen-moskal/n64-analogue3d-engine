@@ -16,6 +16,7 @@ int main(void) {
     run_menu_tests();
     run_dialog_tests();
     run_scene_tests();
+    run_settings_tests();
 
     printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;

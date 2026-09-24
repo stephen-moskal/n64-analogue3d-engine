@@ -48,7 +48,7 @@ Initialize a menu with a title. Zeroes all state.
 
 Add a tab. Returns the tab index (0-based), or -1 when `MENU_MAX_TABS` (6) tabs exist.
 
-### `menu_add_item(Menu *menu, int tab, const char *label, const char **options, int count, int default_idx)`
+### `menu_add_item(Menu *menu, int tab, const char *label, const char *const *options, int count, int default_idx)`
 
 Add an item to a tab. Returns the item index (0-based within the tab), or -1 if the tab is invalid or already holds `MENU_MAX_ITEMS` (12) items. `count` is clamped to `MENU_MAX_OPTIONS` (16); the option string pointers are copied, not the strings. Tabs with more than `MENU_VISIBLE_ITEMS` (7) items scroll.
 
@@ -162,28 +162,50 @@ Every frame the view draws the panel as a translucent rectangle (standard mode, 
 
 ## Integration in This Engine
 
-The engine has one global menu, `Menu start_menu`, defined and built in `src/main.c` with six tabs: Settings, Sound, Lighting, Environ, Controls and Debug. The Debug tab's items are added by `debug_menu_init()` ([DEBUGGING.md](DEBUGGING.md)).
+The engine has one global menu, `Menu start_menu` in `src/main.c`, with six tabs. `settings_init()` adds the first five, the game's options (Settings, Sound, Lighting, Environ, Controls; `src/ui/settings.c`, see [Settings](#settings) below), and `debug_menu_init()` adds the Debug tab ([DEBUGGING.md](DEBUGGING.md)).
 
 Driving it is the scene's job, and only the demo scene does it (`demo_scene.c`):
 
-- `demo_update()` polls input with `action_update()`, toggles the menu on Start (raw joypad), calls `menu_update()` while it is open, and after it closes reads values with `menu_get_value()` and applies the ones that changed (it caches the last applied value of each item).
+- `demo_update()` polls input with `action_update()`, toggles the menu on Start (raw joypad), calls `menu_update()` while it is open, and applies each group of options when one of them changes (`settings_take()`), live while the menu is open: Cancel reverts the menu and so the scene.
 - `demo_post_draw()` calls `menu_draw(&start_menu, &start_menu_view)` last, after the HUD. The view is created on first use and kept across scene resets.
 - `debug_menu_update()`, called from the engine loop (`engine.c`), applies the Debug tab while the menu is closed. The debug overlay page is hidden while the menu is open.
 
 The benchmark scene has no menu (Start aborts the run). A new scene that wants the menu must poll input, toggle, update and draw it the same way.
 
-Items are addressed by position: the `TAB_*` / `ITEM_*` defines in `demo_scene.c` and the `DebugMenuItem` enum in `debug_menu.h` must match the order in which `main.c` and `debug_menu_init()` add the items. Values live in the global menu, so they survive scene switches and Reset Scene.
+Game code addresses options by `SettingId` (`settings.h`), never by tab and item number; the Debug tab by the `DebugMenuItem` enum (`debug_menu.h`), whose order `debug_menu_init()` follows. Values live in the global menu, so they survive scene switches and Reset Scene.
 
-**Capacity:** all 6 tabs are used, and the Controls and Debug tabs hold 11 of their 12 items (Settings 7 with UI Style, Sound 3, Lighting 10, Environ 6). A seventh tab needs `MENU_MAX_TABS` raised.
+**Capacity:** all 6 tabs are used; Settings 7, Sound 3, Lighting 10, Environ 6, Controls 11 (one per `GameAction`) and Debug 12 of 12 items. The settings module asserts the limits at compile time. A seventh tab needs `MENU_MAX_TABS` raised.
+
+## Settings
+
+`src/ui/settings.c/h` holds the game's options (D10: the strings used to live in `main.c` and their meanings in `demo_scene.c`, matched by raw index). Each option is one row of a table: its tab, label, choices, default, and the value each choice stands for, declared side by side:
+
+```c
+static const char *const shadow_dark_names[] = {"Light", "Medium", "Dark"};
+static const float shadow_dark_values[] = {0.3f, 0.6f, 0.9f};
+CHOICE_TABLE(shadow_dark_names, shadow_dark_values);   // same length, <= MENU_MAX_OPTIONS
+
+[SETTING_SHADOW_DARKNESS] = { L, "Shadow Dark", CHOICES(shadow_dark_names), 1,
+                              VALUES(SETTING_TYPE_FLOAT, shadow_dark_values) },   // Medium
+```
+
+`SettingId` lists the options tab by tab in menu order, so the table, the menu and the code can't drift apart. Static asserts check every choice/value pair, each tab's length and the tab count; `tests/host/test_settings.c` checks the rest (defaults in range, the menu built from the table, the values, change tracking).
+
+- **Values:** `settings_bool()`, `settings_int()`, `settings_float()`, `settings_vec3()`, `settings_color()` return what the selected choice stands for (each asserts the option's type); `settings_choice()` and `settings_choice_name()` give the choice itself. Toggles read the same whatever their choice order ("On/Off" or "Off/On").
+- **Changes:** `settings_take(id)` answers whether the choice differs from the one last taken, and takes it; `settings_take_range(first, last)` does that for a group, so one apply covers several options. `settings_invalidate()` marks everything changed: the demo calls it in `demo_init()`, so after boot and after every Reset Scene each option is applied again and the scene matches the menu (D27: the scene used to keep `lighting_init()`'s ambient 0.15 under a menu showing 20 %).
+- **From code:** `settings_set_choice()`, `settings_step_choice()` (wraps; the L/R camera shortcuts), `settings_set_bool()`, `settings_set_disabled()`; `settings_trigger()` fires an action option ("---" / "Reset!") once and puts it back.
+- **Generated rows:** the Controls tab is built from the action module: one option per `GameAction`, labelled `action_name()`, its choices the `action_button_name()` of every `PhysicalButton`, its default the Exploration context's binding.
+
+```c
+for (int a = 0; a < ACTION_COUNT; a++) {
+    if (settings_take(SETTING_BINDING(a)))
+        action_set_binding((GameAction)a, (PhysicalButton)settings_int(SETTING_BINDING(a)));
+}
+```
 
 ## Extending the Menu
 
-Adding an item means an option array, a `menu_add_item()` call in the right position, a matching index define, and code that applies the value when it changes. The recipes for a menu item and a Debug tab item are in [EXTENDING.md](EXTENDING.md).
-
-```c
-static const char *speed_options[] = {"Slow", "Normal", "Fast"};
-menu_add_item(&start_menu, tab_s, "Game Speed", speed_options, 3, 1);
-```
+A new game option is a new `SettingId`, its choices and values, and a table row in `settings.c`, then code that applies it when it changes. The Debug tab has its own recipe. Both are in [EXTENDING.md](EXTENDING.md).
 
 ### Multiple menus
 
@@ -195,17 +217,7 @@ static Menu options_menu;
 static Menu inventory_menu;
 ```
 
-Each menu is independent — open/close/update/draw one at a time.
-
-### Mapping values to game state
-
-The menu stores option indices. Your game code maps indices to actual values:
-
-```c
-// Example: map menu index to game speed
-static const float speeds[] = {0.5f, 1.0f, 2.0f};
-float game_speed = speeds[menu_get_value(&start_menu, TAB_SETTINGS, ITEM_GAME_SPEED)];
-```
+Each menu is independent: open, close, update and draw one at a time. `settings_init()` fills the first menu it is given; another menu is built with `menu_add_tab()` / `menu_add_item()` and read with `menu_get_value()`, which returns the selected choice's index.
 
 ## Source Files
 
@@ -213,8 +225,9 @@ float game_speed = speeds[menu_get_value(&start_menu, TAB_SETTINGS, ITEM_GAME_SP
 |------|---------|
 | [src/ui/menu.h](../src/ui/menu.h) | Data structures and API declarations |
 | [src/ui/menu.c](../src/ui/menu.c) | Model: building, open/close, cursor, values, joypad input |
+| [src/ui/settings.h](../src/ui/settings.h), [src/ui/settings.c](../src/ui/settings.c) | The game's options: the table, typed values, change tracking |
 | [src/ui/menu_view.h](../src/ui/menu_view.h), [src/ui/menu_view.c](../src/ui/menu_view.c) | View: drawing in a style with cached text ([UI.md](UI.md)) |
 | [tests/host/test_menu.c](../tests/host/test_menu.c) | Host tests of the model |
-| [src/main.c](../src/main.c) | Builds the global start menu (option arrays, tab and item order) |
+| [src/main.c](../src/main.c) | Creates the global start menu: `settings_init()`, then the Debug tab |
 | [src/scenes/demo_scene.c](../src/scenes/demo_scene.c) | Opens, updates, draws the menu and applies its values |
 | [src/debug/debug_menu.c](../src/debug/debug_menu.c) | Debug tab items and how they apply |

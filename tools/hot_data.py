@@ -85,6 +85,14 @@ GROUPS = [
     ("__engine_hot_bss_particle", "__engine_hot_bss_end", 0x0300, ["particle_pool"]),
 ]
 MARKS = {g[0] for g in GROUPS} | {g[1] for g in GROUPS}
+# Phase functions whose static data is not scanned: libdragon's command-buffer
+# switch runs once per ~20-30 triangles and touches a few words of queue state
+# then (the queue pointers themselves are pinned in the common group). Its
+# branchy code also defeats the linear scan: a lui on its assert path made its
+# stores into the command buffer look like accesses to whatever static symbol
+# sat at that address (S8: libdragon's font data, "on the stack" in every phase).
+NO_DATA_SCAN = {"rspq_next_buffer", "__rspq_deferred_poll", "rspq_flush_internal", "memset"}
+
 # Arrays of which only a prefix is hot: the shadow scratch is indexed by vertex,
 # so a caster touches its first vertex_count entries (the demo's largest caster,
 # the 6x6 sphere, has fewer than 64; 128 leaves room)
@@ -282,7 +290,7 @@ def main():
         # through the pointers the scenes pass (REACHED)
         touched = {}
         for f in members:
-            if f not in funcs:
+            if f not in funcs or f in NO_DATA_SCAN:
                 continue
             for addr in data_refs(text_of(f), gp):
                 s = symbol_at(syms, starts, addr)

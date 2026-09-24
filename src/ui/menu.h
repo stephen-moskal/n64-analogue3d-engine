@@ -42,7 +42,7 @@ typedef struct {
 void menu_init(Menu *menu, const char *title);
 int  menu_add_tab(Menu *menu, const char *label);
 int  menu_add_item(Menu *menu, int tab, const char *label,
-                   const char **options, int count, int default_idx);
+                   const char *const *options, int count, int default_idx);
 
 // Open (snapshot values) and close (apply, or revert to the snapshot)
 void menu_open(Menu *menu);

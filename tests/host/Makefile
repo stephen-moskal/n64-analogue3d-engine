@@ -23,12 +23,13 @@ ENGINE_SRCS := \
 	$(SRC)/render/particle.c \
 	$(SRC)/audio/snd_mix.c \
 	$(SRC)/ui/menu.c \
+	$(SRC)/ui/settings.c \
 	$(SRC)/dialog/dialog.c \
 	$(SRC)/debug/frametime.c \
 	$(SRC)/debug/stats.c
 
 TEST_SRCS := test_main.c test_vec3.c test_collision.c test_physics.c \
-             test_action.c test_camera.c test_frametime.c test_mesh.c test_particle.c test_audio.c test_menu.c test_dialog.c test_scene.c shim/shim.c
+             test_action.c test_camera.c test_frametime.c test_mesh.c test_particle.c test_audio.c test_menu.c test_dialog.c test_scene.c test_settings.c shim/shim.c
 
 OBJS := $(patsubst %.c,$(BUILD)/%.o,$(notdir $(TEST_SRCS) $(ENGINE_SRCS)))
 vpath %.c . shim $(sort $(dir $(ENGINE_SRCS)))
