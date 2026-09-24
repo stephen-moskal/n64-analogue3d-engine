@@ -14,6 +14,8 @@
 #include "../ui/menu.h"
 #include "../ui/menu_view.h"
 #include "../ui/ui_hud.h"
+#include "../ui/textbox.h"
+#include "../dialog/dialog.h"
 #include "../debug/engine_debug.h"
 #include "../debug/stats.h"
 #include "../debug/profiler.h"
@@ -55,7 +57,7 @@ static const char *kind_desc[BENCH_KIND_COUNT] = {
     "+%d ms CPU burn, floor + 16 pillars",
     "%d: variant*1000+pillars (0 shared, 1-4 at 0/2/4/6 KB, 5 reversed)",
     "%d: codec*100+poll*10+sfx (0 none 1 raw 2 vadpcm 3 opus)",
-    "%d: menu mode*10+input, 20/30 styles, 40/41 HUD direct/cached",
+    "%d: menu 0x-1x, style 2x-3x, HUD 4x, dlg 5x",
 };
 
 static BenchKind  configured_kind = BENCH_ALL;
@@ -117,8 +119,33 @@ static int      ui_mode, ui_input;
 // every frame) drawn direct every frame, or cached at ~6 Hz, 2 lines a frame.
 static MenuView ui_style_view;
 static HudPanel ui_hud[2][2];          // [cached][top, bottom]
+// Steps 50 / 51: the demo conversation in the text box, driven by a scripted
+// reader: 50 waits ~0.4 s on every finished page and 1 s on a choice list
+// (reading pace), 51 presses
+// A every 3 frames (skipping: a new page is laid out every few frames, the
+// worst case for the page render). Choices rotate so every branch is shown.
 static int      ui_hud_line[2][7];
 static bool     ui_hud_active, ui_hud_cached;
+static DialogBank  *ui_dlg_bank;
+static DialogRunner ui_dlg_runner;
+static TextBox      ui_dlg_box;
+static bool         ui_dlg_active, ui_dlg_skip;
+static int          ui_dlg_wait, ui_dlg_pick;
+
+static bool ui_dlg_check(const char *cond, void *ctx) {
+    (void)ctx;
+    return cond[0] == '!';             // nothing is "true" in the bench: !name passes
+}
+static bool ui_dlg_var(const char *name, char *out, int len, void *ctx) {
+    (void)ctx; (void)name;
+    snprintf(out, len, "Bench");
+    return true;
+}
+static void ui_dlg_restart(void) {
+    DialogHooks hooks = { NULL, ui_dlg_check, ui_dlg_var, NULL };
+    if (ui_dlg_bank && dialog_start(&ui_dlg_runner, ui_dlg_bank, "intro", &hooks))
+        textbox_open(&ui_dlg_box, &ui_dlg_runner);
+}
 
 static void ui_hud_setup(void) {
     for (int c = 0; c < 2; c++) {
@@ -234,7 +261,7 @@ static void build_steps(BenchKind which) {
         }
     }
     if (which == BENCH_UI) {
-        static const int p[] = {0, 10, 1, 11, 2, 12, 3, 13, 4, 14, 20, 30, 40, 41};
+        static const int p[] = {0, 10, 1, 11, 2, 12, 3, 13, 4, 14, 20, 30, 40, 41, 50, 51};
         for (unsigned i = 0; i < sizeof(p) / sizeof(p[0]); i++) add_step(BENCH_UI, p[i]);
     }
 }
@@ -326,6 +353,7 @@ static void setup_step(Scene *scene) {
     draw_floor = false;
     ui_active = false;
     ui_hud_active = false;
+    ui_dlg_active = false;
     lighting_init(L);
     L->point_light_count = 0;
     for (int i = 0; i < MAX_POINT_LIGHTS; i++) L->point_lights[i].active = false;
@@ -395,6 +423,9 @@ static void setup_step(Scene *scene) {
     case BENCH_UI:
         layout_grid(16);
         draw_floor = true;
+        ui_dlg_active = st->param >= 50;
+        ui_dlg_skip = st->param == 51;
+        if (ui_dlg_active) { ui_dlg_wait = ui_dlg_pick = 0; ui_dlg_restart(); break; }
         ui_hud_active = st->param >= 40;
         ui_hud_cached = st->param == 41;
         if (ui_hud_active) break;
@@ -488,11 +519,12 @@ static void finish_step(void) {
     if (g_prof_on) {
         const ProfilerFrame *pf = profiler_get();
         (void)pf;
-        debugf("BENCH_PROF,%s,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f\n",
+        debugf("BENCH_PROF,%s,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f\n",
                kind_names[st->kind], step_index, st->param,
                pf->avg_us[PROF_UPDATE], pf->avg_us[PROF_DRAW], pf->avg_us[PROF_OBJECTS],
                pf->avg_us[PROF_MESH_CULL], pf->avg_us[PROF_MESH_LIGHT], pf->avg_us[PROF_MESH_TRIS],
-               pf->avg_us[PROF_AUDIO], pf->avg_us[PROF_MENU], pf->avg_us[PROF_HUD]);
+               pf->avg_us[PROF_AUDIO], pf->avg_us[PROF_MENU], pf->avg_us[PROF_HUD],
+               pf->avg_us[PROF_DIALOG]);
     }
 }
 
@@ -519,6 +551,8 @@ static void bench_init(Scene *scene) {
         menu_view_init(&ui_view[1], &ui_style_debug, true);
         menu_view_init(&ui_style_view, &ui_style_classic, true);
         ui_hud_setup();
+        ui_dlg_bank = dialog_bank_load("rom:/dialog/demo.dlg");
+        textbox_init(&ui_dlg_box);
         ui_views_ready = true;
     }
     saved_poll_point = snd_get_poll_point();
@@ -550,7 +584,7 @@ static void bench_init(Scene *scene) {
     debugf("BENCH_HDR,kind,step,param,frames,fps,avg_ms,p99_ms,low1_fps,cpu_avg_ms,cpu_max_ms,"
            "rdp_busy_ms,rdp_busy_pct,tris,tex_uploads,heap_kb\n");
     debugf("BENCH_PROF_HDR,kind,step,param,update_us,draw_us,objects_us,mesh_cull_us,"
-           "mesh_light_us,mesh_tris_us,audio_us,menu_us,hud_us\n");
+           "mesh_light_us,mesh_tris_us,audio_us,menu_us,hud_us,dialog_us\n");
     setup_step(scene);
 }
 
@@ -591,6 +625,24 @@ static void bench_update(Scene *scene, float dt) {
         if (ui_input == 3 && step_frame % 30 == 0) menu_switch_tab(&ui_menu, 1);
         if (ui_input == 4 && step_frame % 100 == 70) menu_close(&ui_menu, false);  // closed for 30 frames,
         if (ui_input == 4 && step_frame % 100 == 0 && !ui_menu.is_open) menu_open(&ui_menu); // then reopened
+    }
+    if (ui_dlg_active) {
+        PROF_BEGIN(PROF_DIALOG);
+        if (!textbox_active(&ui_dlg_box)) ui_dlg_restart();   // the conversation ended
+        UiInput in = {0};
+        TextBoxState s = ui_dlg_box.state;
+        if (ui_dlg_skip) {
+            in.confirm = (step_frame % 3) == 0;
+        } else if (s == TB_WAIT || s == TB_CHOICE) {
+            in.confirm = ++ui_dlg_wait >= (s == TB_CHOICE ? 60 : 24);
+        }
+        if (in.confirm) {
+            ui_dlg_wait = 0;
+            if (s == TB_CHOICE && ui_dlg_runner.choice_count > 0)
+                ui_dlg_box.sel = ui_dlg_pick++ % ui_dlg_runner.choice_count;
+        }
+        textbox_update(&ui_dlg_box, &in, 1.0f / 60.0f);
+        PROF_END(PROF_DIALOG);
     }
 
     // Frame-locked camera path: identical on every run regardless of dt
@@ -702,18 +754,24 @@ static void bench_post_draw(Scene *scene) {
         ui_hud_draw(step_frame);
         PROF_END(PROF_HUD);
     }
+    if (ui_dlg_active) {
+        PROF_BEGIN(PROF_DIALOG);
+        textbox_draw(&ui_dlg_box, &ui_style_debug);
+        PROF_END(PROF_DIALOG);
+    }
 
     // One status line (constant cost in every step)
     PROF_BEGIN(PROF_HUD);
     if (step_index < step_count) {
         const BenchStep *st = &steps[step_index];
+        int sy = ui_dlg_active ? 20 : 214;
         TextBoxConfig cfg = {
-            .x = 12, .y = 214, .font_id = FONT_DEBUG_MONO,
+            .x = 12, .y = sy, .font_id = FONT_DEBUG_MONO,
             .color = RGBA32(0xFF, 0xFF, 0x80, 0xFF),
         };
         text_draw_fmt(&cfg, "BENCH %s %d/%d n=%d  Start=abort",
                       kind_names[st->kind], step_index + 1, step_count, st->param);
-        cfg.y = 226;
+        cfg.y = sy + 12;
         cfg.color = RGBA32(0xC0, 0xC0, 0xC0, 0xFF);
         text_draw_fmt(&cfg, kind_desc[st->kind], st->param);
     }
@@ -727,7 +785,11 @@ static void bench_cleanup(Scene *scene) {
     for (int i = 0; i < NUM_TEX_BOXES; i++) mesh_cleanup(&tex_boxes[i]);
     free_layout_copies();
     ui_active = false;
+    ui_dlg_active = false;
     if (ui_views_ready) {
+        textbox_close(&ui_dlg_box);
+        dialog_bank_free(ui_dlg_bank);
+        ui_dlg_bank = NULL;
         menu_view_free(&ui_view[0]);
         menu_view_free(&ui_view[1]);
         menu_view_free(&ui_style_view);

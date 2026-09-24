@@ -26,6 +26,7 @@ typedef enum {
     DBG_ITEM_CRASH_TEST,    // --- / Assert!   trigger assertf() (debug only)
     DBG_ITEM_RESET_SOAK,    // --- / Run!      10 scene resets, heap delta (testbed.h)
     DBG_ITEM_MENU_SWEEP,    // --- / Run!      step every menu option (testbed.h)
+    DBG_ITEM_DIALOG,        // --- / Talk!     start the demo conversation (docs/DIALOG.md)
     DBG_ITEM_COUNT
 } DebugMenuItem;
 
@@ -45,6 +46,10 @@ void debug_menu_init(Menu *menu, int tab);
 // Call once per frame after the scene update (input has been polled).
 void debug_menu_update(void);
 
+// The D-Up / D-Down shortcuts are paused while a scene shows a modal UI that
+// reads the D-pad (e.g. a dialog choice). Scenes set it each frame they need it.
+void debug_menu_set_shortcuts(bool enabled);
+
 OverlayPage debug_overlay_page(void);
 const char *debug_overlay_page_name(OverlayPage page);
 bool debug_profiler_enabled(void);
@@ -53,6 +58,8 @@ bool debug_rdp_check_enabled(void);
 // One-shot requests (return true once, then clear)
 bool debug_consume_dump_request(void);
 bool debug_consume_reset_peaks_request(void);
+// Dialog test requested from the Debug tab (the scene decides what to show)
+bool debug_consume_dialog_request(void);
 
 // Scene switch requested from the Debug tab: returns true once, with the
 // target (0 = demo, 1 = benchmark) and the selected benchmark kind.

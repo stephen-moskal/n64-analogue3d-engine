@@ -7,8 +7,15 @@
     .title_y = 50, .tab_y = 64, .sep_y = 72, .items_y = 86, \
     .row_h = 18, .label_x = 44, .value_x = 170, .footer_pad = 6
 
+// Text box layout shared by the built-in styles
+#define TEXTBOX_LAYOUT                                      \
+    .font_dialog = FONT_UI_VAR,                             \
+    .tb_x0 = 16, .tb_y0 = 166, .tb_x1 = 304, .tb_y1 = 224,  \
+    .tb_pad = 8, .tb_lines = 3, .tb_cps = 45
+
 const UiStyle ui_style_debug = {
     .name          = "Debug",
+    .dialog_text   = RGBA32(0xF0, 0xF0, 0xF0, 0xFF),
     .font_title    = FONT_UI_VAR,
     .font_body     = FONT_UI_MONO,
 
@@ -39,6 +46,7 @@ const UiStyle ui_style_debug = {
     .gauge_warn    = RGBA32(0xF0, 0x40, 0x30, 0xFF),
 
     MENU_LAYOUT,
+    TEXTBOX_LAYOUT,
 
     .value_fmt      = "< %s >",
     .tab_fmt        = "< [%s] %d/%d >",
@@ -50,6 +58,7 @@ const UiStyle ui_style_debug = {
 
 const UiStyle ui_style_classic = {
     .name          = "Classic",
+    .dialog_text   = RGBA32(0xFF, 0xFF, 0xFF, 0xFF),
     .font_title    = FONT_UI_VAR,
     .font_body     = FONT_UI_MONO,
 
@@ -80,6 +89,7 @@ const UiStyle ui_style_classic = {
     .gauge_warn    = RGBA32(0xFF, 0x60, 0x40, 0xFF),
 
     MENU_LAYOUT,
+    TEXTBOX_LAYOUT,
 
     .value_fmt      = "< %s >",
     .tab_fmt        = "%s  %d/%d",
@@ -91,6 +101,7 @@ const UiStyle ui_style_classic = {
 
 const UiStyle ui_style_minimal = {
     .name          = "Minimal",
+    .dialog_text   = RGBA32(0xE0, 0xD6, 0xC0, 0xFF),
     .font_title    = FONT_UI_VAR,
     .font_body     = FONT_UI_MONO,
 
@@ -121,6 +132,7 @@ const UiStyle ui_style_minimal = {
     .gauge_warn    = RGBA32(0xB0, 0x30, 0x20, 0xFF),
 
     MENU_LAYOUT,
+    TEXTBOX_LAYOUT,
 
     .value_fmt      = "%s",
     .tab_fmt        = "%s",

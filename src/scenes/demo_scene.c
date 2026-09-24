@@ -1,4 +1,6 @@
 #include "demo_scene.h"
+#include <string.h>
+#include <stdio.h>
 #include "../render/cube.h"
 #include "../render/mesh.h"
 #include "../render/mesh_defs.h"
@@ -11,6 +13,9 @@
 #include "../ui/menu_view.h"
 #include "../ui/ui_hud.h"
 #include "../ui/ui_draw.h"
+#include "../ui/textbox.h"
+#include "../dialog/dialog.h"
+#include "../debug/debug_menu.h"
 #include "../debug/engine_debug.h"
 #include "../debug/stats.h"
 #include "../debug/profiler.h"
@@ -501,6 +506,118 @@ static void apply_camera_mode(Scene *scene, int mode_idx) {
 // Scene callbacks
 // ============================================================
 
+// ============================================================
+// Ball (B button, and the dialog's "spawn_ball" event)
+// ============================================================
+
+static void launch_ball(Scene *scene) {
+    if (!ball_spawned) {
+        // First time: spawn the ball above the platform
+        vec3_t spawn_pos = {BALL_SPAWN_X, BALL_SPAWN_Y, BALL_SPAWN_Z};
+        ball_body_handle = physics_body_add(&physics_world,
+            &PHYSICS_DEF_BALL, spawn_pos);
+        if (ball_body_handle >= 0) {
+            ball_object_index = spawn_object(scene, "Ball",
+                mesh_defs_get_sphere(), spawn_pos,
+                (vec3_t){20, 20, 20}, false, 0, 0);
+            ball_spawned = true;
+        }
+    } else {
+        // Afterwards: re-launch with an upward impulse
+        PhysicsBody *body = physics_body_get(&physics_world, ball_body_handle);
+        if (body) {
+            body->position = (vec3_t){BALL_SPAWN_X, BALL_SPAWN_Y, BALL_SPAWN_Z};
+            body->velocity = VEC3_ZERO;
+            physics_body_apply_impulse(body,
+                (vec3_t){0, BALL_RELAUNCH_VY, 0});
+        }
+    }
+}
+
+static void burst_particles(void) {
+    particle_emitter_burst(emitter_fire);
+    particle_emitter_burst(emitter_magic);
+}
+
+// ============================================================
+// Dialog (docs/DIALOG.md): assets/dialog/demo.json, started from
+// Debug > Dialog. The hooks below are the game's side of the format:
+// events, conditions and variables the conversation refers to by name.
+// ============================================================
+
+static DialogBank  *dialog_bank;
+static DialogRunner dialog_runner;
+static TextBox      dialog_box;
+
+static void dialog_on_event(const char *event, void *ctx) {
+    Scene *scene = ctx;
+    if (strcmp(event, "spawn_ball") == 0) {
+        launch_ball(scene);
+        snd_play(SFX_MODE_CHANGE);
+    } else if (strcmp(event, "burst") == 0) {
+        burst_particles();
+        snd_play(SFX_MODE_CHANGE);
+    } else if (strncmp(event, "sound:", 6) == 0) {
+        static const struct { const char *name; SoundId id; } sounds[] = {
+            {"select", SFX_MENU_SELECT}, {"open", SFX_MENU_OPEN}, {"close", SFX_MENU_CLOSE},
+        };
+        for (unsigned i = 0; i < sizeof(sounds) / sizeof(sounds[0]); i++)
+            if (strcmp(event + 6, sounds[i].name) == 0) snd_play(sounds[i].id);
+    } else {
+        ENGINE_LOG("[dialog] unhandled event '%s'\n", event);
+    }
+}
+
+// Conditions: a name, or !name for its opposite
+static bool dialog_on_check(const char *cond, void *ctx) {
+    (void)ctx;
+    bool negate = cond[0] == '!';
+    if (negate) cond++;
+    bool value = false;
+    if (strcmp(cond, "ball_spawned") == 0) value = ball_spawned;
+    else ENGINE_LOG("[dialog] unknown condition '%s'\n", cond);
+    return value != negate;
+}
+
+static bool dialog_on_variable(const char *name, char *out, int len, void *ctx) {
+    (void)ctx;
+    if (strcmp(name, "player") == 0) { snprintf(out, len, "Traveller"); return true; }
+    if (strcmp(name, "fps") == 0)    { snprintf(out, len, "%.0f", display_get_fps()); return true; }
+    if (strcmp(name, "style") == 0)  { snprintf(out, len, "%s", ui_style_cur->name); return true; }
+    return false;
+}
+
+static void dialog_on_blip(void *ctx) {
+    (void)ctx;
+    snd_play(SFX_MENU_NAV);
+}
+
+static void dialog_open(Scene *scene, const char *conversation) {
+    DialogHooks hooks = { dialog_on_event, dialog_on_check, dialog_on_variable, scene };
+    if (!dialog_bank || !dialog_start(&dialog_runner, dialog_bank, conversation, &hooks)) {
+        ENGINE_LOG("[dialog] cannot start '%s'\n", conversation);
+        return;
+    }
+    textbox_open(&dialog_box, &dialog_runner);
+    snd_play(SFX_MENU_OPEN);
+}
+
+// Buttons -> UiInput: A/B through the action map, D-pad or stick for choices
+static UiInput dialog_input(void) {
+    static int stick_prev;
+    joypad_buttons_t pressed = joypad_get_buttons_pressed(JOYPAD_PORT_1);
+    joypad_inputs_t in = joypad_get_inputs(JOYPAD_PORT_1);
+    int stick = in.stick_y > 40 ? 1 : in.stick_y < -40 ? -1 : 0;
+    UiInput ui = {
+        .confirm = action_pressed(ACTION_CONFIRM),
+        .cancel  = action_pressed(ACTION_CANCEL),
+        .up      = pressed.d_up   || (stick == 1 && stick_prev != 1),
+        .down    = pressed.d_down || (stick == -1 && stick_prev != -1),
+    };
+    stick_prev = stick;
+    return ui;
+}
+
 static void demo_init(Scene *scene) {
     // Store scene pointer for object_draw selection check
     current_scene = scene;
@@ -675,6 +792,11 @@ static void demo_init(Scene *scene) {
     // Background music: the Sound tab first, so a muted start never decodes
     apply_sound_settings();
     snd_music_play(BGM_DEMO, 1.0f);
+
+    // Dialog bank; the text box lays itself out on its first draw
+    dialog_bank = dialog_bank_load("rom:/dialog/demo.dlg");
+    textbox_init(&dialog_box);
+    dialog_box.on_blip = dialog_on_blip;
 }
 
 // ============================================================
@@ -745,7 +867,8 @@ static void demo_update(Scene *scene, float dt) {
 
     // Menu input (START is fixed — always toggles menu)
     joypad_buttons_t raw_pressed = joypad_get_buttons_pressed(JOYPAD_PORT_1);
-    if (raw_pressed.start) {
+    bool in_dialog = textbox_active(&dialog_box);
+    if (raw_pressed.start && !in_dialog) {
         if (start_menu.is_open) {
             menu_close(&start_menu, true);
             snd_play(SFX_MENU_CLOSE);
@@ -765,34 +888,26 @@ static void demo_update(Scene *scene, float dt) {
         }
     }
 
+    // --- Dialog: modal while open (game and camera input wait) ---
+
+    if (!start_menu.is_open && !in_dialog && debug_consume_dialog_request()) {
+        dialog_open(scene, "intro");
+        in_dialog = textbox_active(&dialog_box);
+    } else if (in_dialog) {
+        PROF_BEGIN(PROF_DIALOG);
+        UiInput ui = dialog_input();
+        textbox_update(&dialog_box, &ui, dt);
+        PROF_END(PROF_DIALOG);
+    }
+    debug_menu_set_shortcuts(!in_dialog);
+
     // --- Interaction mode handling ---
 
-    if (!start_menu.is_open) {
+    if (!start_menu.is_open && !in_dialog) {
         // Cancel button: spawn/re-launch physics ball (normal mode)
         if (interaction_mode == MODE_NORMAL && action_pressed(ACTION_CANCEL)) {
-            if (!ball_spawned) {
-                // First press: spawn ball above platform
-                vec3_t spawn_pos = {BALL_SPAWN_X, BALL_SPAWN_Y, BALL_SPAWN_Z};
-                ball_body_handle = physics_body_add(&physics_world,
-                    &PHYSICS_DEF_BALL, spawn_pos);
-                if (ball_body_handle >= 0) {
-                    ball_object_index = spawn_object(scene, "Ball",
-                        mesh_defs_get_sphere(), spawn_pos,
-                        (vec3_t){20, 20, 20}, false, 0, 0);
-                    ball_spawned = true;
-                }
-            } else {
-                // Subsequent presses: re-launch with upward impulse
-                PhysicsBody *body = physics_body_get(&physics_world, ball_body_handle);
-                if (body) {
-                    body->position = (vec3_t){BALL_SPAWN_X, BALL_SPAWN_Y, BALL_SPAWN_Z};
-                    body->velocity = VEC3_ZERO;
-                    physics_body_apply_impulse(body,
-                        (vec3_t){0, BALL_RELAUNCH_VY, 0});
-                }
-            }
-            particle_emitter_burst(emitter_fire);
-            particle_emitter_burst(emitter_magic);
+            launch_ball(scene);
+            burst_particles();
             snd_play(SFX_MODE_CHANGE);
         }
 
@@ -864,7 +979,7 @@ static void demo_update(Scene *scene, float dt) {
         if (was_open && !start_menu.is_open) {
             snd_play(SFX_MENU_SELECT);
         }
-    } else if (interaction_mode != MODE_OBJECT_TRANSFORM) {
+    } else if (interaction_mode != MODE_OBJECT_TRANSFORM && !in_dialog) {
         // Camera mode cycling
         if (action_pressed(ACTION_CAM_MODE_PREV)) {
             int mode = menu_get_value(&start_menu, TAB_SETTINGS, ITEM_CAMERA_MODE);
@@ -1302,12 +1417,21 @@ static void demo_post_draw(Scene *scene) {
         }
 
         hud_panel_draw(&hud_top, st);
-        hud_panel_draw(&hud_bottom, st);
-        ui_gauge(st->gauge_bg, hud_cpu_frac > 0.9f ? st->gauge_warn : st->gauge_fill,
-                 hud_cpu_frac, 4, 226, 4 + HUD_GAUGE_W, 229);
+        if (!textbox_active(&dialog_box)) {      // the text box covers the bottom band
+            hud_panel_draw(&hud_bottom, st);
+            ui_gauge(st->gauge_bg, hud_cpu_frac > 0.9f ? st->gauge_warn : st->gauge_fill,
+                     hud_cpu_frac, 4, 226, 4 + HUD_GAUGE_W, 229);
+        }
     }
 
     PROF_END(PROF_HUD);
+
+    // Dialog text box
+    if (textbox_active(&dialog_box)) {
+        PROF_BEGIN(PROF_DIALOG);
+        textbox_draw(&dialog_box, ui_style_cur);
+        PROF_END(PROF_DIALOG);
+    }
 
     // Menu overlay
     if (start_menu.is_open) {
@@ -1327,6 +1451,11 @@ static void demo_post_draw(Scene *scene) {
 
 static void demo_cleanup(Scene *scene) {
     (void)scene;
+    textbox_close(&dialog_box);
+    dialog_stop(&dialog_runner);
+    dialog_bank_free(dialog_bank);
+    dialog_bank = NULL;
+    debug_menu_set_shortcuts(true);
     snd_music_stop(0.0f);
     snd_stop_all_sfx();
     particle_cleanup();

@@ -1,20 +1,21 @@
 # UI
 
-The UI layer in `src/ui/` draws menus and HUDs, and later text boxes (Phase 2 S5.3), so that:
+The UI layer in `src/ui/` draws menus, HUDs and dialog text boxes, so that:
 - text costs little per frame, because it is cached;
 - the look is data, because it comes from a style;
 - the model (what a menu holds) is separate from the view (how it is drawn).
 
-The menu model and its API are in [MENU_SYSTEM.md](MENU_SYSTEM.md). This document covers what draws it.
+The menu model and its API are in [MENU_SYSTEM.md](MENU_SYSTEM.md), the dialog format and runner in [DIALOG.md](DIALOG.md). This document covers what draws them.
 
 | Module | Role |
 |---|---|
-| `text.c/h` | Font registry and `text_draw()` / `text_draw_fmt()`: immediate text, one print per call |
+| `text.c/h` | Font registry, `text_draw()` / `text_draw_fmt()` (immediate text, one print per call) and `text_render_paragraph()` |
 | `ui_style.c/h` | `UiStyle`: fonts, colours, layout metrics and decorations. Built in: `ui_style_debug` |
 | `ui_draw.c/h` | Immediate primitives: `ui_rect()`, `ui_vgradient()`, `ui_frame()`, `ui_gauge()` |
 | `ui_layer.c/h` | `UiLayer`: retained text slots, cached in an offscreen surface |
 | `menu_view.c/h` | `MenuView`: draws a `Menu` in a style through a `UiLayer` |
 | `ui_hud.c/h` | `HudPanel`: anchored blocks of HUD text, refreshed at a fixed rate |
+| `textbox.c/h` | `TextBox`: shows a dialog conversation (name plate, pages, typewriter reveal, choices); [DIALOG.md](DIALOG.md) |
 | `menu.c/h` | The menu model and its joypad input ([MENU_SYSTEM.md](MENU_SYSTEM.md)) |
 
 ## Why text is cached
@@ -47,6 +48,21 @@ ui_layer_draw(&L, 30, 12, used_h);   // render dirty slots, then blit rows [0, u
 - **Render budget:** `ui_layer_set_budget(L, n)` re-renders at most `n` dirty slots per frame; the rest keep their old text until a later frame. HUDs (2) and the overlay (6) use it, so a refresh that changes many lines spreads over a few frames instead of landing in one. Menus render everything at once (0) so the screen never shows a half-updated panel.
 - **Counters:** `ui_renders` (slots rendered this frame) and `ui_blits` (layers drawn), on the Stats page and in the `STATS` CSV row. A static open menu shows 0 renders and 1 blit.
 
+### Canvas and partial blits
+
+A cached layer can also hold free-form content instead of slots. The text box renders each dialog page this way:
+
+```c
+if (ui_layer_canvas_begin(&L)) {             // allocate if needed, attach, clear to transparent
+    text_render_paragraph(p, 0, 0);          // anything: a laid-out paragraph, text_draw, rectangles
+    ui_layer_canvas_end(&L);                 // detach, reset the scissor
+}
+...
+ui_layer_draw_part(&L, x, y, sx, sy, sw, sh);   // blit only the source rectangle, at (x + sx, y + sy)
+```
+
+`ui_layer_draw_part()` is what makes the typewriter reveal cheap: completed lines and the typed part of the current one are two copy-mode blits of the cached page. Use a canvas layer for canvas content only (no slots).
+
 ### Fonts for cached text
 
 libdragon's built-in debug fonts are outlined. Outlined fonts can't use the RDP's alpha test (an RDP bug, per libdragon's source), so they fake transparency by blending with coverage. On screen that works; offscreen it leaves the alpha bit of text pixels at 0, and the blit then skips them.
@@ -66,6 +82,7 @@ The Makefile converts every `assets/fonts/*.ttf` to `filesystem/fonts/*.font64` 
 - The font sets its own render mode inside a pre-recorded rspq block, which libdragon's CPU-side mode tracking doesn't see.
 - Without that call, the CPU still believes the previous mode (fill from a panel line, copy from a layer blit) and emits the glyph rectangles for it. The text then comes out invisible, which showed up on the A3D as menu rows vanishing after the menu was reopened.
 - rdpq_text's own "anti-alias fix" rectangle (a blended rectangle behind every print) used to set standard mode as a side effect. The display has no VI anti-aliasing (`FILTERS_RESAMPLE`), so that rectangle is disabled (`TEXT_AA_FIX 0` in `text.c`); in a layer it would also draw dark boxes.
+- The same applies to a paragraph laid out with `rdpq_paragraph_build()`: render it with `text_render_paragraph()`, never `rdpq_paragraph_render()` directly. In S5.3 a page rendered straight after a canvas's fill-mode clear still showed, but every `text_draw()` into another layer later in the frame wrote nothing (the text box's speaker names vanished; found by reading the layer surface back after `rspq_wait()`).
 
 ## UiStyle
 
@@ -73,14 +90,14 @@ A style is a `const UiStyle` with static storage. Widgets keep a pointer to it; 
 
 | Group | Fields |
 |---|---|
-| Fonts | `font_title`, `font_body` |
+| Fonts | `font_title`, `font_body`, `font_dialog` |
 | Text colours | `title`, `header`, `text`, `hilite` (cursor row), `disabled`, `footer` |
 | Panel | `panel` (alpha < 255 blends), `border` + `border_w`, `separator`, `cursor_bar` (a bar behind the cursor row, alpha 0 = none) |
 | Scroll bar | `scroll_track`, `scroll_thumb`, `scroll_w` (0 = none) |
 | Menu layout (screen px, text y = baselines) | `menu_x0/x1`, `pad`, `title_y`, `tab_y`, `sep_y`, `items_y`, `row_h`, `label_x`, `value_x`, `footer_pad` |
 | Decorations (printf formats) | `value_fmt` (`"< %s >"`), `tab_fmt`, `tab_fmt_single`, `footer_multi`, `footer_single`, `more` (text scroll markers, `""` = none) |
 
-Styles also carry the HUD colours (`hud_title`, `hud_text`, `hud_accent`, `hud_shadow`, `hud_backdrop`) and the gauge colours (`gauge_bg`, `gauge_fill`, `gauge_warn`), and `panel2` for a vertical gradient.
+Styles also carry the HUD colours (`hud_title`, `hud_text`, `hud_accent`, `hud_shadow`, `hud_backdrop`), the gauge colours (`gauge_bg`, `gauge_fill`, `gauge_warn`), `panel2` for a vertical gradient, and the text box: `dialog_text` (the dialog palette's `text` colour; the others reuse `hud_accent`, `hilite`, `title`, `disabled`), the box `tb_x0/y0/x1/y1`, `tb_pad`, `tb_lines` and the typewriter speed `tb_cps` (`TEXTBOX_LAYOUT` holds the shared values).
 
 | Built-in style | Look |
 |---|---|
@@ -155,7 +172,7 @@ See [BENCHMARKS.md](BENCHMARKS.md), "Phase 2 · S5.1". Bench = UI draws a copy o
 - directly (mode 0) or cached (mode 1);
 - with no input, a cursor move every 8 frames, a value change every 2 frames, a tab switch every 30 frames, or a close and reopen every 100 frames.
 
-`BENCH_PROF` rows carry `menu_us` and `hud_us`.
+Steps 40/41 draw a demo-like HUD direct or cached; steps 50/51 play the demo conversation in the text box at reading pace or skipping (a new page every few frames). `BENCH_PROF` rows carry `menu_us`, `hud_us` and `dialog_us`.
 
 ## Limits
 
@@ -173,4 +190,5 @@ See [BENCHMARKS.md](BENCHMARKS.md), "Phase 2 · S5.1". Bench = UI draws a copy o
 | [src/ui/ui_layer.h](../src/ui/ui_layer.h), [src/ui/ui_layer.c](../src/ui/ui_layer.c) | cached text slots |
 | [src/ui/menu_view.h](../src/ui/menu_view.h), [src/ui/menu_view.c](../src/ui/menu_view.c) | menu drawing |
 | [src/ui/ui_hud.h](../src/ui/ui_hud.h), [src/ui/ui_hud.c](../src/ui/ui_hud.c) | HUD panels |
+| [src/ui/textbox.h](../src/ui/textbox.h), [src/ui/textbox.c](../src/ui/textbox.c) | dialog text box |
 | [assets/fonts/](../assets/fonts/) | TTF sources for the UI fonts, with their licences |

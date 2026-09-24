@@ -14,6 +14,7 @@ static const char *bench_options[]   = {"All", "Objects", "Particles", "Lights",
 static const char *run_options[]     = {"---", "Run!"};
 static const char *capture_options[] = {"---", "Capture!"};
 static const char *crash_options[]   = {"---", "Assert!"};
+static const char *talk_options[]    = {"---", "Talk!"};
 
 _Static_assert(sizeof(overlay_options) / sizeof(overlay_options[0]) == OVERLAY_PAGE_COUNT,
                "overlay_options must match OverlayPage");
@@ -29,6 +30,8 @@ static bool        rdp_check_active = false;   // validator state actually appli
 static bool        dump_requested   = false;
 static int         dump_countdown   = 0;      // closed-menu frames until the dump fires
 static bool        reset_requested  = false;
+static bool        dialog_requested = false;
+static bool        shortcuts_on     = true;
 static int         active_scene     = 0;      // scene currently shown (0 demo, 1 benchmark)
 static bool        scene_requested  = false;
 static int         requested_scene  = 0;
@@ -49,6 +52,7 @@ void debug_menu_init(Menu *menu, int tab) {
     menu_add_item(menu, tab, "Crash Test",  crash_options,  2, 0);
     menu_add_item(menu, tab, "Reset Soak",  run_options,    2, 0);
     menu_add_item(menu, tab, "Menu Sweep",  run_options,    2, 0);
+    menu_add_item(menu, tab, "Dialog",      talk_options,   2, 0);
 
 #if !ENGINE_DEBUG
     // Validator and profiler are compiled out of release builds
@@ -81,6 +85,7 @@ void debug_menu_update(void) {
 
     // Shortcuts (fixed buttons, only when unbound)
     joypad_buttons_t pressed = joypad_get_buttons_pressed(JOYPAD_PORT_1);
+    if (!shortcuts_on) pressed = (joypad_buttons_t){0};
     if (pressed.d_up && button_is_free(BTN_D_UP)) {
         int next = (item_value(DBG_ITEM_OVERLAY) + 1) % OVERLAY_PAGE_COUNT;
         item_set(DBG_ITEM_OVERLAY, next);
@@ -158,6 +163,11 @@ void debug_menu_update(void) {
         testbed_request_menu_sweep();
         ENGINE_LOG("[debug] menu sweep requested\n");
     }
+    if (item_value(DBG_ITEM_DIALOG) == 1) {
+        item_set(DBG_ITEM_DIALOG, 0);
+        dialog_requested = true;
+        ENGINE_LOG("[debug] dialog requested\n");
+    }
     if (item_value(DBG_ITEM_CRASH_TEST) == 1) {
         item_set(DBG_ITEM_CRASH_TEST, 0);
         rdp_debug_crash_test();
@@ -169,6 +179,8 @@ void debug_menu_update(void) {
         ENGINE_LOG("[debug] reset peaks requested\n");
     }
 }
+
+void debug_menu_set_shortcuts(bool enabled) { shortcuts_on = enabled; }
 
 OverlayPage debug_overlay_page(void) { return overlay_page; }
 
@@ -197,6 +209,12 @@ bool debug_consume_scene_request(int *scene, int *bench_kind) {
 void debug_menu_set_active_scene(int scene) {
     active_scene = scene;
     if (dbg_menu) item_set(DBG_ITEM_SCENE, scene);
+}
+
+bool debug_consume_dialog_request(void) {
+    bool r = dialog_requested;
+    dialog_requested = false;
+    return r;
 }
 
 bool debug_consume_reset_peaks_request(void) {

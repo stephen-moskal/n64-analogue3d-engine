@@ -46,6 +46,7 @@ typedef enum {
     PROF_PARTICLE_DRAW,     //     particle_draw()
     PROF_HUD,               //     demo HUD text
     PROF_MENU,              //     menu_draw()
+    PROF_DIALOG,            //     dialog text box (update + draw)
     PROF_OVERLAY,           //   debug overlay
     PROF_AUDIO,             //   snd_update()
     PROF_SLOT_COUNT

@@ -14,6 +14,7 @@ typedef struct UiStyle {
     // Fonts (ids registered with rdpq_text, see text.h)
     uint8_t font_title;
     uint8_t font_body;
+    uint8_t font_dialog;       // text box body and speaker name
 
     // Text colours
     color_t title;             // menu title
@@ -42,6 +43,14 @@ typedef struct UiStyle {
     color_t hud_shadow;        // drop shadow behind HUD text (alpha 0 = none)
     color_t hud_backdrop;      // box behind each HUD panel (alpha 0 = none)
     color_t gauge_bg, gauge_fill, gauge_warn;   // gauges; warn above 90 %
+
+    // Text box (ui/textbox.h). Dialog colours: [c=text] dialog_text,
+    // [c=accent] hud_accent, [c=hilite] hilite, [c=title] title, [c=dim] disabled.
+    color_t dialog_text;
+    int16_t tb_x0, tb_y0, tb_x1, tb_y1;   // the box on screen
+    int16_t tb_pad;                        // inner padding
+    int16_t tb_lines;                      // text lines per page
+    int16_t tb_cps;                        // typewriter speed, glyphs per second
 
     // Menu layout, screen px. Text y values are baselines.
     int16_t menu_x0, menu_x1;  // panel left / right edge

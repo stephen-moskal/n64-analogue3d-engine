@@ -3,7 +3,7 @@
 ## Project Overview
 Nintendo 64 homebrew game engine built on libdragon (`preview` branch, vendored as the `libdragon/` git submodule pinned at `39d0d6096`, 2026-09-15; upgraded from `10f3bd43e` in Phase 2 S4b). Verified on real hardware (Analogue 3D via SummerCart64) and in the ares emulator. Long-term goal: an action-RPG engine supporting souls-like combat and Final Fantasy Tactics-style battles, general enough for other genres.
 
-Current state (2026-09-23): engine features from v1 (mesh system, multi-object scenes, camera, collision, physics, lighting + shadows, billboards, particles, fog/atmosphere, audio, action-mapped input, tabbed menu, text) plus the Phase 1 developer tooling in `src/debug/` (profiler, stats, memory, frame time, overlay pages, RDP counters, RDP capture, crash test, Reset Soak, Menu Sweep), a benchmark scene, host unit tests and CI. Planning lives in `docs/ROADMAP_v2.md`: Phases 0 and 1 are done; Phase 2 (engine hardening, stages S0–S13) is in progress with S0–S4b verified on the A3D (S4b: libdragon upgrade fixing the RSP race D28, sound module rework); S5.1–S5.2 (UI core: cached menu, HUD and overlay text, three styles) verified 2026-09-24; next S5.3 (text boxes), then S6, CPU-path graphics features and Tiny3D. The engine is CPU-bound (see `docs/BENCHMARKS.md`).
+Current state (2026-09-23): engine features from v1 (mesh system, multi-object scenes, camera, collision, physics, lighting + shadows, billboards, particles, fog/atmosphere, audio, action-mapped input, tabbed menu, text) plus the Phase 1 developer tooling in `src/debug/` (profiler, stats, memory, frame time, overlay pages, RDP counters, RDP capture, crash test, Reset Soak, Menu Sweep), a benchmark scene, host unit tests and CI. Planning lives in `docs/ROADMAP_v2.md`: Phases 0 and 1 are done; Phase 2 (engine hardening, stages S0–S13) is in progress with S0–S4b verified on the A3D (S4b: libdragon upgrade fixing the RSP race D28, sound module rework); S5.1–S5.3 (UI core: cached menu, HUD and overlay text, three styles; dialog system with JSON source and text box) verified 2026-09-24; next S6 (engine core, frame pacing, D33 particle A/B), then CPU-path graphics features and Tiny3D. The engine is CPU-bound (see `docs/BENCHMARKS.md`).
 
 ## Build & Deploy
 Development happens on Windows 11 (PowerShell) and macOS. The `libdragon` npm CLI runs `make` inside the Docker container `ghcr.io/dragonminded/libdragon:preview` (config in `.libdragon/config.json`, vendor strategy = submodule). Full setup: `docs/SETUP.md`.
@@ -25,7 +25,7 @@ VS Code tasks (`.vscode/tasks.json`) wrap the same commands with per-OS variants
 
 ## Repository Gotchas
 - **Line endings must be LF.** The container reads `Makefile`/`n64.mk`/`build.sh` from the bind mount. `.gitattributes` forces LF; on Windows the repo and the `libdragon/` submodule also need `core.autocrlf=false` + `core.eol=lf` and a re-checkout (SETUP.md step 6).
-- **Generated assets are not committed.** `filesystem/*.sprite` and `filesystem/audio/**` are built from `assets/` by `mksprite`/`audioconv64`; their format depends on the libdragon version (a stale `.wav64` asserts `invalid version` at boot). Run `libdragon make clean` after changing the submodule.
+- **Generated assets are not committed.** `filesystem/*.sprite`, `filesystem/audio/**`, `filesystem/fonts/**` and `filesystem/dialog/**` are built from `assets/` by `mksprite`/`audioconv64`; their format depends on the libdragon version (a stale `.wav64` asserts `invalid version` at boot). Run `libdragon make clean` after changing the submodule.
 - `libdragon make` does not rebuild libdragon; `libdragon install` does. To move an existing project to another toolchain image: `libdragon init -i <image>`.
 - Toolchain (the `:preview` image): GCC 16.2, binutils 2.45; every file is built with `-mfix4300` (VR4300 multiply errata). The Makefile sets `LIBDRAGON_PREVIEW = 1`: libdragon APIs still marked preview are allowed but each use warns.
 - At this libdragon version `mksprite` compresses sprites and `audioconv64` encodes `.wav64` as VADPCM by default; any `.wav64` use links the Opus and ULC codecs (~40 KB). Decoding Opus needs the full decoder (~94 KB more RAM): opt-in with `make SND_OPUS=1` (docs/AUDIO.md).
@@ -45,8 +45,9 @@ VS Code tasks (`.vscode/tasks.json`) wrap the same commands with per-OS variants
 - Every mesh builder ends with `mesh_finalize()` (bounds, group analysis, exact-size geometry block); nothing can be added afterwards.
 - Mesh winding: front faces are counter-clockwise seen from outside (the curved-group cull and the projected-shadow cull depend on it; `tests/host/test_mesh.c` checks the `mesh_defs` shapes).
 - The camera rebuilds its matrices only when `dirty` (set by the `camera_*` setters) or when following a target; code that edits `Camera` fields directly must set `dirty`.
-- Scenes poll input themselves (`action_update()` in `on_update`); the Start menu is driven by the demo scene only. The menu is nearly full (6/6 tabs; Debug and Controls use 11 of 12 items) and `menu_add_item` returns -1 past the limits.
+- Scenes poll input themselves (`action_update()` in `on_update`); the Start menu is driven by the demo scene only. The menu is nearly full (6/6 tabs; Debug uses 12 of 12 items, Controls 11) and `menu_add_item` returns -1 past the limits.
 - Particle emitters keep the `ParticleEmitterDef` pointer: definitions must have static storage.
+- Text: render a laid-out paragraph with `text_render_paragraph()`, never `rdpq_paragraph_render()` directly. The font sets its mode in a recorded block that rdpq's CPU-side tracking misses; after a fill-mode clear this silently broke later `text_draw()` calls (docs/UI.md).
 - UI text: `text_draw()` sets standard mode before each print (a font sets its mode in a recorded block the CPU-side tracking does not see; without it, text after fill/copy-mode drawing comes out invisible). Text cached in a `UiLayer` needs a plain monochrome font (`FONT_UI_*`, from `assets/fonts/`): libdragon's outlined builtins leave the alpha bit clear offscreen. Layer slot boxes are widened to 4-pixel columns (fill mode on 16-bit surfaces needs them). `menu_draw(menu, view)` takes a `MenuView`.
 
 ## Architecture
@@ -66,19 +67,20 @@ src/collision/             sphere/AABB colliders, raycasts, layers (64 max)
 src/physics/               semi-fixed timestep bodies, gravity, bounce, ground raycast
 src/scene/                 Scene/SceneObject lifecycle, SceneManager, transitions, soft reset, background (sky or clear)
 src/scenes/demo_scene.c    the demo (objects, menu semantics, HUD), the largest file
-src/scenes/benchmark_scene.c   stress test (All = 26 steps, plus Layout, Overload, Audio); BENCH / BENCH_PROF / BENCH_LAYOUT rows
+src/scenes/benchmark_scene.c   stress test (All = 26 steps, plus Layout, Overload, Audio, UI); BENCH / BENCH_PROF / BENCH_LAYOUT rows
 src/audio/                 sound module (snd_*): crossfading music slots, 8 prioritised SFX voices, positional sound,
                            master/music/SFX volume ramps; snd_mix (pure, host-tested); sound_bank table
 src/ui/                    text (fonts, text_draw), menu (model + input, host-tested), menu_view (drawing in a UiStyle),
                            ui_layer (cached text slots), ui_hud (HUD panels), ui_style (Debug/Classic/Minimal),
-                           ui_draw (rectangles, gradients, gauges); docs/UI.md
+                           ui_draw (rectangles, gradients, gauges), textbox (dialog box: pages, reveal, choices); docs/UI.md
+src/dialog/                dialog runner (pure, host-tested): banks compiled from assets/dialog/*.json; docs/DIALOG.md
 src/debug/                 engine_debug.h (build switches), debug_menu (Debug tab + D-Up/D-Down), stats,
                            profiler (+ RDP counters), memstats, frametime, overlay, rdp_debug, testbed (Reset Soak, Menu Sweep)
 src/engine/                hot.h (ENGINE_HOT, ENGINE_NOINIT), hot_text.ld (I-cache placement of the render path)
 tests/host/                host unit tests with a libdragon shim (libdragon exec make -C tests/host run)
 tools/                     bench_compare.py, hot_text.py, rdp_log_to_hex.py, rom_budget.py, ci_build.sh, rspq_profile.ps1,
-                           gen_placeholder_audio.py
-assets/                    source PNGs and WAVs; filesystem/ holds the generated outputs (ignored)
+                           gen_placeholder_audio.py, dialog_build.py (dialog JSON -> .dlg, run by the Makefile)
+assets/                    source PNGs, WAVs, fonts, dialog JSON; filesystem/ holds the generated outputs (ignored)
 ```
 
 ### Rendering Pipeline

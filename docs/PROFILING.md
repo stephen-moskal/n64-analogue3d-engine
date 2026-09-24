@@ -38,13 +38,13 @@ frame                 loop top to loop top (wall time)
   update              scene_manager_update
     input / physics / particle_upd / scene_sys (camera + collision)
   draw                scene_manager_draw
-    sky / floor / shadows / objects / particle_draw / hud / menu
+    sky / floor / shadows / objects / particle_draw / hud / menu / dialog
       objects > mesh_cull / mesh_light / mesh_tris
   overlay             debug overlay page
   audio               snd_update, at the sound poll point (default: right after display_get; AUDIO.md)
 ```
 
-`sky` and `objects` are timed in `scene_draw()` (the sky is the frame's background there; the benchmark times its own object loop); `floor`, `shadows`, `particle_draw`, `hud` and `menu` in the scene callbacks; the `mesh_*` slots inside `mesh_draw()`.
+`sky` and `objects` are timed in `scene_draw()` (the sky is the frame's background there; the benchmark times its own object loop); `floor`, `shadows`, `particle_draw`, `hud` and `menu` in the scene callbacks; the `mesh_*` slots inside `mesh_draw()`. `dialog` is the text box, both its update (inside `update`) and its draw, so it is listed under `draw` but also counts time from `update`; it is in the CSV rows and `BENCH_PROF`, not on the overlay page.
 
 To add a scope: add a slot to `ProfSlot` in `profiler.h` and its name/depth to `slot_info` in `profiler.c`, then wrap the code. `PROF_BEGIN` declares a variable, so use a slot at most once per C scope. A new slot appears in the PROF CSV rows automatically, but on the Profiler overlay page only when it is added to the row list in `page_profiler()` (`overlay.c`). Step-by-step: [EXTENDING.md](EXTENDING.md).
 

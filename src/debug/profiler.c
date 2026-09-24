@@ -34,6 +34,7 @@ static const struct { const char *name; int depth; } slot_info[PROF_SLOT_COUNT] 
     [PROF_PARTICLE_DRAW]   = {"particle_draw", 2},
     [PROF_HUD]             = {"hud",           2},
     [PROF_MENU]            = {"menu",          2},
+    [PROF_DIALOG]          = {"dialog",        2},
     [PROF_OVERLAY]         = {"overlay",       1},
     [PROF_AUDIO]           = {"audio",         1},
 };

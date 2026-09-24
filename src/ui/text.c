@@ -107,6 +107,11 @@ void text_draw_fmt(const TextBoxConfig *config, const char *fmt, ...) {
     va_end(args);
 }
 
+void text_render_paragraph(const rdpq_paragraph_t *p, float x, float y) {
+    begin_text();
+    rdpq_paragraph_render(p, x, y);
+}
+
 void text_cleanup(void) {
     if (font_mono) {
         rdpq_text_unregister_font(FONT_DEBUG_MONO);

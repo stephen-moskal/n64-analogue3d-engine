@@ -1,0 +1,28 @@
+{
+  "speakers": {
+    "guide": { "name": "Guide", "color": "accent" },
+    "you": "You",
+    "hero": "{player}"
+  },
+  "conversations": {
+    "intro": [
+      { "speaker": "guide", "text": "Hello, {player}. [c=hilite]Welcome[/c].[p=200]" },
+      "Same speaker, {unknown} stays.",
+      { "text": "Pick one.", "event": "asked",
+        "choices": [
+          { "text": "Tour", "next": "tour" },
+          { "text": "Secret", "next": "@other", "if": "has_key" },
+          { "text": "Bye", "end": true }
+        ] },
+      { "id": "tour", "speaker": "you", "text": "Show me.", "next": "done" },
+      { "text": "Skipped by next." },
+      { "id": "done", "text": "Done.", "event": "finished" }
+    ],
+    "other": [
+      "Hidden line."
+    ],
+    "named": [
+      { "speaker": "hero", "text": "Me." }
+    ]
+  }
+}

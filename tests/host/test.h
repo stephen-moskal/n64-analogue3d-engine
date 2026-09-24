@@ -41,5 +41,6 @@ void run_mesh_tests(void);
 void run_particle_tests(void);
 void run_audio_tests(void);
 void run_menu_tests(void);
+void run_dialog_tests(void);
 
 #endif

@@ -496,3 +496,19 @@ Two styles were added (Classic, Minimal), selectable live from Settings → UI S
   - Against S4b.2, particles 64–128 are still +11 to +16 % (D33). The particle update is up ~10 % as well, which is pure CPU. The pool no longer aliases the render stack's D-cache sets in this build, so data layout alone does not explain it; code placement (the update is outside the hot-text block) is the next suspect. A same-ROM A/B is planned.
 
 `docs/benchmarks/2026-09-24-p2-s5_2-all-debug-a3d.csv` is the comparison point for the next stage.
+
+## Phase 2 · S5.3 dialog system and text box (2026-09-24, debug build)
+
+Dialog conversations are compiled from JSON into `.dlg` banks and shown by a `TextBox` ([DIALOG.md](DIALOG.md)). The text box renders each page once into a cached layer, then draws the typewriter reveal as copy-mode blits of that page.
+
+Bench = UI gained two steps (the `dialog` profiler slot, `dialog_us` column appended to `BENCH_PROF`):
+- **50**: the demo conversation at reading pace (a scripted reader waits 0.4 s per finished page, 1 s per choice list);
+- **51**: skipping (A every 3 frames, so a new page is laid out and rendered every few frames: the worst case).
+
+| Step | `dialog_us` avg | Where |
+|---|---|---|
+| reading pace (50) | 450 | ares only (indicative) |
+| skipping (51) | 658 | ares only (indicative) |
+
+- The A3D stage test (2026-09-24) was a visual and functional check: all three styles, pages, pauses, choices, conditions, events. The USB log showed no unknown events or conditions and no assertions. It did not include a Bench = UI run, so there are no A3D numbers yet; take them with the next Bench = UI or Bench = All run.
+- The per-frame work is independent of the text length: a few rectangles (box, frame, name plate, choice box) and two or three blits. A new page costs one `rdpq_paragraph_build` and one text render of up to ~130 glyphs, the same order as a menu tab switch.

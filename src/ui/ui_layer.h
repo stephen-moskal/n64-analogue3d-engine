@@ -74,4 +74,16 @@ void ui_layer_set_budget(UiLayer *layer, int n);
 // top-left corner at (x, y). Call while the frame buffer is attached.
 void ui_layer_draw(UiLayer *layer, int x, int y, int used_h);
 
+// Custom content (cached mode): begin allocates the surface if needed,
+// attaches it and clears it to transparent; draw anything (text with
+// text_draw, a laid-out paragraph with text_render_paragraph - never plain
+// rdpq_paragraph_render, see text.h - or rectangles), then end detaches.
+// Use on a layer without slots. Returns false in immediate mode.
+bool ui_layer_canvas_begin(UiLayer *layer);
+void ui_layer_canvas_end(UiLayer *layer);
+
+// Draw part of the layer: the source rectangle (sx, sy, sw, sh) lands at
+// screen (x + sx, y + sy). For reveals and scrolling windows.
+void ui_layer_draw_part(UiLayer *layer, int x, int y, int sx, int sy, int sw, int sh);
+
 #endif

@@ -22,11 +22,12 @@ ENGINE_SRCS := \
 	$(SRC)/render/particle.c \
 	$(SRC)/audio/snd_mix.c \
 	$(SRC)/ui/menu.c \
+	$(SRC)/dialog/dialog.c \
 	$(SRC)/debug/frametime.c \
 	$(SRC)/debug/stats.c
 
 TEST_SRCS := test_main.c test_vec3.c test_collision.c test_physics.c \
-             test_action.c test_camera.c test_frametime.c test_mesh.c test_particle.c test_audio.c test_menu.c shim/shim.c
+             test_action.c test_camera.c test_frametime.c test_mesh.c test_particle.c test_audio.c test_menu.c test_dialog.c shim/shim.c
 
 OBJS := $(patsubst %.c,$(BUILD)/%.o,$(notdir $(TEST_SRCS) $(ENGINE_SRCS)))
 vpath %.c . shim $(sort $(dir $(ENGINE_SRCS)))
@@ -42,7 +43,12 @@ $(BUILD)/run_tests: $(OBJS)
 $(BUILD):
 	mkdir -p $@
 
-run: $(BUILD)/run_tests
+# The dialog tests load a bank compiled from JSON by the real tool
+DIALOG_BANK := $(BUILD)/test_dialog.dlg
+$(DIALOG_BANK): data/test_dialog.json ../../tools/dialog_build.py | $(BUILD)
+	python3 ../../tools/dialog_build.py $< -o $@
+
+run: $(BUILD)/run_tests $(DIALOG_BANK)
 	./$(BUILD)/run_tests
 
 clean:

@@ -84,6 +84,12 @@ assets_font_ttf  = $(wildcard assets/fonts/*.ttf)
 assets_font64    = $(addprefix filesystem/fonts/,$(notdir $(assets_font_ttf:%.ttf=%.font64)))
 MKFONT_FLAGS    ?= --monochrome --range 20-7F
 
+# Dialog: assets/dialog/*.json -> filesystem/dialog/*.dlg (tools/dialog_build.py,
+# format in docs/DIALOG.md). The tool checks every reference and fails the build
+# with the JSON location of the mistake.
+assets_dialog_json = $(wildcard assets/dialog/*.json)
+assets_dialog      = $(addprefix filesystem/dialog/,$(notdir $(assets_dialog_json:%.json=%.dlg)))
+
 # Debug-only data, built under $(DEBUG_FS)/ instead of filesystem/: a debug ROM
 # packs a staging copy of filesystem/ plus these files, a release ROM packs
 # filesystem/ alone. Now: the demo track in the other encodings the audio
@@ -142,6 +148,11 @@ filesystem/fonts/%.font64: assets/fonts/%.ttf
 	@echo "    [FONT] $@"
 	@$(N64_MKFONT) $(MKFONT_FLAGS) -o $(dir $@) "$<"
 
+filesystem/dialog/%.dlg: assets/dialog/%.json tools/dialog_build.py
+	@mkdir -p $(dir $@)
+	@echo "    [DIALOG] $@"
+	@python3 tools/dialog_build.py "$<" -o $@
+
 filesystem/audio/music/%.xm64: assets/audio/music/%.xm
 	@mkdir -p $(dir $@)
 	@echo "    [XM64] $@"
@@ -167,7 +178,7 @@ $(ENGINE_LD): $(N64_LIBDIR)/n64.ld $(HOT_TEXT_LD)
 
 $(ROM_NAME).z64: $(BUILD_DIR)/$(ROM_NAME).dfs
 
-$(BUILD_DIR)/$(ROM_NAME).dfs: $(assets_conv) $(assets_sfx_wav64) $(assets_music_wav64) $(assets_music_xm64) $(assets_font64) \
+$(BUILD_DIR)/$(ROM_NAME).dfs: $(assets_conv) $(assets_sfx_wav64) $(assets_music_wav64) $(assets_music_xm64) $(assets_font64) $(assets_dialog) \
                               $(debug_assets) $(OPTIONS_STAMP)
 ifeq ($(BUILD),debug)
 	@mkdir -p $(dir $@)
@@ -184,6 +195,6 @@ $(BUILD_DIR)/$(ROM_NAME).elf: $(OBJS) $(ENGINE_LD)
 -include $(wildcard $(BUILD_DIR)/*.d $(BUILD_DIR)/*/*.d)
 
 clean:
-	rm -rf build *.z64 *.elf *.dfs filesystem/*.sprite filesystem/audio filesystem/fonts
+	rm -rf build *.z64 *.elf *.dfs filesystem/*.sprite filesystem/audio filesystem/fonts filesystem/dialog
 
 .PHONY: all clean

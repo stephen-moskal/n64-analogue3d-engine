@@ -1,0 +1,30 @@
+{
+  "speakers": {
+    "guide": { "name": "Guide", "color": "accent" },
+    "you":   { "name": "{player}", "color": "hilite" }
+  },
+  "conversations": {
+    "intro": [
+      { "speaker": "guide", "text": "Hello, {player}! Welcome to the [c=title]Dev Engine[/c].[p=300] This box is the new dialog system." },
+      "Lines come from [c=accent]assets/dialog/demo.json[/c], compiled to a small binary bank at build time.",
+      "Text wraps by itself, and a long line is split into pages. Colours, [c=hilite]highlights[/c] and [c=dim]quiet asides[/c] come from the UI style,[p=250] so every style gets them for free.[page]This is a forced page break. The game fills in variables too: you are running at {fps} FPS in the {style} style.",
+      { "id": "menu", "text": "What would you like to see?", "event": "sound:select",
+        "choices": [
+          { "text": "Drop a ball", "next": "ball", "if": "!ball_spawned" },
+          { "text": "Relaunch the ball", "next": "ball", "if": "ball_spawned" },
+          { "text": "How does this work?", "next": "@howto" },
+          { "text": "Goodbye", "next": "bye" }
+        ] },
+      { "id": "ball", "text": "Here it comes![p=400] Watch the platform.", "event": "spawn_ball" },
+      { "speaker": "you", "text": "Nice. Can I ask something else?", "next": "menu" },
+      { "id": "bye", "speaker": "guide", "text": "[c=hilite]Ta-da![/c][p=200] A farewell burst for you, {player}.", "event": "burst" },
+      "Open the Debug tab and pick Dialog to come back."
+    ],
+    "howto": [
+      { "speaker": "guide", "text": "Each conversation is a list of lines. A line can name a speaker, fire an [c=accent]event[/c], and offer up to four [c=accent]choices[/c]." },
+      "Choices can hide behind a condition the game answers, like whether the ball exists yet.",
+      "Mistakes such as a missing target fail the build with the file and line position, so they never reach the cartridge.",
+      { "text": "Anything else?", "next": "intro.menu" }
+    ]
+  }
+}

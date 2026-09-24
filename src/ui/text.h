@@ -28,6 +28,11 @@ void text_draw(const TextBoxConfig *config, const char *str);
 // Style 0 is white and style 1 is rewritten by every text_draw() call.
 void text_set_style(uint8_t font_id, uint8_t style_id, color_t color);
 void text_draw_fmt(const TextBoxConfig *config, const char *fmt, ...);
+
+// Render a paragraph laid out with rdpq_paragraph_build. Use this instead of
+// rdpq_paragraph_render: it sets the render mode first (see begin_text in
+// text.c; rendering right after a fill-mode clear breaks later text).
+void text_render_paragraph(const rdpq_paragraph_t *p, float x, float y);
 void text_cleanup(void);
 
 #endif

@@ -15,6 +15,7 @@ build/
 filesystem/*.sprite
 filesystem/audio/
 filesystem/fonts/
+filesystem/dialog/
 
 # libdragon submodule working tree (the gitlink itself stays tracked)
 libdragon/

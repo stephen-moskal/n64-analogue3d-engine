@@ -95,6 +95,13 @@ static void draw_slot_text(const UiLayer *layer, const UiSlot *s, int ox, int oy
     text_draw(&cfg, s->text);
 }
 
+static void ensure_surface(UiLayer *layer) {
+    if (layer->allocated) return;
+    layer->surf = surface_alloc(FMT_RGBA16, layer->w, layer->h);
+    layer->allocated = true;
+    layer->clear_all = true;
+}
+
 // Render the dirty slots into the surface (nested attach: the frame buffer is
 // restored by rdpq_detach, the scissor is not, so it is reset afterwards)
 static void render_dirty(UiLayer *layer) {
@@ -102,11 +109,7 @@ static void render_dirty(UiLayer *layer) {
     for (int i = 0; i < layer->slot_count && !any; i++) any = layer->slots[i].dirty;
     if (!any) return;
 
-    if (!layer->allocated) {
-        layer->surf = surface_alloc(FMT_RGBA16, layer->w, layer->h);
-        layer->allocated = true;
-        layer->clear_all = true;
-    }
+    ensure_surface(layer);
 
     rdpq_attach(&layer->surf, NULL);
     int renders = 0;
@@ -135,6 +138,36 @@ static void render_dirty(UiLayer *layer) {
     // Layers are drawn onto the display framebuffer: reopen the whole screen
     rdpq_set_scissor(0, 0, display_get_width(), display_get_height());
     STATS_ADD(ui_renders, renders);
+}
+
+bool ui_layer_canvas_begin(UiLayer *layer) {
+    if (!layer->cached) return false;
+    ensure_surface(layer);
+    rdpq_attach(&layer->surf, NULL);
+    rdpq_set_mode_fill(RGBA32(0, 0, 0, 0));
+    rdpq_fill_rectangle(0, 0, layer->w, layer->h);
+    layer->clear_all = false;
+    return true;
+}
+
+void ui_layer_canvas_end(UiLayer *layer) {
+    (void)layer;
+    rdpq_detach();
+    rdpq_set_scissor(0, 0, display_get_width(), display_get_height());
+    STATS_INC(ui_renders);
+}
+
+void ui_layer_draw_part(UiLayer *layer, int x, int y, int sx, int sy, int sw, int sh) {
+    if (!layer->allocated || sw <= 0 || sh <= 0) return;
+    if (sx < 0) { sw += sx; sx = 0; }
+    if (sy < 0) { sh += sy; sy = 0; }
+    if (sx + sw > layer->w) sw = layer->w - sx;
+    if (sy + sh > layer->h) sh = layer->h - sy;
+    if (sw <= 0 || sh <= 0) return;
+    rdpq_set_mode_copy(true);
+    rdpq_tex_blit(&layer->surf, x + sx, y + sy,
+                  &(rdpq_blitparms_t){ .s0 = sx, .t0 = sy, .width = sw, .height = sh });
+    STATS_INC(ui_blits);
 }
 
 void ui_layer_draw(UiLayer *layer, int x, int y, int used_h) {

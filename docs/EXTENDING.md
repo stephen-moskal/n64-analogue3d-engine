@@ -9,7 +9,7 @@ Recipes for the changes contributors make most often. Each one lists the files t
 - New code that does per-frame work gets a profiler slot or a stats counter (recipes below).
 - Before committing, run `libdragon exec bash tools/ci_build.sh` (both ROMs, host tests, budgets, hot-text check). Python tools run in the container: `libdragon exec python3 tools/<tool>.py`.
 
-**Recipes:** [scene](#add-a-scene) · [mesh](#add-a-mesh) · [texture](#add-a-texture) · [Start menu item](#add-a-start-menu-item) · [Debug tab item](#add-a-debug-tab-item) · [profiler slot](#add-a-profiler-slot) · [stats counter](#add-a-stats-counter) · [benchmark kind](#add-a-benchmark-kind) · [host unit test](#add-a-host-unit-test) · [per-triangle render code](#add-per-triangle-render-code) · [sound](#add-a-sound) · [contributing a change](#contributing-a-change)
+**Recipes:** [scene](#add-a-scene) · [mesh](#add-a-mesh) · [texture](#add-a-texture) · [Start menu item](#add-a-start-menu-item) · [Debug tab item](#add-a-debug-tab-item) · [profiler slot](#add-a-profiler-slot) · [stats counter](#add-a-stats-counter) · [benchmark kind](#add-a-benchmark-kind) · [host unit test](#add-a-host-unit-test) · [per-triangle render code](#add-per-triangle-render-code) · [sound](#add-a-sound) · [dialog](#add-dialog) · [contributing a change](#contributing-a-change)
 
 ---
 
@@ -256,7 +256,7 @@ Gotchas:
 **Files:** `src/debug/debug_menu.h`, `src/debug/debug_menu.c`, and `src/main.c` if the main loop acts on the item. Background: [DEBUGGING.md](DEBUGGING.md).
 
 1. Add `DBG_ITEM_<NAME>` to `DebugMenuItem` in `debug_menu.h`, at the end, before `DBG_ITEM_COUNT`.
-2. At the end of `debug_menu_init()`, add a static options array and the `menu_add_item()` call. The order of the calls must match the enum: items are read by enum index and nothing checks it. The tab has one free slot (11 of 12).
+2. At the end of `debug_menu_init()`, add a static options array and the `menu_add_item()` call. The order of the calls must match the enum: items are read by enum index and nothing checks it. The tab is full (12 of 12, `MENU_MAX_ITEMS`): a new item needs a slot freed or a second debug tab.
 3. Handle the item in `debug_menu_update()`. `main.c` calls it every frame after the scene update, and it returns early while the menu is open, so values take effect when the menu closes with A (B reverts). Actions use the self-resetting `--- / Run!` pattern:
 
    ```c
@@ -293,8 +293,8 @@ Gotchas:
    ```
 
    `PROF_BEGIN` declares a local variable, so a slot can be opened once per C scope; add braces to time the same slot twice in one function. Time and calls add up when a slot runs several times per frame, and a parent includes its children.
-4. To see it on the overlay's Profiler page, add it to the `rows[]` list in `page_profiler()` in `overlay.c`. The page shows 13 slots, and its panel already ends at y = 192, near the demo HUD at the bottom of the screen; every row adds 10 px.
-5. CSV: `PROF_HDR`, `PROF_AVG` and `PROF_PEAK` list every slot in enum order without further work, so a slot inserted mid-enum shifts the columns after it; read captures by header name. `BENCH_PROF` reports a fixed set of six slots (`finish_step()` in `benchmark_scene.c`); extend it and `BENCH_PROF_HDR` together if the benchmark should report the new slot.
+4. To see it on the overlay's Profiler page, add it to the `rows[]` list in `page_profiler()` in `overlay.c`. The page shows 13 slots, and its panel already ends at y = 192, near the demo HUD at the bottom of the screen; every row adds 10 px (so `dialog` is in the CSV rows only).
+5. CSV: `PROF_HDR`, `PROF_AVG` and `PROF_PEAK` list every slot in enum order without further work, so a slot inserted mid-enum shifts the columns after it; read captures by header name. `BENCH_PROF` reports a fixed list of slots (`finish_step()` in `benchmark_scene.c`); append the new slot there and to `BENCH_PROF_HDR` together if the benchmark should report it (S5.3 appended `dialog_us`).
 6. Add the slot to the tree in PROFILING.md.
 
 Gotchas:
@@ -456,6 +456,25 @@ Gotchas:
 - Positional gains are set when the sound starts; keep the listener current with `snd_set_listener()` every frame (the demo passes its camera).
 - Music must be wav64: the Makefile also converts `*.xm` to `.xm64`, but nothing plays it. Opus music needs `SND_OPUS=1` (AUDIO.md).
 - Generated audio is git-ignored and tied to the libdragon version: after a submodule change run `libdragon make clean` (a stale file asserts `invalid version`). Changing an `AUDIOCONV_*` flag does not re-encode files that already exist; clean then too.
+
+---
+
+## Add dialog
+
+**Files:** `assets/dialog/<name>.json`, the scene that plays it. Background: [DIALOG.md](DIALOG.md).
+
+1. Write the conversations in `assets/dialog/<name>.json` (format: DIALOG.md "Source format"; `assets/dialog/demo.json` shows every feature). The Makefile compiles each JSON file to `rom:/dialog/<name>.dlg`; there is nothing to register.
+2. In the scene: load the bank in `on_init` (`dialog_bank_load()`), `textbox_init()` a `TextBox`, and free both in `on_cleanup` (`textbox_close()`, `dialog_bank_free()`): Reset Soak must still show a zero heap delta.
+3. Write the hooks for the events, conditions and variables the JSON names. Log unknown names (`ENGINE_LOG`), so a typo in the JSON shows in the USB log.
+4. Start a conversation with `dialog_start()` + `textbox_open()`. While `textbox_active()`: build a `UiInput` from the buttons, call `textbox_update()`, and skip the scene's own input (and Start); call `debug_menu_set_shortcuts(false)` if the box reads the D-pad. Draw it in `on_post_draw` with `textbox_draw(&box, style)` inside a `PROF_DIALOG` scope.
+5. Build: a JSON mistake stops `make` with its location. Test in ares, then on the A3D in every UI style.
+
+Gotchas:
+
+- Hooks run inside `dialog_start()`, `dialog_advance()` and `dialog_choose()` (when a line starts), so an event handler must not start another conversation on the same runner.
+- The dialog font (`FONT_UI_VAR`) covers ASCII 0x20–0x7E only; the compiler rejects anything else.
+- A text box covers the bottom of the screen: hide or move HUD elements under it (the demo hides its bottom band).
+- Render any other laid-out paragraph with `text_render_paragraph()`, not `rdpq_paragraph_render()` (UI.md, "Text and the render mode").
 
 ---
 
