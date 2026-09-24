@@ -1,6 +1,6 @@
 # Scene & World Management
 
-The scene system organizes the engine into self-contained units of content. Each scene owns its own camera, lighting, collision world, objects, and textures. A scene manager handles loading, unloading, soft resets and transitions between scenes.
+The scene system organizes the engine into self-contained units of content. Each scene owns its own camera, lighting, collision world, physics world, objects, and textures. A scene manager handles loading, unloading, soft resets and transitions between scenes.
 
 ## Architecture
 
@@ -10,7 +10,8 @@ SceneManager
 │   ├── Camera          (orbital / fixed / follow)
 │   ├── LightConfig     (Blinn-Phong parameters)
 │   ├── CollisionWorld  (up to 64 colliders)
-│   ├── SceneObject[]   (up to 32 objects)
+│   ├── PhysicsWorld    (up to 32 bodies; raycasts the collision world)
+│   ├── SceneObject[]   (up to 32 objects; each can own a collider and a body)
 │   ├── Textures        (declared paths/slots, loaded on init)
 │   ├── Callbacks       (on_init, on_update, on_draw, on_post_draw, on_cleanup)
 │   └── reset_requested (soft reset on the next update)
@@ -25,7 +26,7 @@ SceneManager
 | Display, Z-buffer | `main.c` | Application |
 | Input, fonts, audio | `main.c` (initialized once) | Application |
 | Start menu (global) | built in `main.c`, driven by the demo scene | Application |
-| Camera, lighting, collision | Scene | Scene load/unload |
+| Camera, lighting, collision, physics | Scene | Scene load/unload |
 | Objects, textures | Scene | Scene load/unload |
 
 ## Defining a Scene
@@ -114,7 +115,7 @@ A scene becomes active through `scene_manager_switch()`: `main.c` starts the dem
 
 ```
 scene_init(scene)
-├── collision_world_init()   — Reset collision world
+├── scene_objects_init()     — No objects; empty collision and physics worlds
 ├── lighting_init()          — Default lighting
 ├── texture_load_slot()      — For each declared texture (texture_paths / texture_slots)
 ├── scene->on_init()         — Scene-specific setup
@@ -129,11 +130,14 @@ scene_init(scene)
 scene_update(scene, dt)
 ├── Per-object on_update()   — Active objects with a callback
 ├── scene->on_update()       — Scene-level logic (input, game state)
+├── physics_world_update()   — Fixed steps, only when the scene has bodies
+├── scene_sync_bodies()      — Objects move to their bodies
 ├── camera_update()          — Rebuilds matrices only when dirty (or in follow mode)
+├── scene_sync_colliders()   — Colliders move to their objects
 └── collision_test_all()     — Collision detection; colliders and pairs go to the stats
 ```
 
-The camera and collision work is timed in the `scene_sys` profiler slot.
+Physics and the body sync are timed in the `physics` profiler slot, the camera, collider sync and collision work in `scene_sys`. Physics runs after `on_update`, so game code sees the bodies as the previous frame left them: an impulse applied in `on_update` takes effect in the same frame's steps, and code that reacts to physics (the demo's bounce sound) reads the bodies in `on_update`, one frame after the step that moved them.
 
 ### Per-Frame Draw
 
@@ -171,40 +175,77 @@ A scene that frees everything it allocates keeps the heap flat across resets; Re
 
 ## Scene Objects
 
-Objects within a scene have transform, state flags, and optional callbacks:
+Objects within a scene have transform, state flags, an optional collider and physics body, and optional callbacks:
 
 ```c
 typedef struct SceneObject {
     vec3_t position;
-    vec3_t rotation;      // Euler angles (radians)
+    vec3_t rotation;         // Euler angles (radians)
     vec3_t scale;
 
-    bool active;          // Participates in update
-    bool visible;         // Participates in draw
+    bool active;             // Participates in update
+    bool visible;            // Participates in draw
+    uint16_t flags;          // SCENE_OBJ_* bits
 
-    int collider_handle;  // Handle in scene's CollisionWorld (-1 = none)
+    int collider_handle;     // in the scene's CollisionWorld (-1 = none)
+    int body_handle;         // in the scene's PhysicsWorld (-1 = none)
+    vec3_t collider_offset;  // collider centre - position, set on attach
 
-    void *data;           // Type-specific data pointer
+    void *data;              // Type-specific data pointer
     void (*on_update)(struct SceneObject *obj, float dt);
     void (*on_draw)(struct SceneObject *obj, const Camera *cam,
                     const LightConfig *light);
 } SceneObject;
 ```
 
-`collider_handle` is not used by the engine yet: the demo keeps its own collider handles.
-
 ### Object Management
 
 ```c
-// Add an object (copied into the scene; returns index or -1 if full)
+// Add an object (copied into the scene; returns index or -1 if full). The
+// copy starts without a collider or body, whatever the handles held.
 int idx = scene_add_object(scene, &obj);
 
 // Access by index (NULL if out of range)
 SceneObject *obj = scene_get_object(scene, idx);
 
-// Remove (shifts remaining objects down)
+// Next / previous object whose flags include all of SCENE_OBJ_SELECTABLE,
+// wrapping; from = -1 starts at the first (or last); -1 if none matches
+int next = scene_find_object(scene, current, +1, SCENE_OBJ_SELECTABLE);
+
+// Remove: removes the object's collider and body, shifts later objects down
 scene_remove_object(scene, idx);
 ```
+
+Object management, attachments and the per-frame sync live in `src/scene/scene_objects.c`, which has no rendering code; `tests/host/test_scene.c` covers it on the host.
+
+### Colliders and Physics Bodies
+
+An object can own one collider and one physics body. Create them in the scene's worlds, then attach them:
+
+```c
+int idx = scene_add_object(scene, &obj);
+scene_object_set_collider(scene, idx, collision_add_sphere(&scene->collision,
+    obj.position, 20.0f, COLLISION_LAYER_DEFAULT, COLLISION_LAYER_DEFAULT, NULL));
+scene_object_set_body(scene, idx, physics_body_add(&scene->physics, &PHYSICS_DEF_BALL, obj.position));
+```
+
+- **The object follows its body.** After the physics step, `scene_sync_bodies()` copies each body's position to its object ([PHYSICS.md](PHYSICS.md)). To move a body by hand, set `body->kinematic` and write its position: the simulation leaves it alone and the object still follows it. The demo holds the ball this way while it is being moved.
+- **The collider follows its object.** `scene_sync_colliders()` puts the collider's centre at `position + collider_offset`, the offset measured when it was attached. A box keeps its size and is only rewritten when the object moved. Rotation and scale are not applied: resize a collider yourself with `collision_update_*()`.
+- **Ownership.** Removing the object removes both. Attaching another collider or body removes the previous one; attaching -1 removes it. A collider or body belongs to one object at most: attach each only once. Colliders that belong to no object (the demo's ground) stay where they were added.
+- **Handles start empty.** `scene_add_object()` sets both handles to -1: a zero-initialised object would otherwise own collider 0 and body 0 and remove them when it goes.
+- **Layers.** A body raycasts the layers in its `collision_layer_mask` (`COLLISION_LAYER_ENV` by default) to find the ground. Put an object's own collider on another layer, or the body's ray hits its own collider: the demo's ball has a sphere on `COLLISION_LAYER_DEFAULT` only.
+
+### Object Flags
+
+`flags` says which passes and queries include the object. The engine defines:
+
+| Flag | Meaning |
+|------|---------|
+| `SCENE_OBJ_CASTS_SHADOW` | drawn by the scene's shadow pass |
+| `SCENE_OBJ_SELECTABLE` | can be picked (the demo's object mode) |
+| `SCENE_OBJ_FLAG_USER` and up | free for game-specific use |
+
+The scene draws shadows itself in `on_draw` (the demo: after the floor, for every visible object with `SCENE_OBJ_CASTS_SHADOW`), and cycles a selection with `scene_find_object()`. Objects added at run time take part as soon as they carry the flag: before S7 the demo drew shadows and cycled selection over the first N objects, so its physics ball, added later, had neither (D20).
 
 ## Scene Manager
 
@@ -356,6 +397,7 @@ A ray from the look-at point toward the camera snaps the camera in front of the 
 | Max objects per scene | 32 (`SCENE_MAX_OBJECTS`) |
 | Max declared textures per scene | 16 (`SCENE_MAX_TEXTURES`) |
 | Max colliders per scene | 64 |
+| Max physics bodies per scene | 32 (`PHYSICS_MAX_BODIES`) |
 | Max collision results | 32 |
 
 ## Memory
@@ -367,8 +409,8 @@ Shared resources (framebuffers, Z-buffer, fonts, audio) persist across scene tra
 The demo scene (`src/scenes/demo_scene.c`) exercises most of the engine:
 
 - Six mesh objects: textured rotating cube, two pillars, platform, rotating pyramid and a static sphere (the curved-surface test object), plus three billboards (a marker and two trees)
-- B spawns (then re-launches) a physics ball and fires particle bursts on the pillar tops; torch flames burn while point lights are on
-- Object selection (Z, D-Left/Right) and move/rotate/scale (A cycles the mode, stick and C-buttons manipulate)
+- B spawns (then re-launches) a physics ball, a scene object with a body and a sphere collider that casts a shadow and can be selected, and fires particle bursts on the pillar tops; torch flames burn while point lights are on
+- Object selection (Z, D-Left/Right) and move/rotate/scale (A cycles the mode, stick and C-buttons manipulate). Colliders move with their objects: the platform's collider is its box, so the ball lands on the platform wherever it is moved. A ball being transformed is held in place (kinematic) and drops when the mode ends
 - The Start menu: background, lighting, shadows, point lights, atmosphere presets, camera mode and collision, frame rate, sound, control remapping, Reset Scene, and the Debug tab
 - Most menu values are applied only when they change, not every frame
 - HUD: title, object counts, triangles/uploads/collisions/raycast distance, FPS and CPU time, camera mode and position
@@ -381,6 +423,7 @@ The benchmark scene (`src/scenes/benchmark_scene.c`) is a second, menu-less scen
 |------|---------|
 | [src/scene/scene.h](../src/scene/scene.h) | Scene, SceneObject, SceneManager types |
 | [src/scene/scene.c](../src/scene/scene.c) | Scene lifecycle, background, manager, transitions, soft reset |
+| [src/scene/scene_objects.c](../src/scene/scene_objects.c) | Objects, their colliders and bodies, flags, the per-frame sync (host-tested) |
 | [src/scenes/demo_scene.c](../src/scenes/demo_scene.c) | Demo scene implementation |
 | [src/scenes/benchmark_scene.c](../src/scenes/benchmark_scene.c) | Benchmark scene |
 | [src/main.c](../src/main.c) | Creates the scene manager, switches scenes, runs the frame loop |

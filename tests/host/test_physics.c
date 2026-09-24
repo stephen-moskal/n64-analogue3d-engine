@@ -63,8 +63,25 @@ static void test_max_steps_clamp(void) {
     CHECK(pw.accumulator <= PHYSICS_DT + 1e-6f);       // leftover clamped
 }
 
+// A kinematic body is left alone by the simulation (held by game code)
+static void test_kinematic(void) {
+    CollisionWorld cw;
+    collision_world_init(&cw);
+    PhysicsWorld pw;
+    physics_world_init(&pw, &cw);
+    int h = physics_body_add(&pw, &DEF_FREEFALL, (vec3_t){0, 1000, 0});
+    CHECK(!pw.bodies[h].kinematic);                    // simulated by default
+    pw.bodies[h].kinematic = true;
+    for (int i = 0; i < 30; i++) physics_world_update(&pw, PHYSICS_DT);
+    CHECK(pw.bodies[h].position.y == 1000.0f && pw.bodies[h].velocity.y == 0.0f);
+    pw.bodies[h].kinematic = false;                    // released: falls
+    for (int i = 0; i < 30; i++) physics_world_update(&pw, PHYSICS_DT);
+    CHECK(pw.bodies[h].position.y < 1000.0f);
+}
+
 void run_physics_tests(void) {
     RUN_TEST(test_free_fall);
     RUN_TEST(test_bounce_and_rest);
     RUN_TEST(test_max_steps_clamp);
+    RUN_TEST(test_kinematic);
 }

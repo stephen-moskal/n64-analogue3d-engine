@@ -36,7 +36,7 @@ frame                 loop top to loop top (wall time)
   wait_display        blocked in display_get() for a free framebuffer = idle headroom
   limiter             unused since S6.2 (the display module paces inside wait_display); kept for the CSV columns
   update              scene_manager_update
-    input / physics / particle_upd / scene_sys (camera + collision)
+    input / physics (step + body sync) / particle_upd / scene_sys (camera, collider sync, collision)
   draw                scene_manager_draw
     sky / floor / shadows / objects / particle_draw / hud / menu / dialog
       objects > mesh_cull / mesh_light / mesh_tris

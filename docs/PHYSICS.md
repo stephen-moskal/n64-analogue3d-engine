@@ -89,7 +89,8 @@ Runtime state for a single physics object.
 ```c
 typedef struct {
     bool   active;
-    vec3_t position;       // Authoritative position (copied to SceneObject after update)
+    bool   kinematic;      // Moved by game code: the simulation leaves it alone
+    vec3_t position;       // Authoritative position (the scene copies it to the object)
     vec3_t velocity;       // Current velocity (units/second)
     vec3_t acceleration;   // External forces, reset after each step
 
@@ -105,7 +106,9 @@ typedef struct {
 } PhysicsBody;
 ```
 
-**Position ownership:** PhysicsBody owns its position during simulation. After `physics_world_update()`, the caller copies `body->position` to the corresponding `SceneObject.position`. This keeps physics decoupled from the scene system — physics is optional per-scene.
+**Position ownership:** the body owns its position. A body attached to a scene object (`scene_object_set_body()`) moves the object: after every physics update `scene_sync_bodies()` copies `body->position` to `SceneObject.position` ([SCENE_SYSTEM.md](SCENE_SYSTEM.md)). The physics module itself knows nothing about scenes.
+
+**Kinematic bodies:** set `kinematic` to move a body by hand. `physics_step()` skips it (no gravity, no integration, no ground contact); game code writes its position, and zeroes its velocity if it should start from rest when released. The demo holds the ball this way while it is transformed.
 
 ### PhysicsWorld
 
@@ -121,7 +124,7 @@ typedef struct {
 } PhysicsWorld;
 ```
 
-**Scene-local:** PhysicsWorld is owned by the scene (e.g., `demo_scene.c` declares it as a static variable). It is NOT part of the `Scene` struct — physics is opt-in per scene. Scenes that don't need physics don't pay for it.
+**Owned by the scene:** every `Scene` has one (`Scene.physics`, ~2.8 KB). `scene_init()` empties it and points it at the scene's collision world, and `scene_update()` steps it after `on_update` when it holds at least one body; a scene without bodies pays two empty loops per frame.
 
 ## Algorithms
 
@@ -275,47 +278,35 @@ int handle = physics_body_add(&world, &my_projectile, start_pos);
 
 ## Integration Pattern
 
-### Scene Setup
-
-```c
-static PhysicsWorld physics_world;
-static int body_handle = -1;
-
-static void my_scene_init(Scene *scene) {
-    // ... other init ...
-    physics_world_init(&physics_world, &scene->collision);
-}
-```
-
-### Frame Update
-
-```c
-static void my_scene_update(Scene *scene, float dt) {
-    // Input, camera, etc. (variable dt) ...
-
-    // Physics (semi-fixed timestep internally)
-    physics_world_update(&physics_world, dt);
-
-    // Sync physics positions to scene objects
-    PhysicsBody *body = physics_body_get(&physics_world, body_handle);
-    SceneObject *obj = scene_get_object(scene, obj_index);
-    if (body && obj) {
-        obj->position = body->position;
-    }
-
-    // Particles, menu, etc. ...
-}
-```
+The scene owns the world, steps it and moves objects to their bodies ([SCENE_SYSTEM.md](SCENE_SYSTEM.md)); a scene only adds bodies and attaches them to objects.
 
 ### Spawning a Physics Object
 
 ```c
-// Create visual object
-int obj_idx = spawn_object(scene, "Ball", mesh_defs_get_sphere(),
-    spawn_pos, (vec3_t){20, 20, 20}, false, 0, 0);
+// The body, then the object it moves (the demo's launch_ball())
+int body = physics_body_add(&scene->physics, &PHYSICS_DEF_BALL, spawn_pos);
+int idx  = spawn_object(scene, "Ball", mesh_defs_get_sphere(), spawn_pos,
+                        (vec3_t){20, 20, 20}, false, 0, 0);
+scene_object_set_body(scene, idx, body);
 
-// Create physics body (position authoritative)
-int body_h = physics_body_add(&physics_world, &PHYSICS_DEF_BALL, spawn_pos);
+// Optional: a collider for pair tests and camera push-out, moved with the
+// object. Not on the ENV layer the body's ground ray uses.
+scene_object_set_collider(scene, idx, collision_add_sphere(&scene->collision, spawn_pos,
+    PHYSICS_DEF_BALL.radius, COLLISION_LAYER_DEFAULT, COLLISION_LAYER_DEFAULT, NULL));
+```
+
+### Frame Update
+
+Nothing to call: `scene_update()` runs `physics_world_update()` and `scene_sync_bodies()` after `on_update`. Game code reads and pushes bodies in `on_update`:
+
+```c
+static void my_scene_update(Scene *scene, float dt) {
+    SceneObject *obj = scene_get_object(scene, ball_index);
+    PhysicsBody *body = obj ? physics_body_get(&scene->physics, obj->body_handle) : NULL;
+    if (body && body->grounded && action_pressed(ACTION_CONFIRM)) {
+        physics_body_apply_impulse(body, (vec3_t){0, 300, 0});   // jump
+    }
+}
 ```
 
 ### Applying Impulses
@@ -377,14 +368,14 @@ All functions follow the existing `vec3.h` convention: parameters are `const vec
 
 At 60 FPS with 1 step/frame and 32 bodies: ~9,600 cycles/frame = ~0.1ms. Physics is well within the ~7-9ms CPU budget available after rendering.
 
-`physics_world_update()` records the body count and the fixed steps it ran in the per-frame stats (`physics_bodies`, `physics_steps`), and the demo times it in the `physics` profiler slot ([PROFILING.md](PROFILING.md)); the demo measured ~0.02 ms on the Analogue 3D ([BENCHMARKS.md](BENCHMARKS.md)).
+`physics_world_update()` records the body count and the fixed steps it ran in the per-frame stats (`physics_bodies`, `physics_steps`), and `scene_update()` times it, with the body sync, in the `physics` profiler slot ([PROFILING.md](PROFILING.md)); the demo measured ~0.02 ms on the Analogue 3D ([BENCHMARKS.md](BENCHMARKS.md)).
 
 ### Memory Cost
 
 | Resource | Size |
 |----------|------|
-| PhysicsWorld (32 bodies) | ~2.5 KB |
-| Per body | ~76 bytes |
+| PhysicsWorld (32 bodies, one per scene) | ~2.8 KB |
+| Per body | 88 bytes |
 | Code (physics.c) | ~2 KB |
 
 ### Limits
@@ -408,24 +399,24 @@ At 60 FPS with 1 step/frame and 32 bodies: ~9,600 cycles/frame = ~0.1ms. Physics
 
 The demo scene (`src/scenes/demo_scene.c`) demonstrates the physics system with a bouncy ball:
 
-- **B button** in normal mode spawns a red sphere above the platform
-- The ball falls under gravity, bounces on the platform surface (AABB collider at Y=-85)
-- Bounces diminish via restitution (0.7) until the ball comes to rest
+- **B button** in normal mode spawns a red sphere above the platform: a scene object with a body and a sphere collider on the default layer
+- The ball falls under gravity, bounces on the platform surface (the platform's box collider, top at Y=-85)
+- Bounces diminish via restitution (0.7) until the ball comes to rest; each bounce plays a positional sound scaled by the impact speed
 - Pressing B again resets the ball position and applies an upward impulse
-- The platform has a dedicated AABB collider on `COLLISION_LAYER_ENV` for flat ground detection
+- The platform's collider is its box, on `COLLISION_LAYER_ENV` for flat ground detection; it moves with the platform, so the ball lands on the platform wherever it is moved
 - If the ball rolls off the platform, it continues bouncing on the floor (ground AABB at Y=-100)
-- The ball casts no shadow and cannot be selected: both loops only cover the objects spawned before it (defect D20)
+- The ball casts a shadow and can be selected (Z, D-Left/Right): while it is transformed it is held in place (kinematic) and moves with the stick; it drops when the mode ends
 
 ## Testing
 
-`tests/host/test_physics.c` checks free fall, bounce and rest detection, and the max-steps clamp on the host. The ball demo has so far been verified in ares only; the hardware check is planned (ROADMAP_v2 D16).
+`tests/host/test_physics.c` checks free fall, bounce and rest detection, the max-steps clamp and kinematic bodies on the host; `tests/host/test_scene.c` checks a body moving its object and the object its collider. The ball demo has so far been verified in ares only; the hardware check is planned (ROADMAP_v2 D16).
 
 ## Future Extensions
 
 The physics system is designed for incremental expansion:
 
 - **Sphere-sphere collision:** Body-to-body collision response for combat knockback
-- **Moving platforms:** Update collider positions, bodies ride along
+- **Moving platforms:** a platform's collider already follows its object; bodies resting on it do not ride along yet (no carry)
 - **Projectile arcs:** Use `gravity_scale < 1.0` for floaty projectiles
 - **Character controller:** PhysicsBody + input = player movement with gravity/jumping
 - **Hit reactions:** `apply_impulse()` with directional knockback vector from combat system

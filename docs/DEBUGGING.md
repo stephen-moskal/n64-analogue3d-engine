@@ -109,7 +109,7 @@ Crashes seen so far:
 
 ## Unit tests
 
-Modules without rendering dependencies have host tests in `tests/host`: vec3, collision (including sparse collider slots), physics, action mapping, camera math and the camera's dirty/follow behaviour, frame-time statistics, mesh building and the built-in shapes (winding, planar groups), and the particle simulation. They are compiled with the host compiler against a small libdragon stand-in, `tests/host/shim/libdragon.h` (colour types, `debugf`/`assertf`, `TICKS_READ()`, and a joypad whose state the tests set), with `-Wall -Werror`:
+Modules without rendering dependencies have host tests in `tests/host`: vec3, collision (including sparse collider slots), physics (including kinematic bodies), scene objects (collider and body ownership, the per-frame sync, flag queries), action mapping, camera math and the camera's dirty/follow behaviour, frame-time statistics, mesh building and the built-in shapes (winding, planar groups), and the particle simulation. They are compiled with the host compiler against a small libdragon stand-in, `tests/host/shim/libdragon.h` (colour types, `debugf`/`assertf`, `TICKS_READ()`, and a joypad whose state the tests set), with `-Wall -Werror`:
 
 ```powershell
 libdragon exec make -C tests/host run      # 123 checks, 0 failures

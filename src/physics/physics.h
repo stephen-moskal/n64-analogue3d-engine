@@ -25,6 +25,7 @@ typedef struct {
 
 typedef struct {
     bool   active;
+    bool   kinematic;      // moved by game code: the simulation leaves it alone
     vec3_t position;
     vec3_t velocity;
     vec3_t acceleration;   // External forces accumulated this frame (reset after step)
@@ -46,7 +47,7 @@ typedef struct {
     int    collision_layer_mask;  // Which collision layers to raycast against
 } PhysicsBody;
 
-// --- Physics world (one per scene that needs physics) ---
+// --- Physics world (Scene.physics: every scene owns one) ---
 
 typedef struct {
     PhysicsBody bodies[PHYSICS_MAX_BODIES];

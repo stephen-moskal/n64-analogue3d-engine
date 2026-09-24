@@ -21,8 +21,8 @@ A scene is a static `Scene` (`src/scene/scene.h`) whose callbacks the scene mana
 
 | Member | Used by | When |
 |---|---|---|
-| `on_init` | `scene_init()` | after `collision_world_init()`, `lighting_init()` and the declared textures are loaded |
-| `on_update` | `scene_update()` | every frame, after each active object's `on_update`, before `camera_update()` and `collision_test_all()` |
+| `on_init` | `scene_init()` | after `scene_objects_init()` (no objects, empty collision and physics worlds), `lighting_init()` and the declared textures are loaded |
+| `on_update` | `scene_update()` | every frame, after each active object's `on_update`, before the physics step, the body and collider sync, `camera_update()` and `collision_test_all()` |
 | `on_draw` | `scene_draw()` | after the background (the sky, or a clear to `bg_color`) and the Z clear, before each visible object's `on_draw` |
 | `on_post_draw` | `scene_draw()` | after all object draws: particles, HUD, menu |
 | `on_cleanup` | `scene_cleanup()` | before the declared textures are freed and `object_count` is zeroed |
@@ -102,7 +102,8 @@ Gotchas:
 - **Soft reset:** `scene->reset_requested = true` makes the next `scene_manager_update()` run `scene_cleanup()` and `scene_init()` and skip that frame's update. The menu keeps its values across the reset (the demo's Settings → Reset Scene uses this).
 - **Camera dirty flag:** `camera_update()` rebuilds the matrices only when `camera.dirty` is set (every `camera_*` setter sets it) or in follow mode with a target. Code that writes `Camera` fields directly (`azimuth`, `fixed_position`, `follow_offset`) must set `scene->camera.dirty = true`, as `demo_update()` and `bench_update()` do.
 - **Global state outlives the scene:** fog and sky (`atmosphere_*`), the particle system, the 16 texture slots, the BGM, the action bindings and `engine_target_fps`. Restore what you change: the benchmark saves fog and sky in `bench_init()` and restores them in `bench_cleanup()`. `texture_cleanup()` frees every slot, not only yours.
-- `scene_add_object()` copies the `SceneObject` and returns -1 once the scene holds 32. `SceneObject.data` must outlive the object: the demo keeps static pools (`object_data[]`, `billboard_data[]`). `world_offset` and `collider_handle` are stored but not read by the engine (`collider_handle`: D11).
+- `scene_add_object()` copies the `SceneObject` and returns -1 once the scene holds 32; the copy starts without a collider or body. Attach them with `scene_object_set_collider()` / `scene_object_set_body()`: the scene then moves the object with its body and the collider with the object, and removes both with the object ([SCENE_SYSTEM.md](SCENE_SYSTEM.md)). `SceneObject.data` must outlive the object: the demo keeps static pools (`object_data[]`, `billboard_data[]`). `world_offset` is stored but not read by the engine.
+- **Flags, not index ranges.** Mark shadow casters and selectable objects with `SCENE_OBJ_CASTS_SHADOW` / `SCENE_OBJ_SELECTABLE` and loop over the flags (`scene_find_object()` cycles a selection): objects added later then take part too (D20).
 
 ---
 

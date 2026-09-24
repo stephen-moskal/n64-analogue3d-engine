@@ -56,7 +56,6 @@ SceneObject obj = {
     .scale = {1, 1, 1},
     .active = true,
     .visible = true,
-    .collider_handle = -1,
     .data = data,
     .on_update = NULL,
     .on_draw = billboard_draw,
@@ -99,7 +98,7 @@ return scene_add_object(scene, &obj);
 | tree | cylindrical | 7, `tree.sprite` (`TEX_BILLBOARD_TREE`) | 120 × 160 | (350, −20, −150) |
 | tree | cylindrical | 7 | 100 × 130 | (−350, −30, 200) |
 
-All three use a white tint. Both textures are declared in the demo's `Scene.texture_paths`, so `scene_init()` and `scene_cleanup()` load and free them. `demo_init()` adds the billboards after the six mesh objects, so they can't be selected and cast no shadows: selection and the shadow pass cover only the first `selectable_object_count` objects (D20 is the same limit for the physics ball).
+All three use a white tint. Both textures are declared in the demo's `Scene.texture_paths`, so `scene_init()` and `scene_cleanup()` load and free them. The billboards carry neither `SCENE_OBJ_SELECTABLE` nor `SCENE_OBJ_CASTS_SHADOW`, so they can't be selected and cast no shadows ([SCENE_SYSTEM.md](SCENE_SYSTEM.md), "Object Flags").
 
 ## Limits
 

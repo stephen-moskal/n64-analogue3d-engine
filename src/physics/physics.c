@@ -37,6 +37,7 @@ int physics_body_add(PhysicsWorld *world, const PhysicsBodyDef *def, vec3_t posi
         if (!world->bodies[i].active) {
             PhysicsBody *b = &world->bodies[i];
             b->active = true;
+            b->kinematic = false;
             b->position = position;
             b->velocity = VEC3_ZERO;
             b->acceleration = VEC3_ZERO;
@@ -108,7 +109,7 @@ float physics_body_speed(const PhysicsBody *body) {
 static void physics_step(PhysicsWorld *world) {
     for (int i = 0; i < PHYSICS_MAX_BODIES; i++) {
         PhysicsBody *b = &world->bodies[i];
-        if (!b->active) continue;
+        if (!b->active || b->kinematic) continue;
 
         // Apply gravity
         b->velocity.y += world->gravity * b->gravity_scale * PHYSICS_DT;

@@ -15,6 +15,7 @@ LDLIBS  := -lm
 ENGINE_SRCS := \
 	$(SRC)/collision/collision.c \
 	$(SRC)/physics/physics.c \
+	$(SRC)/scene/scene_objects.c \
 	$(SRC)/input/action.c \
 	$(SRC)/render/camera.c \
 	$(SRC)/render/mesh_build.c \
@@ -27,7 +28,7 @@ ENGINE_SRCS := \
 	$(SRC)/debug/stats.c
 
 TEST_SRCS := test_main.c test_vec3.c test_collision.c test_physics.c \
-             test_action.c test_camera.c test_frametime.c test_mesh.c test_particle.c test_audio.c test_menu.c test_dialog.c shim/shim.c
+             test_action.c test_camera.c test_frametime.c test_mesh.c test_particle.c test_audio.c test_menu.c test_dialog.c test_scene.c shim/shim.c
 
 OBJS := $(patsubst %.c,$(BUILD)/%.o,$(notdir $(TEST_SRCS) $(ENGINE_SRCS)))
 vpath %.c . shim $(sort $(dir $(ENGINE_SRCS)))

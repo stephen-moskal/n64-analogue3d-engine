@@ -197,16 +197,21 @@ ColliderSphere collision_sphere_from_aabb(const ColliderAABB *aabb);
 
 ## Integration with Scene System
 
-Each `Scene` owns a `CollisionWorld`. The scene system calls `collision_test_all()` automatically after `on_update`:
+Each `Scene` owns a `CollisionWorld` (and a `PhysicsWorld` that raycasts it). The scene system calls `collision_test_all()` automatically after `on_update`:
 
 ```c
 // In scene_update():
-scene->on_update(scene, dt);     // Game logic, input
-camera_update(&scene->camera);   // Camera matrices
-collision_test_all(&scene->collision);  // Collision detection
+scene->on_update(scene, dt);               // Game logic, input
+physics_world_update(&scene->physics, dt); // when the scene has bodies
+scene_sync_bodies(scene);                  // objects move to their bodies
+camera_update(&scene->camera);             // Camera matrices
+scene_sync_colliders(scene);               // colliders move to their objects
+collision_test_all(&scene->collision);     // Collision detection
 ```
 
-`scene_init()` resets the world with `collision_world_init()` before `on_init`, where scenes add their colliders; a soft reset or scene switch therefore starts from an empty world. The collider count and overlapping pairs go to the per-frame stats (`colliders`, `collision_pairs`), and every `collision_raycast()` counts in `raycasts` ([PROFILING.md](PROFILING.md)).
+A collider attached to a scene object (`scene_object_set_collider()`) follows it: its centre stays at the object's position plus the offset it had when attached, and it is removed with the object ([SCENE_SYSTEM.md](SCENE_SYSTEM.md)). Colliders that belong to no object stay where they are added.
+
+`scene_init()` resets the world before `on_init`, where scenes add their colliders; a soft reset or scene switch therefore starts from an empty world. The collider count and overlapping pairs go to the per-frame stats (`colliders`, `collision_pairs`), and every `collision_raycast()` counts in `raycasts` ([PROFILING.md](PROFILING.md)).
 
 ## Limits
 

@@ -64,9 +64,6 @@ static BillboardData *alloc_billboard_data(void) {
 #define TEX_BILLBOARD_MARKER  6
 #define TEX_BILLBOARD_TREE    7
 
-// Number of mesh objects (first N objects are selectable; billboards are not)
-static int selectable_object_count = 0;
-
 // ============================================================
 // Interaction mode — object selection & manipulation
 // ============================================================
@@ -85,17 +82,6 @@ static const char *transform_mode_names[] = {"MOVE", "ROT", "SCALE"};
 #define OBJ_MOVE_Y_SPEED  2.0f
 #define OBJ_ROTATE_SPEED  0.03f
 #define OBJ_SCALE_SPEED   0.5f
-
-// ============================================================
-// Collider handles
-// ============================================================
-
-static int ground_collider = -1;
-
-// Per-object collider handles (indexed same as scene objects)
-#define MAX_OBJ_COLLIDERS 8
-static int obj_colliders[MAX_OBJ_COLLIDERS];
-static int obj_collider_count = 0;
 
 // ============================================================
 // Raycast result (for HUD display)
@@ -167,12 +153,8 @@ static int emitter_magic = -1;
 static int emitter_torch_l = -1;
 static int emitter_torch_r = -1;
 
-// --- Physics ball state ---
-static PhysicsWorld physics_world;
-static int ball_body_handle = -1;
-static int ball_object_index = -1;
-static bool ball_spawned = false;
-static int platform_aabb_collider = -1;
+// --- Physics ball: a scene object with a body and a collider (launch_ball) ---
+static int ball_object = -1;    // object index, -1 until the first launch
 
 // Ball spawn position (above platform)
 #define BALL_SPAWN_X       0.0f
@@ -412,7 +394,8 @@ static void object_draw(SceneObject *obj, const Camera *cam, const LightConfig *
 }
 
 // ============================================================
-// Helper: spawn a scene object with mesh
+// Helper: spawn a scene object with mesh. Mesh objects are selectable and
+// cast shadows (SceneObject.flags); billboards do neither.
 // ============================================================
 
 static int spawn_object(Scene *scene, const char *name, const Mesh *mesh,
@@ -433,13 +416,22 @@ static int spawn_object(Scene *scene, const char *name, const Mesh *mesh,
         .scale = scale,
         .active = true,
         .visible = true,
-        .collider_handle = -1,
+        .flags = SCENE_OBJ_SELECTABLE | SCENE_OBJ_CASTS_SHADOW,
         .data = data,
         .on_update = object_update,
         .on_draw = object_draw,
     };
 
     return scene_add_object(scene, &obj);
+}
+
+// Sphere collider on the default layer, centred on the object: the scene
+// moves it with the object and removes it with the object
+static void attach_sphere_collider(Scene *scene, int idx, float radius) {
+    const SceneObject *obj = scene_get_object(scene, idx);
+    if (!obj) return;
+    scene_object_set_collider(scene, idx, collision_add_sphere(&scene->collision,
+        obj->position, radius, COLLISION_LAYER_DEFAULT, COLLISION_LAYER_DEFAULT, NULL));
 }
 
 // ============================================================
@@ -466,7 +458,6 @@ static int spawn_billboard(Scene *scene, int tex_slot, BillboardMode mode,
         .scale = {1, 1, 1},
         .active = true,
         .visible = true,
-        .collider_handle = -1,
         .data = data,
         .on_update = NULL,
         .on_draw = billboard_draw,
@@ -511,22 +502,29 @@ static void apply_camera_mode(Scene *scene, int mode_idx) {
 // ============================================================
 
 static void launch_ball(Scene *scene) {
-    if (!ball_spawned) {
-        // First time: spawn the ball above the platform
-        vec3_t spawn_pos = {BALL_SPAWN_X, BALL_SPAWN_Y, BALL_SPAWN_Z};
-        ball_body_handle = physics_body_add(&physics_world,
-            &PHYSICS_DEF_BALL, spawn_pos);
-        if (ball_body_handle >= 0) {
-            ball_object_index = spawn_object(scene, "Ball",
-                mesh_defs_get_sphere(), spawn_pos,
-                (vec3_t){20, 20, 20}, false, 0, 0);
-            ball_spawned = true;
+    vec3_t spawn_pos = {BALL_SPAWN_X, BALL_SPAWN_Y, BALL_SPAWN_Z};
+    SceneObject *ball = scene_get_object(scene, ball_object);
+    if (!ball) {
+        // First time: a unit sphere scaled to the body's radius, above the
+        // platform. The scene moves it with its body, and its collider with
+        // it; the collider is on the default layer only, so the body's ground
+        // raycasts (ENV) never hit the ball itself.
+        float r = PHYSICS_DEF_BALL.radius;
+        int body = physics_body_add(&scene->physics, &PHYSICS_DEF_BALL, spawn_pos);
+        int idx = body >= 0 ? spawn_object(scene, "Ball", mesh_defs_get_sphere(),
+                                           spawn_pos, (vec3_t){r, r, r}, false, 0, 0) : -1;
+        if (idx < 0) {
+            physics_body_remove(&scene->physics, body);
+            return;
         }
+        scene_object_set_body(scene, idx, body);
+        attach_sphere_collider(scene, idx, r);
+        ball_object = idx;
     } else {
         // Afterwards: re-launch with an upward impulse
-        PhysicsBody *body = physics_body_get(&physics_world, ball_body_handle);
+        PhysicsBody *body = physics_body_get(&scene->physics, ball->body_handle);
         if (body) {
-            body->position = (vec3_t){BALL_SPAWN_X, BALL_SPAWN_Y, BALL_SPAWN_Z};
+            body->position = spawn_pos;
             body->velocity = VEC3_ZERO;
             physics_body_apply_impulse(body,
                 (vec3_t){0, BALL_RELAUNCH_VY, 0});
@@ -574,7 +572,7 @@ static bool dialog_on_check(const char *cond, void *ctx) {
     bool negate = cond[0] == '!';
     if (negate) cond++;
     bool value = false;
-    if (strcmp(cond, "ball_spawned") == 0) value = ball_spawned;
+    if (strcmp(cond, "ball_spawned") == 0) value = ball_object >= 0;
     else ENGINE_LOG("[dialog] unknown condition '%s'\n", cond);
     return value != negate;
 }
@@ -624,8 +622,6 @@ static void demo_init(Scene *scene) {
 
     // Reset object data pool
     object_data_count = 0;
-    obj_collider_count = 0;
-    for (int i = 0; i < MAX_OBJ_COLLIDERS; i++) obj_colliders[i] = -1;
 
     // Textures (cube faces + billboards) are declared in Scene.texture_paths
     // below and loaded/freed by scene_init/scene_cleanup (fixes the reset leak D1).
@@ -643,85 +639,60 @@ static void demo_init(Scene *scene) {
     scene->camera.min_y = FLOOR_Y + 10.0f;
 
     // --- Spawn objects ---
+    // Each gets a collider that the scene moves with it (SceneObject.collider_handle)
 
     // 0: Cube (textured, auto-rotating)
     int idx = spawn_object(scene, "Cube", cube_get_mesh(),
         (vec3_t){0, 0, 0}, (vec3_t){80, 80, 80},
         true, 0.15f, 0.3f);
-    if (idx >= 0) {
-        obj_colliders[obj_collider_count++] = collision_add_sphere(
-            &scene->collision, (vec3_t){0, 0, 0}, 138.56f,
-            COLLISION_LAYER_DEFAULT, COLLISION_LAYER_DEFAULT, NULL);
-    }
+    attach_sphere_collider(scene, idx, 138.56f);
 
     // 1: Pillar Left
     idx = spawn_object(scene, "Pillar L", mesh_defs_get_pillar(),
         (vec3_t){-250, 0, 0}, (vec3_t){40, 100, 40},
         false, 0, 0);
-    if (idx >= 0) {
-        obj_colliders[obj_collider_count++] = collision_add_sphere(
-            &scene->collision, (vec3_t){-250, 0, 0}, 110.0f,
-            COLLISION_LAYER_DEFAULT, COLLISION_LAYER_DEFAULT, NULL);
-    }
+    attach_sphere_collider(scene, idx, 110.0f);
 
     // 2: Pillar Right
     idx = spawn_object(scene, "Pillar R", mesh_defs_get_pillar(),
         (vec3_t){250, 0, 0}, (vec3_t){40, 100, 40},
         false, 0, 0);
-    if (idx >= 0) {
-        obj_colliders[obj_collider_count++] = collision_add_sphere(
-            &scene->collision, (vec3_t){250, 0, 0}, 110.0f,
-            COLLISION_LAYER_DEFAULT, COLLISION_LAYER_DEFAULT, NULL);
-    }
+    attach_sphere_collider(scene, idx, 110.0f);
 
-    // 3: Platform (behind cube) — unit box Y [-0.25,0.25], scale Y=30 → world Y extent ±7.5
+    // 3: Platform (behind cube) — unit box Y [-0.25,0.25], scale Y=30 → world Y extent ±7.5.
+    //    Its collider is its box, on the ENV layer the ball's ground raycasts
+    //    use (top surface at Y=-85), so the ball lands on it wherever it is
+    //    moved. Mesh half-sizes (2,0.25,1) × scale: X=±160, Y=±7.5, Z=±60.
     idx = spawn_object(scene, "Platform", mesh_defs_get_platform(),
         (vec3_t){0, -92.5f, -300}, (vec3_t){80, 30, 60},
         false, 0, 0);
     if (idx >= 0) {
-        obj_colliders[obj_collider_count++] = collision_add_sphere(
-            &scene->collision, (vec3_t){0, -92.5f, -300}, 100.0f,
-            COLLISION_LAYER_DEFAULT, COLLISION_LAYER_DEFAULT, NULL);
+        int box = collision_add_aabb(&scene->collision,
+            (vec3_t){-160, -100, -360}, (vec3_t){160, -85, -240},
+            COLLISION_LAYER_ENV, COLLISION_LAYER_ENV, NULL);
+        collision_set_static(&scene->collision, box, true);
+        scene_object_set_collider(scene, idx, box);
     }
 
     // 4: Pyramid (in front of cube)
     idx = spawn_object(scene, "Pyramid", mesh_defs_get_pyramid(),
         (vec3_t){0, 0, 350}, (vec3_t){60, 80, 60},
         true, 0, 0.1f);
-    if (idx >= 0) {
-        obj_colliders[obj_collider_count++] = collision_add_sphere(
-            &scene->collision, (vec3_t){0, 0, 350}, 90.0f,
-            COLLISION_LAYER_DEFAULT, COLLISION_LAYER_DEFAULT, NULL);
-    }
+    attach_sphere_collider(scene, idx, 90.0f);
 
     // 5: Sphere (static) — curved surface for checking lighting / back-face
     //    culling fixes (ROADMAP_v2 S2); the physics ball only exists after B.
     idx = spawn_object(scene, "Sphere", mesh_defs_get_sphere(),
         (vec3_t){280, -50, 280}, (vec3_t){50, 50, 50},
         false, 0, 0);
-    if (idx >= 0) {
-        obj_colliders[obj_collider_count++] = collision_add_sphere(
-            &scene->collision, (vec3_t){280, -50, 280}, 55.0f,
-            COLLISION_LAYER_DEFAULT, COLLISION_LAYER_DEFAULT, NULL);
-    }
+    attach_sphere_collider(scene, idx, 55.0f);
 
-    // Ground collider (static, covers floor area)
-    ground_collider = collision_add_aabb(&scene->collision,
+    // Ground collider (static, covers floor area; not an object)
+    int ground = collision_add_aabb(&scene->collision,
         (vec3_t){-1500, -180, -1500}, (vec3_t){1500, -100, 1500},
         COLLISION_LAYER_DEFAULT | COLLISION_LAYER_ENV,
         COLLISION_LAYER_DEFAULT | COLLISION_LAYER_ENV, NULL);
-    collision_set_static(&scene->collision, ground_collider, true);
-
-    // Platform AABB for physics raycasts (flat top surface at Y=-85)
-    // Platform pos=(0,-92.5,-300), scale=(80,30,60), mesh half-sizes=(2,0.25,1)
-    // World extents: X=±160, Y=±7.5, Z=±60 from center
-    platform_aabb_collider = collision_add_aabb(&scene->collision,
-        (vec3_t){-160, -100, -360}, (vec3_t){160, -85, -240},
-        COLLISION_LAYER_ENV, COLLISION_LAYER_ENV, NULL);
-    collision_set_static(&scene->collision, platform_aabb_collider, true);
-
-    // --- Selectable count: only mesh objects above are selectable ---
-    selectable_object_count = scene->object_count;
+    collision_set_static(&scene->collision, ground, true);
 
     // --- Billboard objects (decorative, not selectable) ---
     billboard_init();
@@ -768,11 +739,9 @@ static void demo_init(Scene *scene) {
     transform_mode = TRANSFORM_MOVE;
     selected_object = -1;
 
-    // Initialize physics world (uses scene collision for raycasts)
-    physics_world_init(&physics_world, &scene->collision);
-    ball_body_handle = -1;
-    ball_object_index = -1;
-    ball_spawned = false;
+    // The ball is spawned by the first B press (scene_init emptied the
+    // scene's physics world)
+    ball_object = -1;
 
     // Particle emitters (on top of pillars)
     particle_init();
@@ -846,10 +815,12 @@ static void handle_object_manipulation(Scene *scene, const InputState *input) {
     }
     }
 
-    // Update this object's collider position
-    if (selected_object < obj_collider_count && obj_colliders[selected_object] >= 0) {
-        collision_update_sphere(&scene->collision,
-            obj_colliders[selected_object], obj->position);
+    // The scene moves the object's collider; a body moves with the hand
+    // (held still: demo_update makes it kinematic while it is transformed)
+    PhysicsBody *body = physics_body_get(&scene->physics, obj->body_handle);
+    if (body) {
+        body->position = obj->position;
+        body->velocity = VEC3_ZERO;
     }
 }
 
@@ -915,8 +886,8 @@ static void demo_update(Scene *scene, float dt) {
         if (action_pressed(ACTION_SELECT_MODE)) {
             if (interaction_mode == MODE_NORMAL) {
                 interaction_mode = MODE_OBJECT_SELECT;
-                if (selected_object < 0 && selectable_object_count > 0)
-                    selected_object = 0;
+                if (selected_object < 0)
+                    selected_object = scene_find_object(scene, -1, 1, SCENE_OBJ_SELECTABLE);
                 snd_play(SFX_OBJ_SELECT);
             } else {
                 interaction_mode = MODE_NORMAL;
@@ -926,14 +897,11 @@ static void demo_update(Scene *scene, float dt) {
         }
 
         if (interaction_mode == MODE_OBJECT_SELECT) {
-            // Cycle prev/next: cycle selected object
-            if (action_pressed(ACTION_CYCLE_PREV) && selectable_object_count > 0) {
-                selected_object--;
-                if (selected_object < 0) selected_object = selectable_object_count - 1;
-                snd_play(SFX_MENU_NAV);
-            }
-            if (action_pressed(ACTION_CYCLE_NEXT) && selectable_object_count > 0) {
-                selected_object = (selected_object + 1) % selectable_object_count;
+            // Cycle prev/next through the selectable objects
+            int step = action_pressed(ACTION_CYCLE_NEXT) - action_pressed(ACTION_CYCLE_PREV);
+            int next = step ? scene_find_object(scene, selected_object, step, SCENE_OBJ_SELECTABLE) : -1;
+            if (next >= 0) {
+                selected_object = next;
                 snd_play(SFX_MENU_NAV);
             }
             // Confirm: enter transform mode
@@ -961,6 +929,13 @@ static void demo_update(Scene *scene, float dt) {
             // Manipulate object with analog/C-buttons
             handle_object_manipulation(scene, &input_state);
         }
+    }
+
+    // A body being transformed by hand is held in place (kinematic); it falls
+    // again when the transform mode ends
+    for (int i = 0; i < scene->object_count; i++) {
+        PhysicsBody *body = physics_body_get(&scene->physics, scene->objects[i].body_handle);
+        if (body) body->kinematic = interaction_mode == MODE_OBJECT_TRANSFORM && i == selected_object;
     }
 
     // --- Camera controls (only when not transforming objects) ---
@@ -1257,27 +1232,20 @@ static void demo_update(Scene *scene, float dt) {
         scene->bg_color = bg_colors[menu_get_value(&start_menu, TAB_SETTINGS, ITEM_BG_COLOR)];
     }
 
-    // Update physics (semi-fixed timestep)
-    PROF_BEGIN(PROF_PHYSICS);
-    physics_world_update(&physics_world, dt);
-    PROF_END(PROF_PHYSICS);
-
-    // Sync ball position from physics body to scene object
-    if (ball_spawned && ball_body_handle >= 0 && ball_object_index >= 0) {
-        PhysicsBody *body = physics_body_get(&physics_world, ball_body_handle);
-        SceneObject *ball_obj = scene_get_object(scene, ball_object_index);
-        if (body && ball_obj) {
-            ball_obj->position = body->position;
-
-            // Bounce: falling velocity turned upward. The sound is heard from
-            // the ball's position and scales with the impact speed.
-            float vy = body->velocity.y;
-            if (ball_prev_vy < -BOUNCE_SOUND_MIN_SPEED && vy >= 0.0f) {
-                float gain = -ball_prev_vy / BOUNCE_SOUND_FULL_SPEED;
-                snd_play_at(SFX_COLLISION, body->position, gain > 1.0f ? 1.0f : gain);
-            }
-            ball_prev_vy = vy;
+    // Ball bounce: falling velocity turned upward since the last update (the
+    // scene steps physics and moves the ball after this function). The sound
+    // is heard from the ball's position and scales with the impact speed.
+    const SceneObject *ball = scene_get_object(scene, ball_object);
+    const PhysicsBody *ball_body = ball ? physics_body_get(&scene->physics, ball->body_handle) : NULL;
+    if (ball_body && ball_body->kinematic) {
+        ball_prev_vy = 0.0f;                      // held by hand: no bounce
+    } else if (ball_body) {
+        float vy = ball_body->velocity.y;
+        if (ball_prev_vy < -BOUNCE_SOUND_MIN_SPEED && vy >= 0.0f) {
+            float gain = -ball_prev_vy / BOUNCE_SOUND_FULL_SPEED;
+            snd_play_at(SFX_COLLISION, ball_body->position, gain > 1.0f ? 1.0f : gain);
         }
+        ball_prev_vy = vy;
     }
 
     // The listener is the camera (positional sounds pan with its right vector)
@@ -1313,11 +1281,13 @@ static void demo_draw(Scene *scene) {
     if (scene->lighting.shadow.mode != SHADOW_OFF) {
         shadow_begin(&scene->camera, &scene->lighting);
 
-        for (int i = 0; i < selectable_object_count; i++) {
-            SceneObject *obj = scene_get_object(scene, i);
-            if (!obj || !obj->visible) continue;
+        // Every visible shadow caster, including objects added at run time
+        // (the ball, D20); only mesh objects carry the flag
+        for (int i = 0; i < scene->object_count; i++) {
+            const SceneObject *obj = &scene->objects[i];
+            if (!obj->visible || !(obj->flags & SCENE_OBJ_CASTS_SHADOW)) continue;
 
-            ObjectData *data = (ObjectData *)obj->data;
+            const ObjectData *data = (const ObjectData *)obj->data;
             if (!data || !data->mesh) continue;
 
             mat4_t model;
@@ -1466,15 +1436,9 @@ static void demo_cleanup(Scene *scene) {
     billboard_cleanup();
     cube_cleanup();
     mesh_defs_cleanup();
-    ground_collider = -1;
-    platform_aabb_collider = -1;
-    obj_collider_count = 0;
     object_data_count = 0;
     billboard_data_count = 0;
-    selectable_object_count = 0;
-    ball_body_handle = -1;
-    ball_object_index = -1;
-    ball_spawned = false;
+    ball_object = -1;
     interaction_mode = MODE_NORMAL;
     selected_object = -1;
     current_scene = NULL;

@@ -9,8 +9,8 @@
 // --- Scene lifecycle ---
 
 void scene_init(Scene *scene) {
-    // Initialize collision world
-    collision_world_init(&scene->collision);
+    // No objects yet; empty collision and physics worlds
+    scene_objects_init(scene);
 
     // Initialize lighting
     lighting_init(&scene->lighting);
@@ -47,11 +47,19 @@ void scene_update(Scene *scene, float dt) {
         scene->on_update(scene, dt);
     }
 
-    // Update camera
+    // Physics (fixed steps), then objects follow their bodies
+    PROF_BEGIN(PROF_PHYSICS);
+    if (scene->physics.body_count > 0) {
+        physics_world_update(&scene->physics, dt);
+    }
+    scene_sync_bodies(scene);
+    PROF_END(PROF_PHYSICS);
+
+    // Camera (after the objects it may follow), colliders follow their
+    // objects, then the pair tests
     PROF_BEGIN(PROF_SCENE_SYS);
     camera_update(&scene->camera);
-
-    // Run collision tests
+    scene_sync_colliders(scene);
     collision_test_all(&scene->collision);
     STATS_SET(colliders, scene->collision.count);
     STATS_SET(collision_pairs, scene->collision.result_count);
@@ -109,30 +117,6 @@ void scene_cleanup(Scene *scene) {
     scene->object_count = 0;
     scene->loaded = false;
     debugf("Scene unloaded: %s\n", scene->name);
-}
-
-// --- Object management ---
-
-int scene_add_object(Scene *scene, const SceneObject *obj) {
-    if (scene->object_count >= SCENE_MAX_OBJECTS) return -1;
-    int idx = scene->object_count;
-    scene->objects[idx] = *obj;
-    scene->object_count++;
-    return idx;
-}
-
-void scene_remove_object(Scene *scene, int index) {
-    if (index < 0 || index >= scene->object_count) return;
-    // Shift remaining objects down
-    for (int i = index; i < scene->object_count - 1; i++) {
-        scene->objects[i] = scene->objects[i + 1];
-    }
-    scene->object_count--;
-}
-
-SceneObject *scene_get_object(Scene *scene, int index) {
-    if (index < 0 || index >= scene->object_count) return NULL;
-    return &scene->objects[index];
 }
 
 // --- Scene Manager ---

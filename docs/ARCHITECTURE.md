@@ -168,14 +168,14 @@ scene_manager_switch(&mgr, demo_scene_get(), TRANSITION_CUT, 0);  // benchmark i
 engine_run(&app);          // profiler_init(), then the frame loop (never returns)
 
 // Inside scene_init() (called by manager):
-collision_world_init();     // Reset collision world
+scene_objects_init();       // No objects; empty collision and physics worlds
 lighting_init(&config);     // Light parameters
 texture_load_slot();        // Declared per-scene textures
 scene->on_init();           // Scene-specific setup
   camera_init(&cam, &preset); // Camera matrices
   cube_init();                // Model geometry (demo scene)
-  collision_add_*();          // Add colliders
-  physics_world_init();       // Physics world (optional, scene-local)
+  collision_add_*();          // Add colliders, attach them to objects
+  physics_body_add();         // Bodies, attached with scene_object_set_body()
 ```
 
 ### Frame Loop (Variable Timestep)
@@ -559,7 +559,7 @@ See [PHYSICS.md](PHYSICS.md) for full documentation.
 - Rest detection: bodies stop micro-bouncing when velocity falls below threshold
 - Data-driven `PhysicsBodyDef` for material presets (mass, restitution, friction, damping, gravity scale, radius)
 - 3 built-in presets: Ball (bouncy), Heavy (low bounce), Floaty (low gravity)
-- Scene-local `PhysicsWorld` — opt-in per scene, no changes to Scene struct
+- Each `Scene` owns a `PhysicsWorld` (`Scene.physics`), stepped by `scene_update()` when it holds bodies; objects follow their bodies
 - Up to 32 bodies, max 4 steps per frame (spiral-of-death protection)
 - Impulse and force application APIs for knockback, jumping, and projectile launch
 
@@ -570,7 +570,9 @@ See [SCENE_SYSTEM.md](SCENE_SYSTEM.md) for full documentation.
 ### Summary
 
 - Code-defined scenes with callback lifecycle (init/update/draw/post_draw/cleanup)
-- Each scene owns Camera, LightConfig, CollisionWorld
+- Each scene owns Camera, LightConfig, CollisionWorld, PhysicsWorld
+- Objects can own a collider and a physics body; the scene moves the object with its body and the collider with the object, and removes both with the object
+- Object flags (`SCENE_OBJ_CASTS_SHADOW`, `SCENE_OBJ_SELECTABLE`) drive the shadow pass and selection
 - Scene manager with transitions (cut, fade-black, fade-white)
 - **Soft reset**: set `scene->reset_requested = true` to trigger cleanup + reinit next frame (reusable for game logic: level restarts, death screens, debug reset)
 - Up to 32 objects and 16 declared textures per scene; declared textures load before `on_init` and are freed after `on_cleanup`

@@ -173,7 +173,8 @@ n64-analogue3d-engine/
 │   ├── physics/
 │   │   └── physics.c/h        # Physics: gravity, bounce, impulse, ground detection
 │   ├── scene/
-│   │   └── scene.c/h          # Scene lifecycle, manager, transitions, soft reset
+│   │   ├── scene.c/h          # Scene lifecycle, manager, transitions, soft reset
+│   │   └── scene_objects.c    # Objects with their colliders and bodies, flags (host-tested)
 │   ├── scenes/
 │   │   ├── demo_scene.c/h     # Demo scene with all engine features
 │   │   └── benchmark_scene.c/h # Benchmark scene (stress steps, BENCH CSV rows)

@@ -666,3 +666,28 @@ Two boot-to-benchmark runs of Bench = UI, identical except for the validator (`m
 - **Validator off, against S5.3** (`...-s5_3-ui-...`): every UI step −4 to −8 % CPU, 0 regressions; the direct-menu steps now hold 60 FPS.
 
 Captures: `docs/benchmarks/2026-09-24-p2-s6_4-ui-validator-bootbench-debug-a3d.csv` and `...-s6_4-ui-bootbench-debug-a3d.csv` (the libdragon warnings are in the raw USB logs only). Resolution: tearing while RDP Check is on is expected and documented ([DEBUGGING.md](DEBUGGING.md)); the engine's torn-frame counter shows it. `docs/benchmarks/2026-09-24-p2-s6_3-all-bootbench-debug-a3d.csv` stays the Bench = All comparison point.
+
+## Phase 2 · S7 scene owns physics and colliders (2026-09-24, debug build, Analogue 3D)
+
+Boot-to-benchmark Bench = All (`make BENCH=1`, 15 s settle), then the demo. In the demo the ball casts its shadow, is selected and held, and lands on the moved platform; the Demo↔Benchmark fade works both ways; no asserts or RSP errors. Against S6.3 (`bench_compare.py`, 5 % / 0.15 ms gate):
+
+| Step | S6.3 CPU ms | S7 CPU ms | Δ | FPS |
+|---|---|---|---|---|
+| objects 8 / 16 / 24 | 3.92 / 6.68 / 9.42 | 4.15 / 7.14 / 10.10 | +5.9 / +6.9 / +7.2 % | 60 |
+| objects 32 | 12.60 | 17.11 | +35.8 % | 60.0 → 56.8 |
+| objects 48 / 64 | 24.82 / 32.97 | 26.21 / 34.81 | +5.6 % | 40.3 → 38.1, 30.3 → 28.7 |
+| lights 0 / 1 / 2 / 4 | 6.69 / 6.82 / 6.95 / 7.33 | 7.12 / 7.31 / 7.52 / 8.02 | +6.4 / +7.2 / +8.2 / +9.4 % | 60 |
+| textures 1–8 | 5.23–5.49 | 5.71–5.98 | +8.8 to +9.2 % | 60 |
+| shadows off / blob / projected | 6.72 / 7.32 / 11.13 | 7.19 / 7.82 / 11.56 | +7.0 / +6.8 / +3.9 % | 60 |
+| particles 32–128 | 2.06–4.35 | 2.14–4.47 | +2.8 to +3.9 % | 60 |
+| idle, fill-rate 1–8 | 0.88–0.91 | 0.96–0.99 | +0.07 ms (under the noise floor) | 60 |
+
+16 steps over the gate. **None of it is S7's code:** the benchmark scene has no objects, bodies or scene colliders, so S7 adds two empty loops per frame there. The per-stage profile (`BENCH_PROF`) places the cost:
+
+- `mesh_tris`, the per-triangle loop, is unchanged (−0.5 %).
+- The per-object part of `objects` outside the cull, light and triangle slots grew by **21.6 µs per object**, and `mesh_light` by **3.7 µs per object per point light**. The HUD's text costs 40–60 µs more in every step.
+- **D-cache:** `SceneObject` grew from 56 to 72 bytes, so `Scene.camera` and `Scene.lighting` moved 512 bytes into the struct. In the benchmark scene they went from colours 0x1680–0x1908 to 0x18A0–0x1B28, onto the render stack's hot sets (D26's ≈0x1880–0x1CF0); the point lights now share lines with `mesh_draw`'s own frame. `mesh_draw` reaches both through pointers, which `tools/hot_data.py` does not follow. The triangle loop also re-reads the `Mesh` struct (group index range, index and vertex pointers) every triangle, and the pillar's `Mesh` moved from 0x1EA8 to 0x00B0, next to the pinned rdpq state.
+- **I-cache:** `bench_draw`, the unpinned per-object loop around `mesh_draw`, now shares 36 I-cache lines with the mesh phase (0 in S6.3). `tools/hot_text.py` checks the phase's callees, not the loop that calls it.
+- The same ROM's Debug-tab Objects run, with the pillar's vertex data at another heap colour (0x0E50 instead of 0x0490), agrees within 1 %: heap placement is not the cause.
+
+S6.3's `LAYOUT_PAD` check shifted code only; the static data kept its colours. S7 is the first stage to resize static data the draw path reads. Filed as **D35**, fixed in S7.1. Captures: `docs/benchmarks/2026-09-24-p2-s7-all-bootbench-debug-a3d.csv` (the USB log also holds the Objects run from the Debug tab).
