@@ -20,14 +20,28 @@
  * ENGINE_NOINIT opts a local scratch array out of libdragon's
  * -ftrivial-auto-var-init=pattern, which otherwise memsets it on every loop
  * iteration. Only for arrays fully written before they are read.
+ *
+ * Per-object loops. The loop that calls mesh_draw or shadow_draw_* for each
+ * object runs between every two calls, so unpinned it can land on the
+ * phase's lines too (D35: the benchmark's object loop took 36 of the mesh
+ * phase's lines, +22 us per object). ENGINE_HOT_LOOP pins such a loop at the
+ * end of the block, with mesh_draw; ENGINE_HOT_HEAD at the start, for loops
+ * around the shadow and floor code (the block is longer than the cache, so
+ * its tail wraps onto its head: tail code shares lines only with head code).
+ * Both keep the function out of line and unrenamed (noipa), so it stays in
+ * its section and tools/hot_text.py finds it by name.
  */
 
 #if defined(N64)
-  #define ENGINE_HOT     __attribute__((section(".text.engine_hot")))
-  #define ENGINE_NOINIT  __attribute__((uninitialized))
+  #define ENGINE_HOT       __attribute__((section(".text.engine_hot")))
+  #define ENGINE_HOT_LOOP  __attribute__((section(".text.engine_hot"), noipa))
+  #define ENGINE_HOT_HEAD  __attribute__((section(".text.engine_hot_head"), noipa))
+  #define ENGINE_NOINIT    __attribute__((uninitialized))
 #else
   // Host unit tests (and Mach-O, which rejects ELF section names)
   #define ENGINE_HOT
+  #define ENGINE_HOT_LOOP
+  #define ENGINE_HOT_HEAD
   #define ENGINE_NOINIT
 #endif
 

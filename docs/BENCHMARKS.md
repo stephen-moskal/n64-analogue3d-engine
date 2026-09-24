@@ -691,3 +691,23 @@ Boot-to-benchmark Bench = All (`make BENCH=1`, 15 s settle), then the demo. In t
 - The same ROM's Debug-tab Objects run, with the pillar's vertex data at another heap colour (0x0E50 instead of 0x0490), agrees within 1 %: heap placement is not the cause.
 
 S6.3's `LAYOUT_PAD` check shifted code only; the static data kept its colours. S7 is the first stage to resize static data the draw path reads. Filed as **D35**, fixed in S7.1. Captures: `docs/benchmarks/2026-09-24-p2-s7-all-bootbench-debug-a3d.csv` (the USB log also holds the Objects run from the Debug tab).
+
+## Phase 2 · S7.1 per-object draw path pinned (D35) (2026-09-24, debug build, Analogue 3D)
+
+Four boot-to-benchmark Bench = All runs (`make BENCH=1`, 15 s settle). The S7.1 code was measured before and after pinning libdragon's command-buffer switch, each time plain and with `make LAYOUT_PAD=448`, which moves every function and static variable that is not pinned by 448 bytes. Reset Soak ×10 in the demo: heap delta 0 B.
+
+| Run | Build | vs S6.3 (5 % gate) | Notes |
+|---|---|---|---|
+| 1 | S7.1a: camera and lighting copies pinned, `Mesh` reads in locals, per-object loops pinned | 3 steps over: objects 32 +5.3 % (every frame still on time), particles 64 / 96 +5.7 / +5.1 % | vs S7: 0 regressions; objects 32 17.11 → 13.27 ms (56.8 → 59.8 FPS), mesh, light and shadow steps −5 to −9 % |
+| 2 | S7.1a + `LAYOUT_PAD=448` | 0 | 1–4 % faster than run 1 in every step, idle included |
+| 3 | S7.1: run 1 + the buffer switch pinned | **0** | mesh steps −3.9 to +1.5 %, textures −0.2 to −2.6 %, objects 32 12.17 ms (−3.4 %) at 60 FPS |
+| 4 | S7.1 + `LAYOUT_PAD=448` | 0 | particles within ±1 % of run 3; mesh steps 1.5–2.8 % faster |
+
+- **D35 fixed.** Run 1 against S7 removes the per-object (+21.6 µs) and per-light (+3.7 µs per object) costs S7 had added, and objects 32 is back at 60 FPS.
+- **Runs 1 and 2 exposed one more layout effect.** libdragon's command buffers are 2 KB, so `rspq_next_buffer` runs every ~20–30 triangles and clears the next buffer with `memset`. `hot_text.py` listed it as a rare path. Unpinned, its ~40 lines fell on the shadow code in S6.3 and on the particle code in S7 and S7.1a (+3–4 % there). It is pinned since run 3, and the particle steps of runs 3 and 4 agree within ±1 %.
+- **What still moves with layout (runs 3 and 4):**
+  - The heap's vertex data (D26). In the plain build the pillar's vertices (heap colour 0x0490) overlap the pinned camera copy's matrix and frustum. `mesh_cull` goes 95 → 67 µs and the per-object setup ~90 µs for 16 objects: about 6 µs per object, ~2 % of a mesh step. The pinned per-triangle work (`mesh_tris`, `mesh_light`) agrees within ±0.5 %. The P3.1 vertex cache fixes this.
+  - The benchmark's status text, which is cold libdragon code: `hud` 466 → 431 µs.
+- **Against S6.3** a flat ~0.1 ms per frame remains: `hud` +50 µs, `update` +10–20 µs (S7's physics and sync steps and the moved update code), and ~5 µs for the two out-of-line object loops. It reads as +10 % in the 1 ms idle and fill-rate steps and +2–5 % in the particle steps; the particle renderer itself is within +1 %.
+
+Captures: `docs/benchmarks/2026-09-24-p2-s7_1a-all-bootbench-debug-a3d.csv` and `...-s7_1a-...-pad448-...` (runs 1–2), `...-s7_1-all-bootbench-debug-a3d.csv` (run 3, the new Bench = All comparison point) and `...-s7_1-...-pad448-...` (run 4).

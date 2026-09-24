@@ -19,6 +19,7 @@
 #include "../debug/engine_debug.h"
 #include "../engine/engine_config.h"
 #include "../engine/engine.h"
+#include "../engine/hot.h"
 #include "../debug/stats.h"
 #include "../debug/profiler.h"
 #include "../debug/frametime.h"
@@ -699,40 +700,30 @@ static void bench_update(Scene *scene, float dt) {
     }
 }
 
-static void bench_draw(Scene *scene) {
-    if (!draw_frame) draw_frame = __builtin_frame_address(0);
-    const BenchStep *st = &steps[step_index < step_count ? step_index : step_count - 1];
-    const Camera *cam = &scene->camera;
-    const LightConfig *L = &scene->lighting;
+// The per-object loops run between every two shadow or mesh_draw calls, so
+// each is pinned with the code it drives (src/engine/hot.h, D35): unpinned,
+// the object loop once shared 36 of the mesh phase's I-cache lines (+22 us
+// per object)
+static ENGINE_HOT_HEAD void bench_draw_shadows(const Camera *cam, const LightConfig *L) {
     const Mesh *pillar = mesh_defs_get_pillar();
-    vec3_t pillar_scale = {40.0f, 100.0f, 40.0f};
-    vec3_t box_scale    = {40.0f, 40.0f, 40.0f};
-
-    if (draw_floor) {
-        PROF_BEGIN(PROF_FLOOR);
-        floor_draw(cam, L);
-        PROF_END(PROF_FLOOR);
+    const vec3_t pillar_scale = {40.0f, 100.0f, 40.0f};
+    for (int i = 0; i < instance_count; i++) {
+        mat4_t model;
+        mat4_from_srt(&model, &pillar_scale, 0, 0, 0, &instance_pos[i]);
+        ShadowCaster c = {
+            .mesh = pillar, .model = &model, .position = instance_pos[i],
+            .bound_radius = pillar->bound_radius * 100.0f,
+        };
+        if (L->shadow.mode == SHADOW_BLOB) shadow_draw_blob(cam, L, &c);
+        else                               shadow_draw_projected(cam, L, &c);
     }
+}
 
-    // Shadows go down first (Z-read, no Z-write), like the demo
-    if (L->shadow.mode != SHADOW_OFF) {
-        PROF_BEGIN(PROF_SHADOWS);
-        shadow_begin(cam, L);
-        for (int i = 0; i < instance_count; i++) {
-            mat4_t model;
-            mat4_from_srt(&model, &pillar_scale, 0, 0, 0, &instance_pos[i]);
-            ShadowCaster c = {
-                .mesh = pillar, .model = &model, .position = instance_pos[i],
-                .bound_radius = pillar->bound_radius * 100.0f,
-            };
-            if (L->shadow.mode == SHADOW_BLOB) shadow_draw_blob(cam, L, &c);
-            else                               shadow_draw_projected(cam, L, &c);
-        }
-        shadow_end();
-        PROF_END(PROF_SHADOWS);
-    }
-
-    PROF_BEGIN(PROF_OBJECTS);
+static ENGINE_HOT_LOOP void bench_draw_objects(const BenchStep *st, const Camera *cam,
+                                               const LightConfig *L) {
+    const Mesh *pillar = mesh_defs_get_pillar();
+    const vec3_t pillar_scale = {40.0f, 100.0f, 40.0f};
+    const vec3_t box_scale    = {40.0f, 40.0f, 40.0f};
     for (int i = 0; i < instance_count; i++) {
         mat4_t model;
         if (st->kind == BENCH_TEXTURES) {
@@ -747,12 +738,39 @@ static void bench_draw(Scene *scene) {
             mesh_draw(m, &model, cam, L);
         }
     }
+}
+
+static void bench_draw(Scene *scene) {
+    (void)scene;
+    if (!draw_frame) draw_frame = __builtin_frame_address(0);
+    const BenchStep *st = &steps[step_index < step_count ? step_index : step_count - 1];
+    const Camera *cam = scene_view_camera();
+    const LightConfig *L = scene_view_light();
+
+    if (draw_floor) {
+        PROF_BEGIN(PROF_FLOOR);
+        floor_draw(cam, L);
+        PROF_END(PROF_FLOOR);
+    }
+
+    // Shadows go down first (Z-read, no Z-write), like the demo
+    if (L->shadow.mode != SHADOW_OFF) {
+        PROF_BEGIN(PROF_SHADOWS);
+        shadow_begin(cam, L);
+        bench_draw_shadows(cam, L);
+        shadow_end();
+        PROF_END(PROF_SHADOWS);
+    }
+
+    PROF_BEGIN(PROF_OBJECTS);
+    bench_draw_objects(st, cam, L);
     PROF_END(PROF_OBJECTS);
 }
 
 static void bench_post_draw(Scene *scene) {
+    (void)scene;
     PROF_BEGIN(PROF_PARTICLE_DRAW);
-    particle_draw(&scene->camera);
+    particle_draw(scene_view_camera());
     PROF_END(PROF_PARTICLE_DRAW);
 
     // Fill-rate layers: full-screen blended rectangles (reads + writes the framebuffer)

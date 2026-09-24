@@ -94,11 +94,16 @@ ENGINE_HOT void mat4_mul_vec3(vec4_t *out, const mat4_t *m, const vec3_t *v) {
     out->w = m->m[0][3] * v->x + m->m[1][3] * v->y + m->m[2][3] * v->z + m->m[3][3];
 }
 
-void mat4_from_srt(mat4_t *out, const vec3_t *scale, float rx, float ry, float rz,
-                   const vec3_t *translate) {
-    float cx = cosf(rx), sx = sinf(rx);
-    float cy = cosf(ry), sy = sinf(ry);
-    float cz = cosf(rz), sz = sinf(rz);
+// Runs once per drawn object, between mesh_draw or shadow calls: pinned with
+// them (D35). An axis with no rotation skips its sinf/cosf pair (unpinned libm
+// code; cos 0 = 1 and sin 0 = 0 exactly), so unrotated objects, such as every
+// benchmark pillar, make no calls at all.
+ENGINE_HOT void mat4_from_srt(mat4_t *out, const vec3_t *scale, float rx, float ry, float rz,
+                              const vec3_t *translate) {
+    float cx = 1.0f, sx = 0.0f, cy = 1.0f, sy = 0.0f, cz = 1.0f, sz = 0.0f;
+    if (rx != 0.0f) { cx = cosf(rx); sx = sinf(rx); }
+    if (ry != 0.0f) { cy = cosf(ry); sy = sinf(ry); }
+    if (rz != 0.0f) { cz = cosf(rz); sz = sinf(rz); }
 
     // R = Ry * Rx * Rz, then scale each column, then set translation
     // Column-major: m[col][row]

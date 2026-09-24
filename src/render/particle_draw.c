@@ -27,6 +27,12 @@ ENGINE_HOT void particle_draw(const Camera *cam) {
     const float px = cam->proj.m[0][0] * (0.5f * ENGINE_SCREEN_W);
     const float py = cam->proj.m[1][1] * (0.5f * ENGINE_SCREEN_H);
 
+    // The loop reads the matrix for every particle: a copy on the stack, as
+    // the camera (scene_view_camera(), pinned at 0x0290) shares D-cache
+    // colours with the particle pool (src/engine/hot_data.ld, D35)
+    const mat4_t vp = cam->vp;
+    const float near_plane = cam->near_plane;
+
     // Set RDP mode ONCE for all particles (additive blend)
     // Z-read ON, Z-write OFF (same as shadows)
     rdpq_set_mode_standard();
@@ -46,8 +52,8 @@ ENGINE_HOT void particle_draw(const Camera *cam) {
         if (p->color[3] == 0) continue;
 
         vec4_t clip;
-        mat4_mul_vec3(&clip, &cam->vp, &p->position);
-        if (clip.w < cam->near_plane) continue;         // centre in front of the near plane
+        mat4_mul_vec3(&clip, &vp, &p->position);
+        if (clip.w < near_plane) continue;              // centre in front of the near plane
 
         float inv_w = 1.0f / clip.w;
         float ndc_z = clip.z * inv_w;

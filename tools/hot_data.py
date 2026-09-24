@@ -53,10 +53,21 @@ UPPER = ["main", "engine_run", "scene_manager_draw"]
 # Frames between scene_manager_draw and each phase root, one list per scene
 # (scene callbacks and object callbacks are function pointers)
 CHAINS = {
-    "mesh":     [["bench_draw"], ["demo_draw", "object_draw"]],
+    "mesh":     [["bench_draw"], ["scene_draw_objects"]],
     "floor":    [["bench_draw"], ["demo_draw"]],
     "shadow":   [["bench_draw"], ["demo_draw"]],
     "particle": [["bench_post_draw"], ["demo_post_draw"]],
+}
+
+# Static data the phases reach through pointers, which the disassembly scan
+# cannot attribute (D35): every renderer gets the frame's camera and lighting
+# from scene_view_camera() / scene_view_light(). The particle renderer is left
+# out: it copies the matrix to its stack once per call, because the copies
+# share colours with the particle pool.
+REACHED = {
+    "mesh":   ["view_camera", "view_light"],
+    "floor":  ["view_camera", "view_light"],
+    "shadow": ["view_camera", "view_light"],
 }
 
 # Pinned groups of src/engine/hot_data.ld: (start symbol, end symbol, colour,
@@ -67,7 +78,8 @@ GROUPS = [
       "rdpq_config", "__rdpq_inited", "rdpq_block_state", "g_prof_on", "g_prof_calls",
       "g_prof_ticks", "g_stats_cur", "particle_initialized", "particle_pool_allocated"]),
     ("__engine_hot_rodata_start", "__engine_hot_rodata_end", 0x0200,
-     ["TRIFMT_ZBUF", "TRIFMT_ZBUF_TEX", "TRIFMT_ZBUF_SHADE", "TRIFMT_ZBUF_SHADE_TEX", "g_fog"]),
+     ["TRIFMT_ZBUF", "TRIFMT_ZBUF_TEX", "TRIFMT_ZBUF_SHADE", "TRIFMT_ZBUF_SHADE_TEX", "g_fog",
+      "view_camera", "view_light"]),
     ("__engine_hot_bss_floor", "__engine_hot_bss_shadow", 0x0700, ["grid_valid", "grid_depth", "grid"]),
     ("__engine_hot_bss_shadow", "__engine_hot_bss_particle", 0x0F20, ["shadow_state", "shadow_scr"]),
     ("__engine_hot_bss_particle", "__engine_hot_bss_end", 0x0300, ["particle_pool"]),
@@ -266,7 +278,8 @@ def main():
         stack_lo, stack_hi = min(lows), caller_sp
         stack_sets = sets_of(stack_lo, stack_hi)
 
-        # Static data the phase touches
+        # Static data the phase touches: named in its code, or reached
+        # through the pointers the scenes pass (REACHED)
         touched = {}
         for f in members:
             if f not in funcs:
@@ -275,6 +288,11 @@ def main():
                 s = symbol_at(syms, starts, addr)
                 if s:
                     touched[s[2]] = s
+        for name in REACHED.get(phase, []):
+            if name in by_name:
+                touched[name] = by_name[name]
+            else:
+                errors.append(f"{phase}: {name} (REACHED) not in this ELF")
         clashes = []
         for name, (a, size, _) in sorted(touched.items(), key=lambda kv: kv[1][0]):
             size = min(size, HOT_PREFIX.get(name, size))

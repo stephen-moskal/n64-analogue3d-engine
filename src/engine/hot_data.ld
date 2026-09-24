@@ -17,7 +17,10 @@
  *   0x0000  common, first in .sbss: libdragon's command queue and rdpq state,
  *           the engine's stats and profiler counters (every drawing loop;
  *           several are $gp-relative, so this group must stay in small data)
- *   0x0200  triangle formats and the fog config (per triangle), first in .rodata
+ *   0x0200  triangle formats and the fog config (per triangle), then the
+ *           camera and lighting copies every scene draws with (per vertex,
+ *           object and face group; scene_draw() fills them, D35), first in
+ *           .rodata; 0x0200-0x0517
  *   0x0700  floor grid                     (own NOLOAD section)
  *   0x0F20  projected shadows: state, then screen positions; indexed by
  *           vertex, only the first vertex_count entries are hot (the first
@@ -26,10 +29,14 @@
  * The floor and shadow colours follow the end of small data (~0x0700) and of
  * each other, so their pads stay small; a group that grows past the next
  * colour costs a larger pad but keeps its colour.
+ * make LAYOUT_PAD=N puts N bytes after each pinned group (and after the hot
+ * text), so every static variable that is not pinned changes colour: the
+ * benchmark must not move (src/engine/layout_pad.c, D35).
  * Everything between __bss_start and __bss_end, pads included, is zeroed at
  * boot. Each pad costs up to 8 KB of RAM (the one before .rodata also ROM);
- * about 10–15 KB in total. tools/hot_data.py (CI) checks the colours, the contents,
- * and that nothing pinned shares a line with the stack of a loop using it.
+ * about 10–20 KB in total (19.6 KB at S7.1). tools/hot_data.py (CI) checks
+ * the colours, the contents, and that nothing pinned shares a line with the
+ * stack of a loop using it.
  * Renaming a variable listed here means updating this file and PINNED there.
  */
 
@@ -41,7 +48,9 @@
         *(.rodata.TRIFMT_ZBUF) *(.rodata.TRIFMT_ZBUF_TEX)
         *(.rodata.TRIFMT_ZBUF_SHADE) *(.rodata.TRIFMT_ZBUF_SHADE_TEX)
         *render/atmosphere.o(.data.g_fog)
+        *scene/scene.o(.bss.view_camera .bss.view_light)
         __engine_hot_rodata_end = .;
+        KEEP(*(.rodata.engine_layout_pad))
 
 /* ==== sbss_pad ==== */
     . = . + ((0x0000 - (. & 0x1FFF)) & 0x1FFF);   /* engine hot data (hot_data.ld) */
@@ -54,6 +63,7 @@
         *debug/stats.o(.bss.g_stats_cur)
         *render/particle.o(.sbss.particle_initialized .sbss.particle_pool_allocated)
         __engine_hot_bss_common_end = .;
+        KEEP(*(.sbss.engine_layout_pad))
 
 /* ==== bss_pre ==== */
     /* engine hot data (hot_data.ld): floor grid */
@@ -75,3 +85,4 @@
         __engine_hot_bss_particle = .;
         *render/particle.o(.bss.particle_pool)
         __engine_hot_bss_end = .;
+        KEEP(*(.bss.engine_layout_pad))

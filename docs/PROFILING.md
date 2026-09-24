@@ -20,7 +20,7 @@ The engine times named scopes with the CPU tick counter (libdragon's `profile.h`
 
 ```c
 PROF_BEGIN(PROF_FLOOR);
-floor_draw(&scene->camera, &scene->lighting);
+floor_draw(scene_view_camera(), scene_view_light());
 PROF_END(PROF_FLOOR);
 ```
 

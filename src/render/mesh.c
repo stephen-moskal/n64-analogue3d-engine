@@ -78,6 +78,14 @@ ENGINE_HOT void mesh_draw(const Mesh *mesh, const mat4_t *model,
     float view_dir[3] = {cam->view_dir.x, cam->view_dir.y, cam->view_dir.z};
     float cam_pos[3] = {cam->position.x, cam->position.y, cam->position.z};
 
+    // What the triangle loop needs from the Mesh, in locals: every
+    // rdpq_triangle() call could write memory, so the compiler reloads fields
+    // behind a pointer each triangle, and the Mesh sits wherever its owner put
+    // it (a static that moves with the data layout, D35)
+    const MeshVertex *verts = mesh->vertices;
+    const uint16_t *indices = mesh->indices;
+    const bool backface_cull = mesh->backface_cull;
+
     int total_tris = 0;
 
     // 4. Query fog state once per draw call
@@ -96,8 +104,13 @@ ENGINE_HOT void mesh_draw(const Mesh *mesh, const mat4_t *model,
     for (int g = 0; g < mesh->group_count; g++) {
         const MeshFaceGroup *group = &mesh->groups[g];
         if (group->index_count == 0) continue;
+        const int first = group->index_start;
+        const int end = first + group->index_count;
 
-        const Material *mat = &mesh->materials[group->material_index];
+        // A copy on the stack: curved groups read it every triangle
+        const Material mat_copy = mesh->materials[group->material_index];
+        const Material *mat = &mat_copy;
+        const bool textured = (mat->type == MATERIAL_TEXTURED);
 
         int mode_key = (int)mat->type * 2 + (mat->alpha_cutout ? 1 : 0);
         if (mode_key != last_mode_key) {
@@ -149,7 +162,7 @@ ENGINE_HOT void mesh_draw(const Mesh *mesh, const mat4_t *model,
             float world_pos[3], nrm[3];
             model_point(model, group->center, world_pos);
             model_normal(cof, group->normal, nrm);
-            bool culled = mesh->backface_cull &&
+            bool culled = backface_cull &&
                 (nrm[0] * (cam_pos[0] - world_pos[0]) +
                  nrm[1] * (cam_pos[1] - world_pos[1]) +
                  nrm[2] * (cam_pos[2] - world_pos[2])) <= 0.0f;
@@ -164,7 +177,7 @@ ENGINE_HOT void mesh_draw(const Mesh *mesh, const mat4_t *model,
         // only when it is not already in TMEM: consecutive faces of one draw
         // that share a texture reuse the upload (every upload also runs ~7 KB
         // of libdragon code between triangle batches, D25).
-        if (mat->type == MATERIAL_TEXTURED && mat->texture_slot >= 0 &&
+        if (textured && mat->texture_slot >= 0 &&
             mat->texture_slot != resident_slot) {
             texture_upload(mat->texture_slot, TILE0);
             resident_slot = mat->texture_slot;
@@ -174,24 +187,20 @@ ENGINE_HOT void mesh_draw(const Mesh *mesh, const mat4_t *model,
         // Select triangle format for this group
         const rdpq_trifmt_t *trifmt;
         if (use_fog) {
-            trifmt = (mat->type == MATERIAL_TEXTURED)
-                ? &TRIFMT_ZBUF_SHADE_TEX : &TRIFMT_ZBUF_SHADE;
+            trifmt = textured ? &TRIFMT_ZBUF_SHADE_TEX : &TRIFMT_ZBUF_SHADE;
         } else {
             // Flat materials must not use a textured format: the combiner
             // ignores TEX0, and the RDP validator flags it (roadmap defect D2).
-            trifmt = (mat->type == MATERIAL_TEXTURED)
-                ? &TRIFMT_ZBUF_TEX : &TRIFMT_ZBUF;
+            trifmt = textured ? &TRIFMT_ZBUF_TEX : &TRIFMT_ZBUF;
         }
 
         // Draw all triangles in this group
         PROF_BEGIN(PROF_MESH_TRIS);
-        for (int i = group->index_start;
-             i < group->index_start + group->index_count;
-             i += 3) {
+        for (int i = first; i < end; i += 3) {
             const MeshVertex *tri_verts[3] = {
-                &mesh->vertices[mesh->indices[i]],
-                &mesh->vertices[mesh->indices[i + 1]],
-                &mesh->vertices[mesh->indices[i + 2]],
+                &verts[indices[i]],
+                &verts[indices[i + 1]],
+                &verts[indices[i + 2]],
             };
             float screen[3][10] ENGINE_NOINIT;  // Max: {X,Y,Z,R,G,B,A,S,T,INV_W}
             float inv_ws[3] ENGINE_NOINIT, fog_ts[3] ENGINE_NOINIT;
@@ -233,7 +242,7 @@ ENGINE_HOT void mesh_draw(const Mesh *mesh, const mat4_t *model,
 
             if (!planar) {
                 // Exact per-triangle back-face test on the projected winding
-                if (mesh->backface_cull &&
+                if (backface_cull &&
                     mesh_screen_area2(screen[0], screen[1], screen[2]) >= 0.0f) {
                     STATS_INC(tris_culled_backface);
                     continue;
@@ -260,7 +269,7 @@ ENGINE_HOT void mesh_draw(const Mesh *mesh, const mat4_t *model,
                     screen[v][4] = shade[1];
                     screen[v][5] = shade[2];
                     screen[v][6] = 1.0f - fog_ts[v];  // 1.0=visible, 0.0=full fog
-                    if (mat->type == MATERIAL_TEXTURED) {
+                    if (textured) {
                         screen[v][7] = tri_verts[v]->uv[0];
                         screen[v][8] = tri_verts[v]->uv[1];
                         screen[v][9] = inv_ws[v];

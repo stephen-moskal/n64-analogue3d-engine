@@ -70,7 +70,7 @@ static void my_update(Scene *scene, float dt) {
 }
 
 static void my_draw(Scene *scene) {
-    floor_draw(&scene->camera, &scene->lighting);   // 3D geometry
+    floor_draw(scene_view_camera(), scene_view_light());   // 3D geometry
 }
 
 static void my_post_draw(Scene *scene) {
@@ -145,6 +145,8 @@ Physics and the body sync are timed in the `physics` profiler slot, the camera, 
 
 ```
 scene_draw(scene)
+├── View copies              — scene->camera and scene->lighting copied to the
+│                              pinned view (scene_view_camera/light)
 ├── Background               — sky_draw() when the sky covers the screen,
 │                              otherwise rdpq_clear(bg_color)
 ├── rdpq_clear_z(ZBUF_MAX)   — Clear Z-buffer
@@ -154,6 +156,8 @@ scene_draw(scene)
 ```
 
 The sky replaces the colour clear rather than drawing over it, so scenes never call `sky_draw()` themselves. `scene_manager_draw()` draws the transition fade on top.
+
+**Draw with the view copies.** `scene_draw()` copies the scene's camera and lighting once per frame to a pinned D-cache colour, and object `on_draw` callbacks receive the copies as `cam` and `light`. In `on_draw` and `on_post_draw`, pass the renderers `scene_view_camera()` and `scene_view_light()` rather than `&scene->camera` / `&scene->lighting`. The renderers read them per vertex, per object and per face group, and inside the `Scene` struct their colours move whenever the struct or the static data before it changes size: S7 grew `SceneObject` by 16 bytes, which moved them onto the render stack's cache lines and cost every mesh step 6–9 % (D35). Changes made to `scene->camera` during a draw reach the renderers the next frame; update code keeps using `scene->camera` as before.
 
 ### Cleanup
 

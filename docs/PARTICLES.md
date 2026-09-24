@@ -98,7 +98,7 @@ PROF_END(PROF_PARTICLE_UPDATE);
 
 // on_post_draw: after the opaque geometry, before the HUD
 PROF_BEGIN(PROF_PARTICLE_DRAW);
-particle_draw(&scene->camera);
+particle_draw(scene_view_camera());   // the frame's pinned camera copy
 PROF_END(PROF_PARTICLE_DRAW);
 
 // on_cleanup

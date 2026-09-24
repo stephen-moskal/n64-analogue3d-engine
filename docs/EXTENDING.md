@@ -51,7 +51,9 @@ static void my_draw(Scene *scene) {
     vec3_t scale = {40.0f, 100.0f, 40.0f}, pos = {0.0f, 0.0f, 0.0f};
     mat4_t model;
     mat4_from_srt(&model, &scale, 0, 0, 0, &pos);
-    mesh_draw(mesh_defs_get_pillar(), &model, &scene->camera, &scene->lighting);
+    // the frame's camera and lighting: pinned copies of scene->camera and
+    // scene->lighting that scene_draw() made (D35)
+    mesh_draw(mesh_defs_get_pillar(), &model, scene_view_camera(), scene_view_light());
 }
 
 static void my_cleanup(Scene *scene) {
@@ -75,7 +77,7 @@ Steps:
 
 1. In `on_init`, build everything the scene uses and reset every static it keeps: `on_init` runs again after each soft reset and each time the scene is entered.
 2. Call `action_update()` at the top of `on_update`. The main loop never polls the joypad; the demo and the benchmark both poll in their update. Start and the Debug shortcuts (D-Up, D-Down) read the same polled state.
-3. Draw 3D geometry in `on_draw`, but don't clear the screen or draw the sky: `scene_draw()` already did. Particles, text and the menu go in `on_post_draw`.
+3. Draw 3D geometry in `on_draw`, but don't clear the screen or draw the sky: `scene_draw()` already did. Particles, text and the menu go in `on_post_draw`. Pass the renderers `scene_view_camera()` and `scene_view_light()`, not `&scene->camera` / `&scene->lighting`: `scene_draw()` copies the scene's camera and lighting there each frame, at a pinned D-cache colour (D35).
 4. Free in `on_cleanup` everything `on_init` created: meshes, emitters, hand-loaded textures, the BGM.
 5. In `main.c` (at boot, or in `app_frame()`), include the header and switch with `scene_manager_switch(&scene_mgr, my_scene_get(), TRANSITION_FADE_BLACK, 3.0f)` (the speed is fade progress per second; `TRANSITION_CUT` switches at once).
 6. To pick the scene from Debug → Scene: add a name to `scene_options[]` in `debug_menu.c`, raise the Scene item's option count in `debug_menu_init()`, and handle the new index where `main.c` calls `debug_consume_scene_request()` (0 = demo, 1 = benchmark today; the `else` branch falls back to the demo). When `main.c` changes scene by itself, call `debug_menu_set_active_scene()` so the item follows, as the benchmark's return to the demo does.
@@ -289,7 +291,7 @@ Gotchas:
 
    ```c
    PROF_BEGIN(PROF_PARTICLE_DRAW);
-   particle_draw(&scene->camera);
+   particle_draw(scene_view_camera());
    PROF_END(PROF_PARTICLE_DRAW);
    ```
 
@@ -414,17 +416,18 @@ Gotchas:
    ```c
    float screen[4][3] ENGINE_NOINIT;
    ```
-3. Add the object file to `src/engine/hot_text.ld`, which selects code **by object file name** (`*render/<file>.o(.text.engine_hot)`) or, for libdragon, by function section. Unlisted `ENGINE_HOT` code lands in the catch-all at the end. **Order matters: the block is larger than 16 KB, so its tail wraps onto its head.** The head holds the floor, shadow and particle loops and the tail holds `mesh_draw`, which never runs at the same time as them. Renaming or splitting a render file means editing this list; the S3 particle split replaced `particle.o` with `particle_draw.o`.
-4. A new drawing loop is a new phase: add its root function(s) to `PHASES` in `tools/hot_text.py`, for example `"decal": ["decal_draw"]`. Each phase is the roots plus the triangle path (`rdpq_triangle`, `rdpq_triangle_rsp`, `floorf`, `floor`) and the per-group rdpq helpers, extended transitively by every callee that lies inside the block (calls through function pointers are declared in `INDIRECT`). The tool fails if one of those functions lies outside the block or two of them need different lines at the same cache index. Callees outside the block are printed as notes, except those in `COLD_OK`: rare paths (buffer switches, asserts, logging) and `texture_upload`, whose libdragon path is too large to fit in the mesh phase.
-5. Verify with `libdragon exec bash tools/ci_build.sh`, which checks both ELFs, or directly:
+3. Add the object file to `src/engine/hot_text.ld`, which selects code **by object file name** (`*render/<file>.o(.text.engine_hot)`) or, for libdragon, by function section. Unlisted `ENGINE_HOT` code lands in the catch-all at the end. **Order matters: the block is larger than 16 KB, so its last ~8 KB wrap onto its first.** The tail is lighting, fog, `mesh_draw` and the per-object loops around it; the head is the shadow code first (which uses neither lighting nor fog), then the particle and floor loops, which never run at the same time as `mesh_draw`. Code every phase shares (the triangle, mode and command-buffer-switch paths, the camera math) sits in the middle, where nothing wraps. Renaming or splitting a render file means editing this list; the S3 particle split replaced `particle.o` with `particle_draw.o`.
+4. A new drawing loop is a new phase: add its root function(s) to `PHASES` in `tools/hot_text.py`, for example `"decal": ["decal_draw"]`. Each phase is the roots plus the triangle path (`rdpq_triangle`, `rdpq_triangle_rsp`, `floorf`, `floor`), the per-group rdpq helpers and libdragon's command-buffer switch (`rspq_next_buffer` and what it calls: the buffers are 2 KB, so it runs every ~20–30 triangles), extended transitively by every callee that lies inside the block (calls through function pointers are declared in `INDIRECT`). The tool fails if one of those functions lies outside the block or two of them need different lines at the same cache index. Callees outside the block are printed as notes, except those in `COLD_OK`: rare paths (block recording, a busy-RSP wait, asserts, logging) and `texture_upload`, whose libdragon path is too large to fit in the mesh phase.
+5. **The loop that calls your drawing function once per object** runs between every two calls, so it belongs to the phase too (D35: the benchmark's object loop once shared 36 of the mesh phase's lines, +22 µs per object). Put it in a small function of its own marked `ENGINE_HOT_LOOP` (pinned at the tail, with `mesh_draw`) or `ENGINE_HOT_HEAD` (at the head, for loops around shadow or floor code): both keep it out of line and unrenamed. Add it to the phase's roots in `PHASES`, and pin what it calls per object (`mat4_from_srt` is `ENGINE_HOT`).
+6. Verify with `libdragon exec bash tools/ci_build.sh`, which checks both ELFs, or directly:
 
    ```powershell
    libdragon exec python3 tools/hot_text.py build/debug/engine-debug.elf --verbose
    ```
 
    The first output line gives the block size and a status per phase.
-6. Static data the loop touches (arrays, counters, lookup tables): run `libdragon exec python3 tools/hot_data.py build/debug/engine-debug.elf --verbose`. A note "unpinned data on the stack's lines" means a variable shares D-cache lines with the loop's own stack frames (D34). Pin it: add its input section (`.bss.<name>`, `.sbss.<name>`, `.rodata.<name>`, qualified by object file) to the matching group of `src/engine/hot_data.ld` and its name to that group in `GROUPS` in `tools/hot_data.py`; a large per-loop array gets its own group at a colour clear of the stack range the tool prints. A new phase also needs its call chain in `CHAINS` (the scene callbacks are function pointers). To check that placement no longer depends on code size, build with `make LAYOUT_PAD=448`: the tool's output must not change.
-7. Benchmark the change; near the 5 % limit, use a same-ROM A/B (see [Contributing a change](#contributing-a-change)).
+7. Static data the loop touches (arrays, counters, lookup tables): run `libdragon exec python3 tools/hot_data.py build/debug/engine-debug.elf --verbose`. A note "unpinned data on the stack's lines" means a variable shares D-cache lines with the loop's own stack frames (D34). Pin it: add its input section (`.bss.<name>`, `.sbss.<name>`, `.rodata.<name>`, qualified by object file) to the matching group of `src/engine/hot_data.ld` and its name to that group in `GROUPS` in `tools/hot_data.py`; a large per-loop array gets its own group at a colour clear of the stack range the tool prints. A new phase also needs its call chain in `CHAINS` (the scene callbacks are function pointers). Data the loop reaches **through a pointer** (a struct passed in, a scene field) is invisible to the disassembly scan: declare it in `REACHED`, and prefer a pinned copy made once per frame, as `scene_draw()` does for the camera and lighting (D35). To check that placement no longer depends on layout, build with `make LAYOUT_PAD=448`, which moves every unpinned function and static variable by 448 bytes: the tools' output must not change, and on the A3D the benchmark should move by no more than the known heap effect (D26).
+8. Benchmark the change; near the 5 % limit, use a same-ROM A/B (see [Contributing a change](#contributing-a-change)).
 
 Gotchas:
 

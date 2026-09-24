@@ -6,8 +6,8 @@
 #                         -> engine-debug-bench.z64 (own build dir: build/debug-bench)
 #   make BENCH=1 BENCH_KIND=AUDIO   ... into one benchmark kind instead of All
 #   make BENCH=1 BENCH_VALIDATOR=1  ... with the RDP validator on (Debug > RDP Check)
-#   make LAYOUT_PAD=448   adds 448 bytes of unused code at the end of .text, so all
-#                         data moves: a layout-stability test (docs/HARDWARE.md, D34)
+#   make LAYOUT_PAD=448   moves every function and static variable that is not pinned
+#                         by 448 bytes: a layout-stability test (docs/HARDWARE.md, D34, D35)
 #
 # Via the Docker toolchain: `libdragon make` / `libdragon make BUILD=release`.
 
@@ -51,10 +51,10 @@ CFLAGS += -I$(SOURCE_DIR)
 #                below); the audio benchmark then measures Opus too
 SND_OPUS ?= 0
 CFLAGS += -DSND_ENABLE_OPUS=$(SND_OPUS)
-#   LAYOUT_PAD=N adds N bytes (a multiple of 4) of unused code at the end of
-#                .text (src/engine/layout_pad.c), moving all data after it: with
-#                hot data pinned (src/engine/hot_data.ld) nothing measured
-#                should change
+#   LAYOUT_PAD=N adds N unused bytes (a multiple of 4) after the hot text and
+#                after each pinned data group (src/engine/layout_pad.c), moving
+#                all other code and static data: with the render path pinned
+#                (hot_text.ld, hot_data.ld) nothing measured should change
 LAYOUT_PAD ?= 0
 CFLAGS += -DENGINE_LAYOUT_PAD=$(LAYOUT_PAD)
 

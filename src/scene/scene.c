@@ -4,7 +4,32 @@
 #include "../render/texture.h"
 #include "../render/atmosphere.h"
 #include "../engine/engine_config.h"
+#include "../engine/hot.h"
 #include <string.h>
+
+// The camera and lighting the frame is drawn with (scene_view_camera/light),
+// linked at a fixed D-cache colour by src/engine/hot_data.ld. mesh_draw reads
+// the camera for every object and the lighting for every face group, the
+// floor and shadows per vertex; inside a Scene both move whenever the struct
+// or the static data before it changes size (D35: S7 moved them onto the
+// render stack's lines, +7 % on every mesh step).
+static Camera      view_camera;
+static LightConfig view_light;
+
+const Camera *scene_view_camera(void) { return &view_camera; }
+const LightConfig *scene_view_light(void) { return &view_light; }
+
+// Runs between every two mesh_draw calls, so it is pinned with the mesh phase
+// (ENGINE_HOT_LOOP, hot_text.ld): unpinned it can share mesh_draw's I-cache
+// lines (D35)
+static ENGINE_HOT_LOOP void scene_draw_objects(Scene *scene) {
+    for (int i = 0; i < scene->object_count; i++) {
+        SceneObject *obj = &scene->objects[i];
+        if (obj->visible && obj->on_draw) {
+            obj->on_draw(obj, &view_camera, &view_light);
+        }
+    }
+}
 
 // --- Scene lifecycle ---
 
@@ -69,6 +94,10 @@ void scene_update(Scene *scene, float dt) {
 void scene_draw(Scene *scene) {
     if (!scene->loaded) return;
 
+    // The frame's camera and lighting, at their pinned colour
+    view_camera = scene->camera;
+    view_light = scene->lighting;
+
     // Background: the sky when it covers the screen, otherwise a colour
     // clear (never both: the clear would be overdrawn; D14)
     if (sky_covers_screen()) {
@@ -87,12 +116,7 @@ void scene_draw(Scene *scene) {
 
     // Draw objects with per-object callbacks
     PROF_BEGIN(PROF_OBJECTS);
-    for (int i = 0; i < scene->object_count; i++) {
-        SceneObject *obj = &scene->objects[i];
-        if (obj->visible && obj->on_draw) {
-            obj->on_draw(obj, &scene->camera, &scene->lighting);
-        }
-    }
+    scene_draw_objects(scene);
     PROF_END(PROF_OBJECTS);
 
     // Post-draw: HUD, overlays, 2D elements (after all 3D geometry)

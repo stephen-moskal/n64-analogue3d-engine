@@ -41,28 +41,44 @@ TRI_PATH = ["rdpq_triangle", "rdpq_triangle_rsp", "floorf", "floor"]
 GROUP_PATH = ["__rdpq_write8_syncchange", "__rdpq_fixup_write8_syncchange",
               "__rdpq_fixup_mode", "__rdpq_fixup_mode3", "__rdpq_fixup_mode4",
               "rdpq_set_mode_standard"]
+# Every ~20-30 triangles inside a phase: libdragon's command buffers are 2 KB,
+# and a full one is switched and the next cleared (D35: unpinned, this path
+# took 40 lines of whichever phase it landed on, +3-4 %)
+SWITCH_PATH = ["rspq_next_buffer", "__rspq_deferred_poll", "rspq_flush_internal", "memset"]
 
 # Phase roots. Their direct callees inside the hot block join the phase
 # automatically. A trailing '?' marks an optional root (skipped when absent).
+# The per-object loops that call a phase's draw function for every object run
+# interleaved with it too (D35: the benchmark's object loop took 36 of the
+# mesh phase's lines), so they are roots of the phases they drive:
+# ENGINE_HOT_LOOP / ENGINE_HOT_HEAD in src/engine/hot.h.
 PHASES = {
-    "mesh":        ["mesh_draw"],
+    "mesh":        ["mesh_draw", "bench_draw_objects", "scene_draw_objects", "object_draw"],
     "floor":       ["floor_draw"],
-    "shadow":      ["shadow_begin", "shadow_draw_blob", "shadow_draw_projected"],
+    "shadow":      ["shadow_begin", "shadow_draw_blob", "shadow_draw_projected",
+                    "bench_draw_shadows", "demo_draw_shadows"],
     "particle":    ["particle_draw"],
 }
 
-# Callees allowed outside the block. Rare paths: command-buffer switches,
-# block recording, palettes, asserts and logging. And texture_upload: it runs
-# once per textured face group, but its libdragon path (~7 KB) does not fit in
-# the mesh phase's 16 KB window, so mesh_draw keeps uploads to a minimum
-# (a texture already in TMEM is not uploaded again).
-COLD_OK = {"texture_upload", "rspq_next_buffer", "__rdpq_block_next_buffer", "__rdpq_block_reserve",
+# Callees allowed outside the block. Rare paths: block recording, palettes,
+# asserts and logging; in the buffer switch, the wait for a busy RSP (time
+# accounting), deferred calls that are due, and crash reports. And
+# texture_upload: it runs once per textured face group, but its libdragon path
+# (~7 KB) does not fit in the mesh phase's 16 KB window, so mesh_draw keeps
+# uploads to a minimum (a texture already in TMEM is not uploaded again).
+COLD_OK = {"texture_upload", "__rdpq_block_next_buffer", "__rdpq_block_reserve",
            "__rdpq_block_update", "rdpq_tex_upload_tlut", "rdpq_tex_reuse_sub",
            "rdpq_tex_reuse", "sprite_get_palette", "sprite_get_palette_used_colors",
-           "tex_format_name", "memset",
+           "tex_format_name", "acct_switch", "free", "__rsp_check_assert", "__rsp_crash",
+           "rspq_chain_next", "rspq_chain_next.isra.0",   # buffer switch while recording a block
            "__assert_func", "__inspector_assertion", "debug_assert_func_f",
            "debugf", "debugfv", "assertf", "abort", "raise", "_exit",
-           "disable_interrupts", "__rdpq_debug_log"}
+           "disable_interrupts", "__rdpq_debug_log",
+           # mat4_from_srt calls these only for a rotated axis: unrotated
+           # objects (every benchmark pillar) make no calls
+           "sinf", "cosf",
+           # the benchmark's object loops fetch their mesh once, before the loop
+           "mesh_defs_get_pillar"}
 
 # Calls made through function pointers, which the disassembly scan cannot
 # follow: caller -> the targets this engine's data actually reaches (the
@@ -143,7 +159,7 @@ def phase_members(elf, funcs, marks):
             result[phase] = (set(), set(), errors)
             continue
 
-        members = set(present) | set(TRI_PATH) | set(GROUP_PATH)
+        members = set(present) | set(TRI_PATH) | set(GROUP_PATH) | set(SWITCH_PATH)
         outside = set()
         queue, visited = sorted(members), set()
         while queue:                                   # callees, transitively

@@ -18,6 +18,7 @@
 #include "../debug/debug_menu.h"
 #include "../debug/engine_debug.h"
 #include "../engine/engine.h"
+#include "../engine/hot.h"
 #include "../debug/stats.h"
 #include "../debug/profiler.h"
 #include "../render/billboard.h"
@@ -367,7 +368,8 @@ static void object_update(SceneObject *obj, float dt) {
     }
 }
 
-static void object_draw(SceneObject *obj, const Camera *cam, const LightConfig *light) {
+// Runs between every two mesh_draw calls: pinned with the mesh phase (D35)
+static ENGINE_HOT void object_draw(SceneObject *obj, const Camera *cam, const LightConfig *light) {
     ObjectData *data = (ObjectData *)obj->data;
     mat4_t model;
     mat4_from_srt(&model, &obj->scale,
@@ -1268,48 +1270,55 @@ static void demo_update(Scene *scene, float dt) {
 // Scene draw — floor only (objects drawn by per-object callbacks)
 // ============================================================
 
+// Every visible shadow caster, including objects added at run time (the
+// ball, D20); only mesh objects carry the flag. Runs between every two shadow
+// draws: pinned with the shadow code (ENGINE_HOT_HEAD, D35).
+static ENGINE_HOT_HEAD void demo_draw_shadows(const Scene *scene, const Camera *cam,
+                                              const LightConfig *light) {
+    for (int i = 0; i < scene->object_count; i++) {
+        const SceneObject *obj = &scene->objects[i];
+        if (!obj->visible || !(obj->flags & SCENE_OBJ_CASTS_SHADOW)) continue;
+
+        const ObjectData *data = (const ObjectData *)obj->data;
+        if (!data || !data->mesh) continue;
+
+        mat4_t model;
+        mat4_from_srt(&model, &obj->scale,
+                      obj->rotation.x, obj->rotation.y, obj->rotation.z,
+                      &obj->position);
+
+        ShadowCaster caster = {
+            .mesh = data->mesh,
+            .model = &model,
+            .position = obj->position,
+            .bound_radius = data->mesh->bound_radius *
+                (obj->scale.x > obj->scale.z ? obj->scale.x : obj->scale.z),
+        };
+
+        if (light->shadow.mode == SHADOW_BLOB) {
+            shadow_draw_blob(cam, light, &caster);
+        } else {
+            shadow_draw_projected(cam, light, &caster);
+        }
+    }
+}
+
 static void demo_draw(Scene *scene) {
-    // The sky (when enabled) is drawn by scene_draw() as the background
+    // The sky (when enabled) is drawn by scene_draw() as the background.
+    // The renderers get the frame's pinned camera and lighting (D35).
+    const Camera *cam = scene_view_camera();
+    const LightConfig *light = scene_view_light();
 
     // Draw the checkered floor
     PROF_BEGIN(PROF_FLOOR);
-    floor_draw(&scene->camera, &scene->lighting);
+    floor_draw(cam, light);
     PROF_END(PROF_FLOOR);
 
     // Draw shadows on floor (after floor, before objects)
     PROF_BEGIN(PROF_SHADOWS);
-    if (scene->lighting.shadow.mode != SHADOW_OFF) {
-        shadow_begin(&scene->camera, &scene->lighting);
-
-        // Every visible shadow caster, including objects added at run time
-        // (the ball, D20); only mesh objects carry the flag
-        for (int i = 0; i < scene->object_count; i++) {
-            const SceneObject *obj = &scene->objects[i];
-            if (!obj->visible || !(obj->flags & SCENE_OBJ_CASTS_SHADOW)) continue;
-
-            const ObjectData *data = (const ObjectData *)obj->data;
-            if (!data || !data->mesh) continue;
-
-            mat4_t model;
-            mat4_from_srt(&model, &obj->scale,
-                          obj->rotation.x, obj->rotation.y, obj->rotation.z,
-                          &obj->position);
-
-            ShadowCaster caster = {
-                .mesh = data->mesh,
-                .model = &model,
-                .position = obj->position,
-                .bound_radius = data->mesh->bound_radius *
-                    (obj->scale.x > obj->scale.z ? obj->scale.x : obj->scale.z),
-            };
-
-            if (scene->lighting.shadow.mode == SHADOW_BLOB) {
-                shadow_draw_blob(&scene->camera, &scene->lighting, &caster);
-            } else {
-                shadow_draw_projected(&scene->camera, &scene->lighting, &caster);
-            }
-        }
-
+    if (light->shadow.mode != SHADOW_OFF) {
+        shadow_begin(cam, light);
+        demo_draw_shadows(scene, cam, light);
         shadow_end();
     }
     PROF_END(PROF_SHADOWS);
@@ -1322,7 +1331,7 @@ static void demo_draw(Scene *scene) {
 static void demo_post_draw(Scene *scene) {
     // Draw particles (after opaque objects, before HUD)
     PROF_BEGIN(PROF_PARTICLE_DRAW);
-    particle_draw(&scene->camera);
+    particle_draw(scene_view_camera());
     PROF_END(PROF_PARTICLE_DRAW);
 
     PROF_BEGIN(PROF_HUD);

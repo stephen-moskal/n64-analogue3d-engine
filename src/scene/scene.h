@@ -114,6 +114,16 @@ void scene_update(Scene *scene, float dt);
 void scene_draw(Scene *scene);
 void scene_cleanup(Scene *scene);
 
+// The camera and lighting the current frame is drawn with: copies of the
+// scene's, which scene_draw() makes before on_draw, at a pinned D-cache colour
+// (src/engine/hot_data.ld). Draw code passes these to the renderers, never
+// &scene->camera / &scene->lighting: the renderers read them per vertex,
+// object and face group, and inside the Scene their colours move whenever
+// the struct or the data before it changes size (D35). Object on_draw
+// callbacks receive them as their cam and light arguments.
+const Camera      *scene_view_camera(void);
+const LightConfig *scene_view_light(void);
+
 // --- Objects, colliders and bodies (scene_objects.c, host-tested) ---
 
 // No objects; empty collision and physics worlds (first step of scene_init)
