@@ -1,12 +1,12 @@
 # CLAUDE.md - N64 Dev Engine
 
 ## Project Overview
-Nintendo 64 homebrew game engine built on libdragon (`preview` branch, vendored as the `libdragon/` git submodule pinned at `10f3bd43e`, 2026-02-27). Verified on real hardware (Analogue 3D via SummerCart64) and in the ares emulator. Long-term goal: an action-RPG engine supporting souls-like combat and Final Fantasy Tactics-style battles, general enough for other genres.
+Nintendo 64 homebrew game engine built on libdragon (`preview` branch, vendored as the `libdragon/` git submodule pinned at `39d0d6096`, 2026-09-15; upgraded from `10f3bd43e` in Phase 2 S4b). Verified on real hardware (Analogue 3D via SummerCart64) and in the ares emulator. Long-term goal: an action-RPG engine supporting souls-like combat and Final Fantasy Tactics-style battles, general enough for other genres.
 
 Current state (2026-09-23): engine features from v1 (mesh system, multi-object scenes, camera, collision, physics, lighting + shadows, billboards, particles, fog/atmosphere, audio, action-mapped input, tabbed menu, text) plus the Phase 1 developer tooling in `src/debug/` (profiler, stats, memory, frame time, overlay pages, RDP counters, RDP capture, crash test, Reset Soak, Menu Sweep), a benchmark scene, host unit tests and CI. Planning lives in `docs/ROADMAP_v2.md`: Phases 0 and 1 are done; Phase 2 (engine hardening, stages S0–S13) is in progress with S0–S4 verified on the A3D (next: S4b, a libdragon upgrade for the RSP race D28), then CPU-path graphics features and Tiny3D. The engine is CPU-bound (see `docs/BENCHMARKS.md`).
 
 ## Build & Deploy
-Development happens on Windows 11 (PowerShell) and macOS. The `libdragon` npm CLI runs `make` inside the Docker container `ghcr.io/dragonminded/libdragon:latest` (config in `.libdragon/config.json`, vendor strategy = submodule). Full setup: `docs/SETUP.md`.
+Development happens on Windows 11 (PowerShell) and macOS. The `libdragon` npm CLI runs `make` inside the Docker container `ghcr.io/dragonminded/libdragon:preview` (config in `.libdragon/config.json`, vendor strategy = submodule). Full setup: `docs/SETUP.md`.
 
 ```powershell
 libdragon make                    # debug build -> engine-debug.z64 (validator, asserts, profiler)
@@ -26,7 +26,9 @@ VS Code tasks (`.vscode/tasks.json`) wrap the same commands with per-OS variants
 ## Repository Gotchas
 - **Line endings must be LF.** The container reads `Makefile`/`n64.mk`/`build.sh` from the bind mount. `.gitattributes` forces LF; on Windows the repo and the `libdragon/` submodule also need `core.autocrlf=false` + `core.eol=lf` and a re-checkout (SETUP.md step 6).
 - **Generated assets are not committed.** `filesystem/*.sprite` and `filesystem/audio/**` are built from `assets/` by `mksprite`/`audioconv64`; their format depends on the libdragon version (a stale `.wav64` asserts `invalid version` at boot). Run `libdragon make clean` after changing the submodule.
-- `libdragon make` does not rebuild libdragon; `libdragon install` does.
+- `libdragon make` does not rebuild libdragon; `libdragon install` does. To move an existing project to another toolchain image: `libdragon init -i <image>`.
+- Toolchain (the `:preview` image): GCC 16.2, binutils 2.45; every file is built with `-mfix4300` (VR4300 multiply errata). The Makefile sets `LIBDRAGON_PREVIEW = 1`: libdragon APIs still marked preview are allowed but each use warns.
+- At this libdragon version `mksprite` compresses sprites and `audioconv64` encodes `.wav64` as VADPCM by default; any `.wav64` use links the Opus and ULC codecs (~40 KB).
 - The Makefile compiles every `src/*.c` and `src/*/*.c` automatically, per variant into `build/debug/`, `build/release/` (or `build/<variant>-bench/` with `BENCH=1`), and includes the generated `.d` files so header edits rebuild dependents. `-Wall -Werror` applies to the engine and to the host tests.
 - `debugf`/`assertf` are compiled out of release builds (`NDEBUG`), so logs, CSV dumps and benchmark output need the debug ROM. Both variants are `-O2`.
 - Python tools run in the container: `libdragon exec python3 tools/<tool>.py ...` (no host Python needed).

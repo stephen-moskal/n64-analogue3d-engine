@@ -77,5 +77,7 @@ The VR4300 has a 16 KB instruction cache (32-byte lines) and an 8 KB data cache 
 
 ## RSP / microcode limits
 
-- RSP IMEM and DMEM are 4 KB each. At the pinned libdragon commit, enabling libdragon's own RSP profiler (`RSPQ_PROFILE=1`) makes the core `rsp_rdpq` microcode 96 bytes too large, so it cannot be used (PROFILING.md).
+- RSP IMEM and DMEM are 4 KB each. With libdragon's own RSP profiler (`RSPQ_PROFILE=1`) the audio mixer's microcode overflows DMEM by 8 bytes at the current pin (at the original pin `rsp_rdpq` overflowed IMEM by 96), so it cannot be used (PROFILING.md).
+- **D28, RSP crash in `rspq_highpri_sync`** ("wait loop timed out", status 0x3403): a libdragon race between the audio mixer's high-priority work and a low-priority buffer switch, fixed upstream in `7c57c409d` and included since the S4b upgrade (`39d0d6096`).
+- **VR4300 multiply errata:** the `:preview` toolchain builds with `-mfix4300` automatically (GCC specs), so back-to-back multiplies are scheduled around the hardware bug.
 - The audio mixer runs on the RSP (`rspq_highpri_sync` in `mixer.c`): anything that leaves the RSP halted shows up as an RSP crash in the mixer.

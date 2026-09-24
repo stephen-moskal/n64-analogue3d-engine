@@ -335,3 +335,16 @@ Every mesh used to reserve 512 vertices + 1024 indices (18 KB) on its first vert
 The render stack sits just below `0x807FFCF0` (`bench_draw` frame 280 B, `mesh_draw` 688 B, `rdpq_triangle` 48 B), on D-cache sets **≈0x1880–0x1CF0**. Every slow variant has its geometry or its `Mesh` struct (face groups, read per group) on those sets; the three copies that avoid them are the fastest. Aliasing between hot mesh data and the render stack costs **4–8.5 %** on object-heavy frames; the shared pillar, which aliases with both, is the worst case (and is what the Objects bench measures). The winding effect cannot be separated from variant 5's struct placement. Mitigation belongs with the vertex cache (P3.1): the triangle loop would read one static transformed-vertex buffer at a known colour instead of mesh data, and placement can be checked with this bench.
 
 **RSP crash (D28).** After the Reset Soak, with the menu open, the console stopped with `rspq_highpri_sync ... wait loop timed out` (status 0x3403). The dump shows the RSP asleep at its idle `break` with HIGHPRI_RUNNING still set after the high-priority epilogue ran: a race between the audio mixer's high-priority work and a low-priority buffer switch in the pinned libdragon. Fixed upstream in `7c57c409d` (2026-08-23, "rspq: make lowpri buffer handoff atomic"), which depends on the April rspq rework `cd9d88c64`; the libdragon upgrade is scheduled as its own stage (S4b).
+
+## Phase 2 · S4b.1 libdragon upgrade (2026-09-23, debug build, Analogue 3D)
+
+libdragon `10f3bd43e` (2026-02-27) → `39d0d6096` (preview, 2026-09-15; 466 commits), toolchain image `:latest` (2026-08-29) → `:preview` (GCC 16.2, binutils 2.45, `-mfix4300`). The engine compiled without changes or warnings; assets were regenerated (sprites compressed, music VADPCM).
+
+| Check | Result |
+|---|---|
+| Full benchmark vs S4 (`bench_compare.py`, `...-p2-s4b1-all-...`) | **0 regressions**; objects −4 to −5 % at 24–64 pillars, everything else within ±5 % |
+| Reset Soak ×10 | delta **0 B** (heap after init 836,856 B, −6.5 KB vs S4) |
+| Menu Sweep | 24 items, 123 options, no crash |
+| RAM footprint (release ELF) | 453.5 → 502.0 KB (+48.5 KB: code +41 KB, bss +7 KB; mostly the Opus/ULC codecs that `wav64` now always links) |
+| ROM (release) | 352 → 400 KB |
+| Demo `audio` slot | **2.69 ms average, 10.2 ms peak** with the music playing: the music is now VADPCM (the new `audioconv64` default) and is decoded on the RSP while the mixer waits. Addressed by the S4b.2 audio rework |

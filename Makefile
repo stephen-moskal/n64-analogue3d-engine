@@ -20,6 +20,10 @@ BENCH_SUFFIX := $(if $(filter 1,$(BENCH)),-bench,)
 BUILD_DIR  = build/$(BUILD)$(BENCH_SUFFIX)
 SOURCE_DIR = src
 
+# libdragon APIs still marked "preview" are allowed, but each use warns, so
+# the engine's dependence on unstable API stays visible (0 = error, 2 = silent).
+LIBDRAGON_PREVIEW = 1
+
 include $(N64_INST)/include/n64.mk
 
 ifeq ($(BUILD),release)

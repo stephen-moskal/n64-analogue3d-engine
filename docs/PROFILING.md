@@ -86,17 +86,14 @@ The RDP's cycle counters `DP_CLOCK`, `DP_BUSY`, `DP_PIPE_BUSY` and `DP_TMEM_BUSY
 
 Shown on the overlay's RSP page and in `RDP` CSV rows. Result so far: the demo is **CPU-bound**. RDP busy is 5–7 ms of 16.7, and pipe is only ~30 % of busy.
 
-## libdragon's RSP profiler (opt-in, currently blocked)
+## libdragon's RSP profiler (blocked)
 
-libdragon can also time each RSP microcode overlay (`rspq_profile.h`), but only when built with `RSPQ_PROFILE=1`, a hard `#define` in `libdragon/include/rspq_constants.h`. At the pinned libdragon commit that build **fails**: with the profiling hooks the core `rsp_rdpq` microcode (and the H.264 one) overflows the RSP's 4 KB IMEM by 96 bytes.
+libdragon can also time each RSP microcode overlay (`rspq_profile.h`), but only when built with `RSPQ_PROFILE=1`, a hard `#define` in `libdragon/include/rspq_constants.h`. It cannot be used with this engine yet:
 
-The tooling is kept for a retry after the libdragon upgrade (ROADMAP_v2 P4.0):
+- At the original pin (`10f3bd43e`) the core `rsp_rdpq` microcode (and H.264) overflowed the RSP's 4 KB IMEM by 96 bytes.
+- At the current pin (`39d0d6096`, Phase 2 S4b) `rsp_rdpq` fits, but the audio mixer's microcode overflows its DMEM data region by 8 bytes, and the mixer cannot be left out.
 
-```powershell
-./tools/rspq_profile.ps1 on       # apply tools/patches/rspq_profile.patch, rebuild libdragon + project
-./tools/rspq_profile.ps1 status
-./tools/rspq_profile.ps1 off      # restore the pristine submodule
-```
+`tools/rspq_profile.ps1` and `tools/patches/rspq_profile.patch` were written for the original pin; the patch no longer applies. Retry at the next libdragon upgrade. Until then RDP load comes from the hardware counters (RDP rows) and CPU time from the profiler above.
 
 When it works, the RSP page adds per-overlay RSP time and "Wait RDP" / "Wait CPU" (RSP blocked on the RDP, or starved by the CPU). Never commit the submodule while the patch is applied.
 

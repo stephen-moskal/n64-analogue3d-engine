@@ -103,7 +103,7 @@ git -C libdragon ls-files --eol n64.mk         # want: i/lf  w/lf
 ### 7. Build
 
 ```powershell
-libdragon init      # existing project: pulls ghcr.io/dragonminded/libdragon:latest, creates the
+libdragon init      # existing project: pulls ghcr.io/dragonminded/libdragon:preview, creates the
                     # container, and compiles the vendored libdragon submodule into it (~1 min on 16 cores)
 libdragon make                  # debug build   -> engine-debug.z64 (~5 s warm)
 libdragon make BUILD=release    # release build -> engine.z64
@@ -140,7 +140,7 @@ The ROM prints `SMozN64 Dev Engine` at startup (after the texture/audio load lin
 
 `.vscode/tasks.json` has per-OS commands: **Build ROM** (`Ctrl+Shift+B`), **Clean Build**, **Rebuild**, **Run in ares**, **Upload to SummerCart64**, **Debug (USB Log)**. Restart VS Code after installing tools so its terminals see the new PATH.
 
-The `.devcontainer/` config (image `ghcr.io/dragonminded/libdragon:preview`) is an alternative for editing with IntelliSense inside the container; note its image tag differs from `.libdragon/config.json` (`:latest`). The container is only a toolchain; `sc64deployer` and ares always run on the Windows host.
+The `.devcontainer/` config (image `ghcr.io/dragonminded/libdragon:preview`) is an alternative for editing with IntelliSense inside the container; it uses the same image tag as `.libdragon/config.json` and CI (`:preview`). An existing checkout that still has a `:latest` container switches with `libdragon init -i ghcr.io/dragonminded/libdragon:preview`, then `libdragon make clean`. The container is only a toolchain; `sc64deployer` and ares always run on the Windows host.
 
 ---
 
