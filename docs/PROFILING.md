@@ -126,6 +126,7 @@ BENCH_META / BENCH_HDR / BENCH,...       benchmark run and steps (benchmark_scen
 BENCH_PROF_HDR / BENCH_PROF,...          per-step CPU breakdown (profiler on)
 BENCH_PRESENT_HDR / BENCH_PRESENT,...    per-step presented frames: vblanks 1/2/3/4+, late, average, torn, worst torn half-line
 BENCH_LAYOUT,...                         data addresses, once per run: render stack, pillar geometry and Mesh struct, plus one row per Layout copy (D26); RDRAM buffers: command queue, RDP buffers, Z-buffer, framebuffers (D37)
+BENCH_RDPLOG,<kind>,<index>,<param>      make BENCH_RDPLOG=1: a step's RDP capture follows (RDPLOG_BEGIN..END; DEBUGGING.md)
 BENCH,END / BENCH,ABORTED                end of a benchmark run
 SOAK,... / SWEEP,...                     Reset Soak and Menu Sweep (testbed.c, DEBUGGING.md)
 BALL,rest,fps=...,t=...,bounces=...      the demo's ball: launch to rest, once per launch (demo_scene.c, PHYSICS.md)

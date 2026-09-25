@@ -2,12 +2,27 @@
 #include "texture.h"
 #include "../debug/stats.h"
 #include "../debug/profiler.h"
+#include "../debug/engine_debug.h"
 #include "atmosphere.h"
 #include "../engine/hot.h"
 #include "../engine/engine_config.h"
 #include <math.h>
 
 // Mesh rendering. Building and bounds live in mesh_build.c.
+
+#if ENGINE_DEBUG
+static bool skip_submit;
+void mesh_debug_set_skip_submit(bool skip) { skip_submit = skip; }
+
+// Stands in for rdpq_triangle() when submission is skipped: noipa makes the
+// compiler assume it reads all three corners, so their transform stays
+static ENGINE_HOT __attribute__((noipa)) void submit_sink(const float *a, const float *b,
+                                                           const float *c) {
+    (void)a; (void)b; (void)c;
+}
+#else
+void mesh_debug_set_skip_submit(bool skip) { (void)skip; }
+#endif
 
 // Local point -> world (model is column-major: m[col][row])
 static inline ENGINE_HOT void model_point(const mat4_t *m, const float p[3], float out[3]) {
@@ -85,6 +100,9 @@ ENGINE_HOT void mesh_draw(const Mesh *mesh, const mat4_t *model,
     const MeshVertex *verts = mesh->vertices;
     const uint16_t *indices = mesh->indices;
     const bool backface_cull = mesh->backface_cull;
+#if ENGINE_DEBUG
+    const bool skip = skip_submit;
+#endif
 
     int total_tris = 0;
 
@@ -281,6 +299,13 @@ ENGINE_HOT void mesh_draw(const Mesh *mesh, const mat4_t *model,
                 }
             }
 
+#if ENGINE_DEBUG
+            if (skip) {
+                submit_sink(screen[0], screen[1], screen[2]);
+                total_tris++;
+                continue;
+            }
+#endif
             rdpq_triangle(trifmt, screen[0], screen[1], screen[2]);
             total_tris++;
         }

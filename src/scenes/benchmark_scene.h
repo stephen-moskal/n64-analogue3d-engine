@@ -35,6 +35,7 @@ typedef enum {
     BENCH_AUDIO,        // mixer cost per music encoding and poll point (not part of "All")
     BENCH_UI,           // Start menu drawn immediate vs cached, with scripted input (not part of "All")
     BENCH_LATENCY,      // input lag per latency setting and CPU load (not part of "All"); S9
+    BENCH_MESH,         // mesh_draw's transform vs submission, all triangle formats (not part of "All"); Phase 3 S1
     BENCH_KIND_COUNT
 } BenchKind;
 

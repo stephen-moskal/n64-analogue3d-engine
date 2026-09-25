@@ -67,4 +67,8 @@ surface_t *engine_zbuf(void);
 // next frame (diagnostics: the benchmark logs where the framebuffers are)
 const surface_t *engine_framebuffer(void);
 
+// Bytes allocated first thing in engine_init() (make HEAP_PAD=N, a placement
+// test; 0 normally)
+uint32_t engine_heap_pad(void);
+
 #endif

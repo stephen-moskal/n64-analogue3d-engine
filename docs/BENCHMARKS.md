@@ -130,6 +130,7 @@ Findings:
 py tools/bench_compare.py docs/benchmarks/2026-09-23-baseline-debug-a3d.csv new.csv
 # or without host Python: libdragon exec python3 tools/bench_compare.py <baseline> <new>
 # exit 0 = OK, 1 = regression (CPU +5 % and +0.15 ms, or a step that held 60 FPS no longer does), 2 = no BENCH rows / bad file
+# --prof mesh_tris,particle adds the named BENCH_PROF slots per step, with µs per drawn triangle (not gated)
 ```
 
 Timings depend on code and data layout (D25, D26): compare runs of the same day where possible, and compare renderer changes inside one ROM when a result is close to the limit.
@@ -152,6 +153,7 @@ The tests run with fog and sky off (restored afterwards) on the benchmark scene'
 | ui | 0, 10, 1, 11, 2, 12, 3, 13, 4, 14, 20, 30, 40, 41, 50, 51 | floor + 16 pillars with UI on top. 0–14: the Start menu (a copy), param = mode × 10 + input (mode 0 direct, 1 cached; input 0 none, 1 cursor every 8 frames, 2 value every 2, 3 tab every 30, 4 closed 30 of every 100 frames). 20 / 30: the cached menu in the Classic / Minimal style. 40 / 41: a demo-like HUD (title + six readouts changing every frame) drawn direct every frame / cached at ~6 Hz. 50 / 51: the demo conversation in the text box at reading pace / skipping. Not in All ([UI.md](UI.md)) |
 | audio | 8 steps (10 with `SND_OPUS=1`) | floor + 16 pillars with the music at full volume; param = codec × 100 + poll point × 10 + effects (codec 0 none, 1 raw, 2 VADPCM, 3 Opus; poll point 0 after present, 1 before `display_get`, 2 after; effects 1 = a new sound every 4 frames). Opus runs first, so VADPCM later reuses its channel (D31). Steps whose track is not in the ROM are skipped; not in All ([AUDIO.md](AUDIO.md)) |
 | latency | 0, 100, 200, 4, 104, 204, 8, 108, 208 | floor + 16 pillars + a CPU burn; param = latency setting × 100 + burn ms (0 Classic, 1 Low, 2 Lowest): input lag per setting at three loads. Not in All ([INPUT.md](INPUT.md)) |
+| mesh | 16, 32, 64 × variants 0–5 | `mesh_draw`'s costs (Phase 3 S1); param = variant × 1000 + objects: pillars (0), pillars not submitted (1), spheres (2), spheres not submitted (3), pillars, spheres and textured boxes in turn (4), the same with fog (5). A not-submitted variant transforms, culls and lights every triangle but skips `rdpq_triangle()` (`mesh_debug_set_skip_submit`, debug builds): the difference in `mesh_tris` is the cost of submitting. Variants 4 and 5 use all four triangle formats (golden RDP captures, [DEBUGGING.md](DEBUGGING.md)). Not in All |
 
 ### Baseline (2026-09-23, debug build, Analogue 3D, `docs/benchmarks/2026-09-23-baseline-debug-a3d.csv`)
 
@@ -849,3 +851,40 @@ Measured: the quiet view from the BOOT rows of two demo boots (seconds 10–19, 
 ## Phase 3 kickoff (2026-09-25)
 
 Phase 3 (ROADMAP_v2 §7) is measured against the Phase 2 exit: `docs/benchmarks/2026-09-25-p2-s13-all-bootbench-debug-a3d.csv` (Bench = All, 28 steps), `...-p2-s13-ui-debug-a3d.csv` (Bench = UI) and the quiet view of `...-p2-s13-demo-boot-debug-a3d.csv` (4.1–4.7 ms). Stages commit their CSVs as `docs/benchmarks/<date>-p3-s<N>-...-a3d.csv`; each becomes the next stage's comparison point, and the Phase 3 exit compares against the Phase 2 exit files.
+
+## Phase 3 · S1 measurement: transform vs submission, heap placement (2026-09-25, debug build, Analogue 3D)
+
+Runs (`make BENCH=1`, boot to Bench = All, 15 s settle):
+
+| File | ROM | What |
+|---|---|---|
+| `...-p3-s1-all-bootbench-debug-a3d.csv` | S1 | Bench = All: this stage's reference |
+| `...-p3-s1-mesh-debug-a3d.csv` | S1, same boot | Bench = Mesh from the Debug tab (18 steps) |
+| `...-p3-s1-all-bootbench-heappad-debug-a3d.csv` | S1 + `HEAP_PAD=0x100040` | every heap block 1 MB + 64 B further into RDRAM; code, symbols and static data identical |
+| `...-p3-s1-all-bootbench-aa-debug-a3d.csv` | S1 again | a first `HEAP_PAD` build whose pad GCC had deleted (its `BENCH_META` says `heap_pad=1048640`, its `BENCH_LAYOUT` rows show the heap unmoved): the same layout booted twice |
+| `...-p3-s1-mesh-rdplog-ares.csv` | S1 + `BENCH_RDPLOG=1`, ares | golden triangle hashes of the 18 Mesh steps ([DEBUGGING.md](DEBUGGING.md)) |
+
+**Against the Phase 3 start (S13): 0 regressions.** Every mesh step is 3–6 % faster (`mesh_tris` at 16 pillars 4.66 → 4.36 ms) with the heap at the same addresses in both `BENCH_LAYOUT` rows. S1 added only debug code to `mesh_draw` (a skip branch, 10 instructions, otherwise the same code with renamed registers) and to the benchmark's pinned object loop. Objects 32 is 60.1 FPS with CPU 12.40 ms (S13: 58.6 FPS, 16.15 ms): in S13 the audio mix waited 3.0 ms for the RSP (D38) and here it did not, a threshold effect that flips between builds.
+
+**Noise floor.** The A/A pair (the same layout, two boots) matches within ±0.3 % on every `BENCH_PROF` slot and ±0.4 % CPU, except where D38's wait is active (objects 32–64: CPU ±2 %, `mesh_tris` ±1.3 %).
+
+**D37: not RDRAM placement.** Moving the heap by 1 MB (framebuffers, the RDP command buffers, libdragon's queue, textures, the pillar's geometry at its fixed colour) left every step's CPU within ±0.2 % (fill rate 8: +0.01 ms), RDP time unchanged, and every per-primitive slot within ±0.5 % (`mesh_tris` at 48/64 ±1.3 %, as in the A/A pair). The 6 % that S1 moved against S13 came with an unchanged heap and an unchanged loop body, so what moves per-primitive costs between builds is where code sits, beyond what `hot_text.py` models; the next candidate is code that runs while a phase draws but is not in its model, the interrupt handlers (ROADMAP_v2 S12).
+
+**Transform vs submission (Bench = Mesh, one ROM).** A variant and its not-submitted twin run the same transforms, culls and lighting; the second skips `rdpq_triangle()`:
+
+| Shape | n | Drawn tris | `mesh_tris` µs | not submitted | Submission share | per drawn triangle: all / engine / submission |
+|---|---|---|---|---|---|---|
+| pillars | 16 | 253 | 4,353 | 1,937 | 55.5 % | 17.21 / 7.66 / 9.55 |
+| pillars | 32 | 506 | 8,430 | 3,850 | 54.3 % | 16.66 / 7.61 / 9.05 |
+| pillars | 64 | 1,011 | 16,915 | 7,613 | 55.0 % | 16.73 / 7.53 / 9.20 |
+| spheres | 16 | 467 | 16,088 | 11,615 | 27.8 % | 34.45 / 24.87 / 9.58 |
+| spheres | 32 | 935 | 31,851 | 23,300 | 26.8 % | 34.07 / 24.92 / 9.15 |
+| spheres | 64 | 1,867 | 63,519 | 46,478 | 26.8 % | 34.02 / 24.89 / 9.13 |
+
+- libdragon's submission (`rdpq_triangle()`: the CPU converts the corners and writes the triangle to the RSP queue) costs 9.1–9.6 µs (~870 cycles) per triangle for both shapes, more than the engine's own work on a pillar. A vertex cache cannot reduce it.
+- A pillar's engine share, 7.6 µs per drawn triangle, is mostly its three corner transforms: planar groups are lit once per face (3.1 µs per drawn triangle, outside `mesh_tris`).
+- A sphere's engine share, 24.9 µs, is its per-triangle lighting (7.9 µs; curved groups light inside the triangle loop) and the transform of all 60 triangles to cull about half by winding: 180 corner transforms for 29 drawn triangles.
+- Fog adds 4.8–5.2 µs per drawn triangle (mixed shapes: the per-corner fog factor and the larger shaded commands).
+- The mixed variants, 16–64 objects: 27.6–28.5 µs per drawn triangle, 32.6–33.7 with fog.
+
+**S3's target from this split.** The drawn triangles of a pillar use 25 unique vertices for 48 corners (−48 % transforms), a sphere's 72 for 180 (−60 %). At 1.6–2.1 µs per corner (transform, divide, clip tests and copies, estimated from the code) that is −13 to −21 % `mesh_tris` per drawn triangle on pillars and −16 to −22 % on spheres. S3's acceptance stays −12 % on pillars and becomes −15 % on spheres (was −25 %): a sphere's lighting stays per triangle until S5, and submission is a quarter of its cost. Build-to-build moves of this size (above) mean S3 is judged inside one ROM, with the current path still selectable.

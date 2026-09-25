@@ -25,6 +25,7 @@
 #include "../debug/profiler.h"
 #include "../debug/frametime.h"
 #include "../debug/memstats.h"
+#include "../debug/rdp_debug.h"
 #include "../audio/audio.h"
 
 // ------------------------------------------------------------------------
@@ -46,7 +47,7 @@ typedef struct {
 
 static const char *kind_names[BENCH_KIND_COUNT] = {
     "all", "objects", "particles", "lights", "textures", "shadows", "fillrate", "overload", "layout", "audio", "ui",
-    "latency",
+    "latency", "mesh",
 };
 
 // One-line description shown under the status line (param is substituted)
@@ -63,6 +64,22 @@ static const char *kind_desc[BENCH_KIND_COUNT] = {
     "%d: codec*100+poll*10+sfx (0 none 1 raw 2 vadpcm 3 opus)",
     "%d: menu 0x-1x, style 2x-3x, HUD 4x, dlg 5x",
     "%d: latency*100+burn ms (0 classic, 1 low, 2 lowest)",
+    "%d: variant*1000+objects",      // the HUD shows mesh_desc instead
+};
+
+// Bench = Mesh variants (param / 1000; ROADMAP_v2 Phase 3 S1)
+enum {
+    MESHV_PILLARS,              // flat pillars
+    MESHV_PILLARS_UNSUBMITTED,  // ... transformed, culled and lit but not submitted
+    MESHV_SPHERES,              // spheres: curved groups, lit per triangle
+    MESHV_SPHERES_UNSUBMITTED,
+    MESHV_MIX,                  // pillars, spheres and textured boxes in turn
+    MESHV_MIX_FOG,              // ... with fog: the shade triangle formats
+    MESHV_COUNT
+};
+static const char *mesh_desc[MESHV_COUNT] = {
+    "%d pillars", "%d pillars, not submitted", "%d spheres", "%d spheres, not submitted",
+    "%d pillars, spheres, textured boxes", "%d pillars, spheres, boxes, fog",
 };
 
 static BenchKind  configured_kind = BENCH_ALL;
@@ -90,7 +107,8 @@ static int        instance_count;
 static vec3_t     instance_pos[MAX_INSTANCES];
 static int        emitters[4] = {-1, -1, -1, -1};
 static int        fill_layers;
-static bool       saved_fog, saved_sky;
+static FogConfig  saved_fog;
+static bool       saved_sky;
 static int        burn_ms;             // OVERLOAD: extra CPU time per frame
 static bool       draw_floor;
 static void      *draw_frame;          // stack frame of bench_draw (data-layout row, D26)
@@ -284,6 +302,15 @@ static void build_steps(BenchKind which) {
         static const int p[] = {0, 10, 1, 11, 2, 12, 3, 13, 4, 14, 20, 30, 40, 41, 50, 51};
         for (unsigned i = 0; i < sizeof(p) / sizeof(p[0]); i++) add_step(BENCH_UI, p[i]);
     }
+    if (which == BENCH_MESH) {
+        // param = variant*1000 + objects, interleaved so drift hits every
+        // variant alike. A variant minus its unsubmitted twin is the cost of
+        // submitting the triangles (mesh_debug_set_skip_submit); the two mixes
+        // run all four triangle formats (the golden RDP captures)
+        static const int n[] = {16, 32, 64};
+        for (unsigned i = 0; i < sizeof(n) / sizeof(n[0]); i++)
+            for (int v = 0; v < MESHV_COUNT; v++) add_step(BENCH_MESH, v * 1000 + n[i]);
+    }
     if (which == BENCH_LATENCY) {
         // param = latency setting*100 + CPU burn (ms) over the demo-like load
         // (floor + 16 pillars, ~8 ms): each setting light, loaded, near the budget
@@ -387,6 +414,8 @@ static void setup_step(Scene *scene) {
     L->shadow.mode = SHADOW_OFF;
     input_set_sync(INPUT_SYNC_AUTO);            // the defaults; LATENCY steps set their own
     engine_set_pacing(ENGINE_PACING_THROUGHPUT);
+    mesh_debug_set_skip_submit(false);          // MESH variant 1 turns it on
+    atmosphere_set_fog_enabled(false);          // MESH variant 2 turns it on
 
     switch (st->kind) {
     case BENCH_OBJECTS:
@@ -429,6 +458,20 @@ static void setup_step(Scene *scene) {
     case BENCH_TEXTURES:
         layout_grid(16);
         break;
+    case BENCH_MESH: {
+        int v = st->param / 1000;
+        layout_grid(st->param % 1000);
+        mesh_debug_set_skip_submit(v == MESHV_PILLARS_UNSUBMITTED || v == MESHV_SPHERES_UNSUBMITTED);
+        if (v == MESHV_MIX_FOG) {
+            // Fixed fog, so every object is partly fogged whatever the demo
+            // had set (restored on exit)
+            atmosphere_set_fog_color(RGBA32(0x60, 0x70, 0x80, 0xFF));
+            atmosphere_set_fog_near(600.0f);
+            atmosphere_set_fog_far(2000.0f);
+            atmosphere_set_fog_enabled(true);
+        }
+        break;
+    }
     case BENCH_SHADOWS:
         layout_grid(16);
         L->shadow.mode = (ShadowMode)st->param;
@@ -650,7 +693,7 @@ static void bench_init(Scene *scene) {
     particle_init();
 
     // Fog and sky off for comparable numbers; restored on exit
-    saved_fog = atmosphere_get_fog_enabled();
+    saved_fog = *atmosphere_get_fog();
     saved_sky = atmosphere_get_sky_enabled();
     atmosphere_set_fog_enabled(false);
     atmosphere_set_sky_enabled(false);
@@ -676,9 +719,11 @@ static void bench_init(Scene *scene) {
     if (settling)
         debugf("BENCH_SETTLE,start,%.1f s after reset,measuring from %d s\n",
                (float)run_start_ticks / TICKS_PER_SECOND, BOOT_SETTLE_S);
-    debugf("BENCH_META,build=%s,date=%s %s,rdram=%d,benchmark=%s,steps=%d,warmup=%d,measure=%d\n",
+    debugf("BENCH_META,build=%s,date=%s %s,rdram=%d,benchmark=%s,steps=%d,warmup=%d,measure=%d,"
+           "heap_pad=%lu,layout_pad=%d\n",
            ENGINE_BUILD_NAME, __DATE__, __TIME__, get_memory_size(),
-           kind_names[configured_kind], step_count, WARMUP_FRAMES, MEASURE_FRAMES);
+           kind_names[configured_kind], step_count, WARMUP_FRAMES, MEASURE_FRAMES,
+           (unsigned long)engine_heap_pad(), ENGINE_LAYOUT_PAD);
     debugf("BENCH_HDR,kind,step,param,frames,fps,avg_ms,p99_ms,low1_fps,cpu_avg_ms,cpu_max_ms,"
            "rdp_busy_ms,rdp_busy_pct,tris,tex_uploads,heap_kb\n");
     debugf("BENCH_PRESENT_HDR,kind,step,param,presents,vb1,vb2,vb3,vb4plus,late,avg_vblanks,torn,torn_worst_halfline,"
@@ -761,6 +806,16 @@ static void bench_update(Scene *scene, float dt) {
         frametime_reset();
         input_reset_timing();
     }
+#if defined(ENGINE_BENCH_RDPLOG) && ENGINE_BENCH_RDPLOG
+    // make BENCH_RDPLOG=1: one RDP capture per step at a fixed frame of the
+    // frame-locked camera path, during the warm-up so the measurement is not
+    // disturbed (golden command streams: rdp_log_to_hex.py --tagged)
+    if (step_frame == WARMUP_FRAMES / 2) {
+        debugf("BENCH_RDPLOG,%s,%d,%d\n", kind_names[steps[step_index].kind], step_index,
+               steps[step_index].param);
+        rdp_debug_request_capture();
+    }
+#endif
     if (step_frame > WARMUP_FRAMES) {
         const EngineStats *s = stats_get();          // previous (measured) frame
         acc_tris    += stats_tris_total(s);
@@ -805,21 +860,31 @@ static ENGINE_HOT_HEAD void bench_draw_shadows(const Camera *cam, const LightCon
 static ENGINE_HOT_LOOP void bench_draw_objects(const BenchStep *st, const Camera *cam,
                                                const LightConfig *L) {
     const Mesh *pillar = mesh_defs_get_pillar();
+    const Mesh *sphere = mesh_defs_get_sphere();
     const vec3_t pillar_scale = {40.0f, 100.0f, 40.0f};
     const vec3_t box_scale    = {40.0f, 40.0f, 40.0f};
+    const int mesh_v = st->kind == BENCH_MESH ? st->param / 1000 : -1;
+    const bool spheres = mesh_v == MESHV_SPHERES || mesh_v == MESHV_SPHERES_UNSUBMITTED;
+    const bool mix = mesh_v == MESHV_MIX || mesh_v == MESHV_MIX_FOG;
     for (int i = 0; i < instance_count; i++) {
         mat4_t model;
+        const Mesh *m = pillar;
+        const vec3_t *scale = &pillar_scale;
         if (st->kind == BENCH_TEXTURES) {
             // Cycle through `param` distinct textures across the grid
-            const Mesh *m = &tex_boxes[i % st->param];
-            mat4_from_srt(&model, &box_scale, 0, 0, 0, &instance_pos[i]);
-            mesh_draw(m, &model, cam, L);
-        } else {
-            mat4_from_srt(&model, &pillar_scale, 0, 0, 0, &instance_pos[i]);
-            const Mesh *m = (st->kind == BENCH_LAYOUT && layout_variant > 0)
-                ? &layout_copy[layout_variant - 1] : pillar;
-            mesh_draw(m, &model, cam, L);
+            m = &tex_boxes[i % st->param];
+            scale = &box_scale;
+        } else if (spheres || (mix && i % 3 == 1)) {
+            m = sphere;
+            scale = &box_scale;
+        } else if (mix && i % 3 == 2) {
+            m = &tex_boxes[i % NUM_TEX_BOXES];
+            scale = &box_scale;
+        } else if (st->kind == BENCH_LAYOUT && layout_variant > 0) {
+            m = &layout_copy[layout_variant - 1];
         }
+        mat4_from_srt(&model, scale, 0, 0, 0, &instance_pos[i]);
+        mesh_draw(m, &model, cam, L);
     }
 }
 
@@ -918,7 +983,10 @@ static void bench_post_draw(Scene *scene) {
                       kind_names[st->kind], step_index + 1, step_count, st->param);
         cfg.y = sy + 12;
         cfg.color = RGBA32(0xC0, 0xC0, 0xC0, 0xFF);
-        text_draw_fmt(&cfg, kind_desc[st->kind], st->param);
+        if (st->kind == BENCH_MESH)
+            text_draw_fmt(&cfg, mesh_desc[st->param / 1000], st->param % 1000);
+        else
+            text_draw_fmt(&cfg, kind_desc[st->kind], st->param);
     }
     PROF_END(PROF_HUD);
 }
@@ -946,7 +1014,10 @@ static void bench_cleanup(Scene *scene) {
     snd_set_poll_point(saved_poll_point);
     mesh_defs_cleanup();
     texture_cleanup();
-    atmosphere_set_fog_enabled(saved_fog);
+    atmosphere_set_fog_color(saved_fog.color);
+    atmosphere_set_fog_near(saved_fog.near_distance);
+    atmosphere_set_fog_far(saved_fog.far_distance);
+    atmosphere_set_fog_enabled(saved_fog.enabled);
     atmosphere_set_sky_enabled(saved_sky);
     input_set_sync(saved_sync);
     engine_set_pacing(saved_pacing);

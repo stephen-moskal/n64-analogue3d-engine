@@ -3,6 +3,7 @@
 
 Usage:
     python tools/bench_compare.py BASELINE NEW [--threshold 0.05] [--noise-ms 0.15]
+                                  [--prof mesh_tris,particle]
 
 Both files are captures of the benchmark scene's USB/ISViewer output (any
 extra log lines are ignored; only BENCH rows are read). Steps are matched by
@@ -12,6 +13,11 @@ extra log lines are ignored; only BENCH rows are read). Steps are matched by
   * the baseline held 60 FPS (>= 59.5) and the new run does not.
 RDP busy time is reported but not gated (it is shared with the RDP-bound
 fill-rate steps, where it is the metric; see the FILLRATE rows).
+
+--prof lists profiler slots from the BENCH_PROF rows (names as in
+BENCH_PROF_HDR without "_us") for every step, with the time per drawn
+triangle: the per-primitive view that CPU averages hide (they include the
+audio mix's wait, D38). Not gated.
 
 Exit status: 0 = no regressions, 1 = regression(s), 2 = usage / parse error.
 Runs on the host (Windows `python`, macOS `python3`) or in the container.
@@ -34,13 +40,25 @@ def read_text(path):
     return data.decode("utf-8-sig", errors="replace")
 
 
-def load(path):
+def load(path, prof=None):
+    """(meta, {(kind, param): BENCH row}); with a dict as prof, also fills it
+    with {(kind, param): {slot: us}} from the BENCH_PROF rows."""
     rows = {}
     meta = ""
+    prof_fields = None
     for line in read_text(path).splitlines():
         line = line.strip()
         if line.startswith("BENCH_META,"):
             meta = line[len("BENCH_META,"):]
+            continue
+        if line.startswith("BENCH_PROF_HDR,"):
+            prof_fields = [f[:-3] if f.endswith("_us") else f for f in line.split(",")[1:]]
+            continue
+        if line.startswith("BENCH_PROF,") and prof is not None and prof_fields:
+            rec = dict(zip(prof_fields, line.split(",")[1:]))
+            if "param" in rec:
+                prof[(rec["kind"], int(rec["param"]))] = {
+                    k: float(v) for k, v in rec.items() if k not in ("kind", "step", "param")}
             continue
         if not line.startswith("BENCH,") or line.startswith(("BENCH,END", "BENCH,ABORTED")):
             continue
@@ -62,11 +80,14 @@ def main():
     ap.add_argument("new")
     ap.add_argument("--threshold", type=float, default=0.05, help="relative CPU increase allowed (default 0.05)")
     ap.add_argument("--noise-ms", type=float, default=0.15, help="absolute CPU increase ignored (default 0.15 ms)")
+    ap.add_argument("--prof", metavar="SLOTS",
+                    help="comma-separated BENCH_PROF slots to list per step, e.g. mesh_tris,particle")
     args = ap.parse_args()
 
+    base_prof, new_prof = {}, {}
     try:
-        base_meta, base = load(args.baseline)
-        new_meta, new = load(args.new)
+        base_meta, base = load(args.baseline, base_prof)
+        new_meta, new = load(args.new, new_prof)
     except (OSError, ValueError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -103,9 +124,33 @@ def main():
     for key in extra:
         print(f"{key[0]:<10}{key[1]:>6}  (new step, no baseline)")
 
+    if args.prof:
+        # commas or spaces: PowerShell passes a,b to native programs as "a b"
+        print_prof(args.prof.replace(",", " ").split(), base, new, base_prof, new_prof)
+
     print()
     print(f"{regressions} regression(s) at threshold {args.threshold:.0%} / {args.noise_ms} ms")
     return 1 if regressions else 0
+
+
+def print_prof(slots, base, new, base_prof, new_prof):
+    print()
+    hdr = f"{'bench':<10}{'param':>6}  {'slot':<12}{'us':>17}  {'%':>7}  {'us per drawn tri':>17}"
+    print(hdr)
+    print("-" * len(hdr))
+    for key in sorted(base, key=lambda k: base[k]["step"]):
+        bp, np_ = base_prof.get(key), new_prof.get(key)
+        if bp is None or np_ is None or key not in new:
+            continue
+        for slot in slots:
+            if slot not in bp or slot not in np_:
+                print(f"{key[0]:<10}{key[1]:>6}  {slot:<12}  (no such slot)")
+                continue
+            b, n = bp[slot], np_[slot]
+            rel = f"{(n - b) / b * 100:+6.1f}%" if b > 0 else "      -"
+            bt, nt = base[key]["tris"], new[key]["tris"]
+            per_tri = f"{b / bt:7.2f}->{n / nt:<7.2f}" if bt > 0 and nt > 0 else ""
+            print(f"{key[0]:<10}{key[1]:>6}  {slot:<12}{b:>7.0f}->{n:<8.0f}  {rel}  {per_tri}")
 
 
 if __name__ == "__main__":

@@ -6,8 +6,11 @@
 #                         -> engine-debug-bench.z64 (own build dir: build/debug-bench)
 #   make BENCH=1 BENCH_KIND=AUDIO   ... into one benchmark kind instead of All
 #   make BENCH=1 BENCH_VALIDATOR=1  ... with the RDP validator on (Debug > RDP Check)
+#   make BENCH=1 BENCH_RDPLOG=1     ... capturing one frame of RDP commands per step
 #   make LAYOUT_PAD=448   moves every function and static variable that is not pinned
 #                         by 448 bytes: a layout-stability test (docs/HARDWARE.md, D34, D35)
+#   make HEAP_PAD=N       moves every heap block (framebuffers, command buffers) by N bytes
+#                         of RDRAM: a placement test (D37)
 #   make TOUR=1           debug build that walks the demo through a scripted screenshot
 #                         tour -> engine-debug-tour.z64 (build/debug-tour; docs/DEBUGGING.md)
 #
@@ -24,6 +27,7 @@ endif
 BENCH_SUFFIX := $(if $(filter 1,$(BENCH)),-bench,)
 BENCH_KIND ?= ALL
 BENCH_VALIDATOR ?= 0
+BENCH_RDPLOG ?= 0
 
 # TOUR=1: the demo walks through a fixed list of states on a timer (options,
 # the Start menu, overlay pages, the dialog, a benchmark) for screenshots
@@ -66,15 +70,21 @@ CFLAGS += -DSND_ENABLE_OPUS=$(SND_OPUS)
 #                (hot_text.ld, hot_data.ld) nothing measured should change
 LAYOUT_PAD ?= 0
 CFLAGS += -DENGINE_LAYOUT_PAD=$(LAYOUT_PAD)
+#   HEAP_PAD=N   allocates N bytes first thing in engine_init, so every later
+#                heap block (framebuffers, libdragon's command buffers) sits N
+#                bytes further into RDRAM; code and static data do not move
+HEAP_PAD ?= 0
+CFLAGS += -DENGINE_HEAP_PAD=$(HEAP_PAD)
 
 # make does not track CFLAGS: the option values are kept in a stamp file,
 # rewritten only when they change, that every object and the DFS depend on
-BUILD_OPTIONS := SND_OPUS=$(SND_OPUS) LAYOUT_PAD=$(LAYOUT_PAD)$(if $(filter 1,$(BENCH)), BENCH_KIND=$(BENCH_KIND) BENCH_VALIDATOR=$(BENCH_VALIDATOR))
+BUILD_OPTIONS := SND_OPUS=$(SND_OPUS) LAYOUT_PAD=$(LAYOUT_PAD) HEAP_PAD=$(HEAP_PAD)$(if $(filter 1,$(BENCH)), BENCH_KIND=$(BENCH_KIND) BENCH_VALIDATOR=$(BENCH_VALIDATOR) BENCH_RDPLOG=$(BENCH_RDPLOG))
 OPTIONS_STAMP := $(BUILD_DIR)/options.stamp
 $(shell mkdir -p $(BUILD_DIR) && (echo '$(BUILD_OPTIONS)' | cmp -s - $(OPTIONS_STAMP) || echo '$(BUILD_OPTIONS)' > $(OPTIONS_STAMP)))
 
 ifeq ($(BENCH),1)
 CFLAGS += -DENGINE_BOOT_BENCHMARK=1 -DENGINE_BOOT_BENCHMARK_KIND=BENCH_$(BENCH_KIND) -DENGINE_BOOT_VALIDATOR=$(BENCH_VALIDATOR)
+CFLAGS += -DENGINE_BENCH_RDPLOG=$(BENCH_RDPLOG)
 endif
 
 # All sources under src/ (one directory level deep)

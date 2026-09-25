@@ -47,6 +47,14 @@ surface_t *engine_zbuf(void) { return zbuf; }
 static const surface_t *frame_fb;
 const surface_t *engine_framebuffer(void) { return frame_fb; }
 
+// make HEAP_PAD=N (Phase 3 S1, D37): N bytes allocated before anything else
+// move every later heap block in RDRAM (framebuffers, libdragon's command
+// buffers) while code and static data stay where they are. N is data read at
+// run time, forced into .data (a zero would go to .bss), so builds that differ
+// only in N have the same code and layout
+static volatile uint32_t heap_pad_bytes __attribute__((section(".data"))) = ENGINE_HEAP_PAD;
+uint32_t engine_heap_pad(void) { return heap_pad_bytes; }
+
 // Presented frames: at every vblank, check whether the VI scans out another
 // framebuffer from now on; if so, the previous one was on screen for
 // vblanks_shown vblanks (frametime.h). Runs after the display module's own
@@ -107,6 +115,12 @@ static void on_vblank(void *arg) {
 }
 
 void engine_init(void) {
+    if (heap_pad_bytes) {
+        void *pad = malloc(heap_pad_bytes);
+        // GCC deletes a malloc() whose result is never used (it did, S1): the
+        // empty asm uses it, without a variable that would move others
+        __asm__ volatile("" :: "r"(pad));
+    }
     // Debug output: ISViewer (emulators) and USB (SummerCart64)
     debug_init_isviewer();
     debug_init_usblog();

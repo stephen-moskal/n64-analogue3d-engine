@@ -9,7 +9,7 @@
 | `hot.h`, `hot_text.ld` | I-cache placement of the render hot path ([HARDWARE.md](HARDWARE.md)) |
 | `hot_data.ld` | D-cache placement of the render path's static data: fixed colours away from the stack (D34) |
 | `engine_ld.awk` | builds `build/<variant>/engine.ld` from libdragon's `n64.ld` with both fragments |
-| `layout_pad.c` | `make LAYOUT_PAD=<bytes>`: unused code that shifts all data, for layout-stability tests |
+| `layout_pad.c` | `make LAYOUT_PAD=<bytes>`: unused code that shifts all data, for layout-stability tests. Its counterpart for the heap, `make HEAP_PAD=<bytes>`, is in `engine.c` ([HARDWARE.md](HARDWARE.md)) |
 
 ## Using it
 

@@ -18,6 +18,9 @@
 // rdpq_debug_start() resets the flags, so set it after starting.
 extern int __rdpq_debug_log_flags;
 #define RDPQ_LOG_FLAG_SHOWTRIS 0x00000001
+// libdragon internal (rdpq_debug_internal.h): fetches the RDP commands queued
+// since the last fetch and validates and prints them
+extern void (*rdpq_trace)(void);
 
 static bool capture_requested = false;
 #if ENGINE_DEBUG
@@ -52,7 +55,17 @@ void rdp_debug_frame_end(void) {
     if (frames_left == 0) return;
     if (--frames_left > 0) return;
     rdpq_debug_log(false);
-    rspq_wait();                 // flush: every captured command is printed
+    // The validator prints from the RSP interrupt with interrupts off, a
+    // buffer at a time. rspq_wait() gives up after 200 ms and checks the time
+    // before the syncpoint, so a long print inside it reports an RSP crash
+    // although the RSP is idle: in ares a frame of ~1,000 lines did (~0.2 ms a
+    // line; over USB it is slower). So wait for the RSP without a time limit,
+    // print what is left here, outside the interrupt, then sync
+    rspq_syncpoint_t queued = rspq_syncpoint_new();
+    rspq_flush();
+    while (!rspq_syncpoint_check(queued)) {}
+    if (rdpq_trace) rdpq_trace();
+    rspq_wait();                 // every captured command is printed
     __rdpq_debug_log_flags &= ~RDPQ_LOG_FLAG_SHOWTRIS;
     if (started_validator) rdpq_debug_stop();
     started_validator = false;

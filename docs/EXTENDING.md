@@ -379,7 +379,7 @@ Gotchas:
 
 | Row | Printed | Contents |
 |---|---|---|
-| `BENCH_META`, `BENCH_HDR`, `BENCH_PRESENT_HDR`, `BENCH_PROF_HDR`, `BENCH_INPUT_HDR` | at the start | build, date, RDRAM size, kind, step count; column names |
+| `BENCH_META`, `BENCH_HDR`, `BENCH_PRESENT_HDR`, `BENCH_PROF_HDR`, `BENCH_INPUT_HDR` | at the start | build, date, RDRAM size, kind, step count, `heap_pad` and `layout_pad`; column names |
 | `BENCH` | every step | kind, step, param, frames, fps, avg and p99 ms, 1 % low, CPU avg and max, RDP busy ms and %, tris, uploads, heap KB |
 | `BENCH_PRESENT` | every step | presented frames: vblanks each was shown (1, 2, 3, 4+), late, torn; input lag in vblanks (avg, min, max) |
 | `BENCH_PROF` | every step, profiler on | average µs of `update`, `draw`, `objects`, `mesh_cull`, `mesh_light`, `mesh_tris`, `audio`, `menu`, `hud`, `dialog`, `input`, `wait_input`, `particle_draw` and `rsp_wait` (the CPU waiting for the RSP) |

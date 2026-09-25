@@ -30,7 +30,7 @@ Start → L/R to the **Debug** tab (the Start menu exists in the demo scene). Va
 | Dump CSV | --- / Dump! | writes STATS, PROF, RDP, RSP, FT, MEM rows to the log, 120 frames (~2 s) after the menu closes so the averages no longer include the menu |
 | Reset Peaks | --- / Reset! | clears profiler peaks, frame-time window, heap baseline |
 | Scene | Demo / Benchmark | switches scene with a fade |
-| Bench | All / Objects / Particles / Lights / Textures / Shadows / Fillrate / Overload / Layout / Audio / UI / Latency | which benchmark the Benchmark scene runs (BENCHMARKS.md) |
+| Bench | All / Objects / Particles / Lights / Textures / Shadows / Fillrate / Overload / Layout / Audio / UI / Latency / Mesh | which benchmark the Benchmark scene runs (BENCHMARKS.md) |
 | RDP Log | --- / Capture! | logs two frames of RDP commands (debug) |
 | Crash Test | --- / Assert! | triggers `assertf()` (debug) |
 | Reset Soak | --- / Run! | one warm-up and 10 measured scene resets, logs the heap delta (see below) |
@@ -101,7 +101,7 @@ Messages seen in this codebase:
 For a full listing of what the RDP receives:
 
 1. Start the USB capture into a file (see Log channels).
-2. Debug tab → **RDP Log → Capture!**, close with A. The game pauses a few seconds while two frames of commands are printed (every triangle in full; libdragon's `RDPQ_LOG_FLAG_SHOWTRIS`). The capture spans two frames because logging begins when the RSP reaches the marker, part-way through the first frame.
+2. Debug tab → **RDP Log → Capture!**, close with A. The game pauses a few seconds while two frames of commands are printed (every triangle in full; libdragon's `RDPQ_LOG_FLAG_SHOWTRIS`). The capture spans two frames because logging begins when the RSP reaches the marker, part-way through the first frame. libdragon prints from its RSP interrupt with interrupts off, one command buffer at a time, so the picture stalls and tears while it runs (D18). `rdp_debug_frame_end()` waits for the RSP without a time limit before its `rspq_wait()`: that wait gives up after 200 ms and checks the clock before the RSP, so a long print inside it reported an RSP crash although the RSP was idle (Phase 3 S1, in ares at ~1,000 lines; USB prints slower still).
 3. Extract the complete frame and validate it in the container (the capture file must be inside the repo, which is what the container sees; host Python works too: `py` on Windows, `python3` on macOS):
 
 ```powershell
@@ -111,6 +111,16 @@ libdragon exec bash -c '$N64_INST/bin/rdpvalidate -d -t frame.rdp'  # disassembl
 ```
 
 Reference result (2026-09-23, demo scene): 1,740 command words, 188 `TRI_Z`, 95 `TEX_RECT` (text glyphs), 63 `SET_OTHER_MODES`, 56 `SET_COMBINE_MODE`; **0 warnings, 0 errors**. Mode and combiner changes are a third of the frame's commands, which is where state-batching work (Phase 2/3) pays off.
+
+### Golden captures of a benchmark (Phase 3 S1)
+
+`libdragon make BENCH=1 BENCH_KIND=MESH BENCH_RDPLOG=1` builds a ROM that captures one frame of every step, 30 frames into its warm-up, each after a `BENCH_RDPLOG,<kind>,<index>,<param>` row. The camera path is frame-locked, so every build captures the same frame. Run it in ares with its output redirected (SETUP.md). The emulated console stops for a few seconds at every capture; Bench = Mesh's 18 steps take about 15 minutes. Then:
+
+```powershell
+libdragon exec python3 tools/rdp_log_to_hex.py build/ares.log build/rdplog --tagged --golden docs/benchmarks/2026-09-25-p3-s1-mesh-rdplog-ares.csv
+```
+
+`--tagged` writes one `<kind>-<param>.rdp` per step and a `manifest.csv`: per step, the triangle count per command and a SHA-256 of the triangle commands. Only triangles are compared, because the rest of the frame holds buffer addresses that move between builds and HUD text that changes with timing. `--golden` compares the manifest with a committed one and exits 1 when a step's triangles differ. The S1 set covers `TRI_Z`, `TRI_TEX_Z`, `TRI_SHADE_Z` and `TRI_TEX_SHADE_Z` and the sphere's curved groups. Three builds with different code layouts gave the same hashes.
 
 ## Crashes and assertions
 
@@ -122,6 +132,7 @@ Crashes seen so far:
 |---|---|---|
 | `ASSERTION FAILED: wav64 ...: invalid version` at boot | generated assets from another libdragon version | `libdragon make clean; libdragon make` |
 | `RSP CRASH ... rspq_highpri_sync ... wait loop timed out` | RDP validator stopped mid-frame while the RSP was paused for a trace fetch | toggle at a frame boundary (fixed) |
+| `RSP CRASH ... rspq_syncpoint_wait ... wait loop timed out (200 ms)` from `rdp_debug_frame_end`, RSP halted and idle | an RDP capture's print, inside libdragon's RSP interrupt, outlasted `rspq_wait()`'s 200 ms | wait for the RSP without a time limit first (fixed, Phase 3 S1) |
 | RSP timeout in `display_get` | RDP pipeline misconfiguration | enable RDP Check, fix what it reports |
 
 `debug_backtrace()` prints the current call stack at any point, and `rdpq_debug_get_tmem()` returns a 32×64 surface with the current TMEM contents (free it with `surface_free`).

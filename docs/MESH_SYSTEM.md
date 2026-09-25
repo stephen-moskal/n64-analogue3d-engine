@@ -215,6 +215,8 @@ Draws the entire mesh with the given model matrix. Handles:
    - Vertex transform (MVP → perspective divide → NDC → screen coordinates); a triangle with a corner behind the near plane or outside the guard band is dropped
    - `rdpq_triangle()` with Z-buffer, in the format that matches the combiner: `TRIFMT_ZBUF_TEX` (textured) or `TRIFMT_ZBUF` (flat), and `TRIFMT_ZBUF_SHADE_TEX` / `TRIFMT_ZBUF_SHADE` when fog is on
 
+`mesh_debug_set_skip_submit(true)` (debug builds; a no-op in release) makes `mesh_draw()` do all of the above except the `rdpq_triangle()` call. The corners go to a function the compiler cannot see through, so their transform is not optimised away. Bench = Mesh uses it to measure what submitting costs (Phase 3 S1).
+
 ## Usage Example: Cube
 
 The cube uses 6 materials (one per face, each with a different texture and base color) and 6 face groups. `cube_init()` builds the mesh; `cube_get_mesh()` returns a pointer for use by SceneObject callbacks. Rendering is handled by the generic `object_draw` callback in demo_scene.c, which calls `mesh_draw()` with the object's model matrix.

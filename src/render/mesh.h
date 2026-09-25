@@ -153,4 +153,10 @@ static inline float mesh_screen_area2(const float a[2], const float b[2],
 void mesh_draw(const Mesh *mesh, const mat4_t *model,
                const Camera *cam, const LightConfig *light);
 
+// Measurement (Bench = Mesh, ROADMAP_v2 Phase 3 S1): mesh_draw transforms,
+// culls and lights as usual but does not submit the triangles, so the
+// difference in mesh_tris is the submission's share. Debug builds only (a
+// no-op in release).
+void mesh_debug_set_skip_submit(bool skip);
+
 #endif
