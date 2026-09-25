@@ -110,11 +110,11 @@ void debug_menu_update(void) {
     bool rdp = (item_value(DBG_ITEM_RDP_CHECK) == 1);
     if (rdp != rdp_check_active) {
         // Toggle only at a clean frame boundary: drain the RSP/RDP first.
-        // Starting mid-stream makes the validator read a half-seen frame
-        // (bogus SET_COLOR_IMAGE / combiner errors), and stopping while the
-        // RSP is paused for a trace fetch can leave it halted (RSP crash in
-        // the mixer's rspq_highpri_sync). This runs before display_get() /
-        // rdpq_attach(), so the next frame is validated from its first command.
+        // Stopping while the RSP is paused for a trace fetch can leave it
+        // halted (RSP crash in the mixer's rspq_highpri_sync). The validator
+        // still starts with the rest of the RDP's current command buffer,
+        // seen without its SET_COLOR_IMAGE / scissor / Z image: one frame of
+        // errors, then clean frames (DEBUGGING.md).
         rspq_wait();
         if (rdp) rdpq_debug_start();
         else     rdpq_debug_stop();

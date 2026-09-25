@@ -35,7 +35,7 @@ All captured in ares from the scripted screenshot tour (`make TOUR=1`, [DEBUGGIN
 | **Lighting** | Blinn-Phong with configurable sun, point lights, and shadow casting | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | **Shadows** | Blob shadows and projected shadow silhouettes on the floor plane | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | **Billboards** | Camera-facing textured quads (spherical and cylindrical modes) | [BILLBOARDS.md](docs/BILLBOARDS.md) |
-| **Particles** | Emitter-based system with pool allocation, additive blend, direct RDP batch renderer | [PARTICLES.md](docs/PARTICLES.md) |
+| **Particles** | Emitter-based system with pool allocation, additive and alpha blending (fire, smoke), direct RDP batch renderer | [PARTICLES.md](docs/PARTICLES.md) |
 | **Atmosphere** | Fog (hardware + CPU hybrid), sky gradients, 7 presets with linked lighting | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | **Physics** | Semi-fixed timestep, gravity, bounce, impulse, ground detection, kinematic bodies | [PHYSICS.md](docs/PHYSICS.md) |
 | **Audio** | Crossfading music, 8 prioritised SFX voices, positional sound, master/music/SFX volumes | [AUDIO.md](docs/AUDIO.md) |

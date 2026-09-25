@@ -382,7 +382,7 @@ Gotchas:
 | `BENCH_META`, `BENCH_HDR`, `BENCH_PRESENT_HDR`, `BENCH_PROF_HDR`, `BENCH_INPUT_HDR` | at the start | build, date, RDRAM size, kind, step count; column names |
 | `BENCH` | every step | kind, step, param, frames, fps, avg and p99 ms, 1 % low, CPU avg and max, RDP busy ms and %, tris, uploads, heap KB |
 | `BENCH_PRESENT` | every step | presented frames: vblanks each was shown (1, 2, 3, 4+), late, torn; input lag in vblanks (avg, min, max) |
-| `BENCH_PROF` | every step, profiler on | average µs of `update`, `draw`, `objects`, `mesh_cull`, `mesh_light`, `mesh_tris`, `audio`, `menu`, `hud`, `dialog`, `input`, `wait_input` |
+| `BENCH_PROF` | every step, profiler on | average µs of `update`, `draw`, `objects`, `mesh_cull`, `mesh_light`, `mesh_tris`, `audio`, `menu`, `hud`, `dialog`, `input`, `wait_input`, `particle_draw` and `rsp_wait` (the CPU waiting for the RSP) |
 | `BENCH_INPUT` | every step | input sync and pacing; % of frames on the latest vblank's read, its mean arrival after the vblank, the mean and worst wait, timeouts, frames `INPUT_SYNC_AUTO` did not wait (`auto_skips`) |
 | `BENCH_LAYOUT` | once per run | addresses of `bench_draw()`'s stack frame and of the pillar's vertex and index data (D26) |
 | `BENCH,END` / `BENCH,ABORTED` | at the end / on Start | step count and seconds / step index |

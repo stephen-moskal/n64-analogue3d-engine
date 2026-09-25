@@ -338,9 +338,9 @@ Screen-aligned squares, one RDP mode set for all particles
 
 - **Files:** `particle.c` (pool, emitters, `particle_update()`; no rendering, so `tests/host/test_particle.c` covers it), `particle_draw.c` (the renderer, in the hot-text block), `particle_internal.h` (the shared `Particle` / `ParticleEmitter` state; not a public API).
 - **Update:** walks each emitter's own slice of the pool with that emitter's definition, so per-emitter constants are computed once and no particle searches for its owner.
-- **Renderer:** sets the RDP mode once (standard mode, flat combiner, Z-read without Z-write, additive blend). A camera-facing quad is parallel to the image plane, so each particle's centre is transformed once and drawn as a screen-aligned square (two `TRIFMT_ZBUF` triangles); particles behind the near plane, beyond the far plane, off screen or past the guard band are skipped, and the prim colour is only set when it changes.
+- **Renderer:** sets the RDP mode once (standard mode, flat combiner, Z-read without Z-write), then draws the alpha-blended emitters' slices and the additive ones, changing only the blender (`particle_batches()` groups them once per frame). A camera-facing quad is parallel to the image plane, so each particle's centre is transformed once and drawn as a screen-aligned square (two `TRIFMT_ZBUF` triangles); particles behind the near plane, beyond the far plane, off screen or past the guard band are skipped, and the prim colour is only set when it changes.
 - **Limits:** 128 particles, 8 emitters, no heap allocation; destroying emitters returns the unused tail of the pool.
-- **Blending:** only additive is implemented; `blend_mode = PARTICLE_BLEND_ALPHA` is ignored (defect D13). Fog dims the colour on the CPU (`1 - fog_factor`), since the RDP fog blender conflicts with additive blending.
+- **Blending:** per emitter definition, additive (fire, magic) or alpha (smoke); the alpha batch first, unsorted (S10, D13). Fog is applied on the CPU, since the RDP's fog would need the blender's second pass: an additive particle's RGBA is dimmed (`1 - fog_factor`), an alpha particle's alpha only.
 
 ## Billboards
 
@@ -364,7 +364,7 @@ SkyConfig (global: enabled, band_count, band_colors[5])
 Renderers query atmosphere state per frame:
   mesh_draw()     → hardware fog (RDPQ_FOG_STANDARD via shade alpha)
   floor_draw()    → CPU fog (per-tile color blend toward fog color)
-  particle_draw() → CPU fog (RGBA dimming for additive blend compat)
+  particle_draw() → CPU fog (additive: RGBA dimmed; alpha: alpha thinned)
   sky_draw()      → gradient fill rectangles (interpolated strips), called by scene_draw()
 ```
 
@@ -393,7 +393,7 @@ The floor grid shares vertices between adjacent tiles (prevents sub-pixel gaps).
 
 The floor also computes per-tile point light contributions (`floor_point_light_add()`). When point lights and/or fog are active, the floor uses a per-tile rendering path that computes lighting at each tile center and blends fog per-tile. When neither is active, a fast batched path renders all light/dark tiles in two passes with only 2 `rdpq_set_prim_color()` calls total.
 
-Particles use `RDPQ_BLENDER_ADDITIVE`. Combining with `RDPQ_FOG_STANDARD` requires a 2-pass blender (assertion failure). Also, adding fog color via additive blend brightens distant particles (wrong). Solution: multiply RGBA by `1 - fog_factor` — distant particles fade to black (invisible in additive).
+Particles use `RDPQ_BLENDER_ADDITIVE`. Combining with `RDPQ_FOG_STANDARD` requires a 2-pass blender (assertion failure). Also, adding fog color via additive blend brightens distant particles (wrong). Solution: multiply RGBA by `1 - fog_factor` — distant particles fade to black (invisible in additive). Alpha-blended particles (`RDPQ_BLENDER_MULTIPLY`, S10) multiply only their alpha, so distant smoke thins into the fog and keeps its colour.
 
 ### Sky Gradient
 

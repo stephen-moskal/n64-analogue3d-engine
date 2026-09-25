@@ -67,7 +67,39 @@ static void test_particle_continuous(void) {
     particle_cleanup();
 }
 
+// particle_draw() draws the alpha batch, then the additive one (D13):
+// particle_batches() groups every emitter's slice under its blend mode
+static void test_particle_batches(void) {
+    static const ParticleEmitterDef def_smoke = {
+        .burst_count = 3, .lifetime_min = 1.0f, .lifetime_max = 1.0f,
+        .scale_start = 1.0f, .scale_end = 1.0f,
+        .spawn_shape = PARTICLE_SPAWN_POINT, .blend_mode = PARTICLE_BLEND_ALPHA,
+    };
+    ParticleBatch batch[PARTICLE_BLEND_COUNT];
+    particle_init();
+    CHECK(particle_batches(batch) == 0);
+    int a = particle_emitter_create(&def_fall, (vec3_t){0, 0, 0}, 8);    // additive: [0, 8)
+    int s = particle_emitter_create(&def_smoke, (vec3_t){0, 0, 0}, 5);   // alpha:    [8, 13)
+    int r = particle_emitter_create(&def_rise, (vec3_t){0, 0, 0}, 4);    // additive: [13, 17)
+    particle_emitter_burst(a);
+    particle_emitter_burst(s);
+    particle_emitter_burst(r);
+    CHECK(particle_batches(batch) == 9);
+    const ParticleBatch *add = &batch[PARTICLE_BLEND_ADDITIVE], *alp = &batch[PARTICLE_BLEND_ALPHA];
+    CHECK(add->count == 6 && add->slices == 2);
+    CHECK(add->from[0] == 0 && add->to[0] == 8 && add->from[1] == 13 && add->to[1] == 17);
+    CHECK(alp->count == 3 && alp->slices == 1);
+    CHECK(alp->from[0] == 8 && alp->to[0] == 13);
+
+    particle_emitter_destroy(s);                   // its slice leaves the batches
+    CHECK(particle_batches(batch) == 6);
+    CHECK(batch[PARTICLE_BLEND_ALPHA].slices == 0 && batch[PARTICLE_BLEND_ADDITIVE].slices == 2);
+    particle_cleanup();
+    CHECK(particle_batches(batch) == 0);
+}
+
 void run_particle_tests(void) {
     RUN_TEST(test_particle_emitters);
     RUN_TEST(test_particle_continuous);
+    RUN_TEST(test_particle_batches);
 }

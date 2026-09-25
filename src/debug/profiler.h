@@ -50,6 +50,8 @@ typedef enum {
     PROF_DIALOG,            //     dialog text box (update + draw)
     PROF_OVERLAY,           //   debug overlay
     PROF_AUDIO,             //   snd_update()
+    PROF_RSP_WAIT,          //   CPU spinning on the RSP: command-buffer switches, the audio
+                            //   mix's sync (libdragon's time accounting; inside the slots above)
     PROF_SLOT_COUNT
 } ProfSlot;
 

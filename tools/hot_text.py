@@ -78,7 +78,9 @@ COLD_OK = {"texture_upload", "__rdpq_block_next_buffer", "__rdpq_block_reserve",
            # objects (every benchmark pillar) make no calls
            "sinf", "cosf",
            # the benchmark's object loops fetch their mesh once, before the loop
-           "mesh_defs_get_pillar"}
+           "mesh_defs_get_pillar",
+           # particle_draw groups the emitters by blend mode once, before its loops
+           "particle_batches"}
 
 # Calls made through function pointers, which the disassembly scan cannot
 # follow: caller -> the targets this engine's data actually reaches (the

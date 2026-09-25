@@ -188,8 +188,29 @@ static const ParticleEmitterDef torch_flame = {
     .blend_mode    = PARTICLE_BLEND_ADDITIVE,
 };
 
+// Smoke after the fire burst: alpha-blended (D13), so it covers what is behind
+// it instead of adding light; rises slowly, spreads and thins out
+static const ParticleEmitterDef smoke_effect = {
+    .burst_count   = 12,
+    .spawn_rate    = 0.0f,
+    .lifetime_min  = 1.6f,
+    .lifetime_max  = 2.8f,
+    .velocity_min  = {-12.0f, 25.0f, -12.0f},
+    .velocity_max  = { 12.0f, 55.0f,  12.0f},
+    .gravity       = { 0.0f, 12.0f, 0.0f},      // buoyant: keeps rising
+    .drag          = 0.35f,
+    .color_start   = {70, 66, 62, 170},       // dark grey, dense
+    .color_end     = {125, 122, 118, 0},      // lighter as it thins out
+    .scale_start   = 7.0f,
+    .scale_end     = 24.0f,
+    .spawn_shape   = PARTICLE_SPAWN_SPHERE,
+    .spawn_radius  = 12.0f,
+    .blend_mode    = PARTICLE_BLEND_ALPHA,
+};
+
 static int emitter_fire = -1;
 static int emitter_magic = -1;
+static int emitter_smoke = -1;
 static int emitter_torch_l = -1;
 static int emitter_torch_r = -1;
 
@@ -446,6 +467,7 @@ static void launch_ball(Scene *scene) {
 static void burst_particles(void) {
     particle_emitter_burst(emitter_fire);
     particle_emitter_burst(emitter_magic);
+    particle_emitter_burst(emitter_smoke);
 }
 
 // ============================================================
@@ -644,6 +666,8 @@ static void demo_init(Scene *scene) {
         (vec3_t){-250.0f, 100.0f, 0.0f}, 40);
     emitter_magic = particle_emitter_create(&magic_effect,
         (vec3_t){250.0f, 100.0f, 0.0f}, 40);
+    emitter_smoke = particle_emitter_create(&smoke_effect,
+        (vec3_t){-250.0f, 115.0f, 0.0f}, 16);   // over the fire; with the torches the pool is full (128)
     emitter_torch_l = -1;
     emitter_torch_r = -1;
 
@@ -1254,6 +1278,7 @@ static void demo_cleanup(Scene *scene) {
     particle_cleanup();
     emitter_fire = -1;
     emitter_magic = -1;
+    emitter_smoke = -1;
     emitter_torch_l = -1;
     emitter_torch_r = -1;
     billboard_cleanup();

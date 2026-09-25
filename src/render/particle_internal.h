@@ -31,4 +31,18 @@ extern ParticleEmitter particle_emitters[PARTICLE_MAX_EMITTERS];
 extern int             particle_pool_allocated;   // particles in use: [0, allocated)
 extern bool            particle_initialized;
 
+// The live particles of one blend mode: one pool range [from, to) per
+// emitter of that mode (every emitter owns a contiguous slice of the pool)
+typedef struct {
+    int     count;              // live particles
+    int     slices;
+    uint8_t from[PARTICLE_MAX_EMITTERS];
+    uint8_t to[PARTICLE_MAX_EMITTERS];
+} ParticleBatch;
+
+// Groups the emitters' slices by blend mode and counts each mode's live
+// particles; returns the total. particle_draw() calls it once per frame
+// (particle.c: outside the hot-text block, and host-tested).
+int particle_batches(ParticleBatch batch[PARTICLE_BLEND_COUNT]);
+
 #endif

@@ -268,6 +268,29 @@ void particle_update(float dt) {
     }
 }
 
+// --- Batches for the renderer ---
+
+int particle_batches(ParticleBatch batch[PARTICLE_BLEND_COUNT]) {
+    for (int m = 0; m < PARTICLE_BLEND_COUNT; m++) batch[m].count = batch[m].slices = 0;
+    if (!particle_initialized) return 0;
+    int total = 0;
+    for (int e = 0; e < PARTICLE_MAX_EMITTERS; e++) {
+        const ParticleEmitter *em = &particle_emitters[e];
+        if (em->def == NULL) continue;
+        ParticleBatch *b = &batch[em->def->blend_mode == PARTICLE_BLEND_ALPHA ?
+                                  PARTICLE_BLEND_ALPHA : PARTICLE_BLEND_ADDITIVE];
+        int from = em->pool_start, to = em->pool_start + em->pool_count;
+        int n = 0;
+        for (int i = from; i < to; i++) n += particle_pool[i].alive;
+        b->count += n;
+        b->from[b->slices] = (uint8_t)from;
+        b->to[b->slices] = (uint8_t)to;
+        b->slices++;
+        total += n;
+    }
+    return total;
+}
+
 // --- Stats ---
 
 int particle_alive_count(void) {

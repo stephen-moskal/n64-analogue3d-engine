@@ -258,7 +258,7 @@ while (1) {
 }
 ```
 
-Draw order inside `scene_draw()` for the demo: background (sky gradient or colour clear) → Z clear → floor → shadows (Z-read, no Z-write) → objects (meshes, billboards) → particles (additive, Z-read, no Z-write) → HUD text → menu.
+Draw order inside `scene_draw()` for the demo: background (sky gradient or colour clear) → Z clear → floor → shadows (Z-read, no Z-write) → objects (meshes, billboards) → particles (alpha-blended, then additive; Z-read, no Z-write) → HUD text → menu.
 
 ## Performance Notes
 

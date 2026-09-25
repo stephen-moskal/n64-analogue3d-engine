@@ -14,6 +14,14 @@ static int rsp_frames = 0;
 #endif
 static bool header_sent = false;
 
+// libdragon's time accounting (src/accounting.c): the CPU ticks spent in its
+// spin-waits on the RSP (a full command buffer waiting for the RSP, the audio
+// mixer's high-priority sync, syncpoints). Internal to libdragon, so declared
+// here; the category is ACCT_CAT_RSPQ in libdragon's accounting_internal.h.
+extern uint64_t acct_get_ticks(int category);
+#define ACCT_CAT_RSPQ 4
+static uint64_t rspq_ticks_last;
+
 static const struct { const char *name; int depth; } slot_info[PROF_SLOT_COUNT] = {
     [PROF_FRAME]           = {"frame",         0},
     [PROF_WAIT_DISPLAY]    = {"wait_display",  1},
@@ -38,6 +46,7 @@ static const struct { const char *name; int depth; } slot_info[PROF_SLOT_COUNT] 
     [PROF_DIALOG]          = {"dialog",        2},
     [PROF_OVERLAY]         = {"overlay",       1},
     [PROF_AUDIO]           = {"audio",         1},
+    [PROF_RSP_WAIT]        = {"rsp_wait",      1},
 };
 
 void profiler_init(void) {
@@ -45,6 +54,7 @@ void profiler_init(void) {
     memset(g_prof_ticks, 0, sizeof(g_prof_ticks));
     memset(g_prof_calls, 0, sizeof(g_prof_calls));
     g_prof_on = ENGINE_PROFILE ? true : false;
+    rspq_ticks_last = acct_get_ticks(ACCT_CAT_RSPQ);   // count from here, not from boot
 
     memset(&rsp, 0, sizeof(rsp));
 #if RSPQ_PROFILE
@@ -149,6 +159,11 @@ void profiler_frame_begin(void) {
 void profiler_frame_end(uint32_t frame_ticks) {
     g_prof_ticks[PROF_FRAME] = frame_ticks;
     g_prof_calls[PROF_FRAME] = 1;
+
+    // The frame's RSP waits (measured whether or not the profiler is on)
+    uint64_t rspq = acct_get_ticks(ACCT_CAT_RSPQ);
+    g_prof_ticks[PROF_RSP_WAIT] = (uint32_t)(rspq - rspq_ticks_last);
+    rspq_ticks_last = rspq;
 
     for (int s = 0; s < PROF_SLOT_COUNT; s++) {
         uint32_t us = (uint32_t)TICKS_TO_US((uint64_t)g_prof_ticks[s]);

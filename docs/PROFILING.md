@@ -44,7 +44,10 @@ frame                 loop top to loop top (wall time)
       objects > mesh_cull / mesh_light / mesh_tris
   overlay             debug overlay page
   audio               snd_update, at the sound poll point (default: right after display_get; AUDIO.md)
+  rsp_wait            the CPU spinning on the RSP: full command buffers, the audio mix's sync (S10)
 ```
+
+`rsp_wait` is not a scope: `profiler_frame_end()` reads libdragon's own time accounting (`acct_get_ticks(ACCT_CAT_RSPQ)`, every spin-wait in `rspq` and the mixer) once per frame. The time is already inside the slots where the waits happen (`audio` for the mix, `draw` for full command buffers), so it is a breakdown, not an addition. It is in the CSV rows and `BENCH_PROF` (`rsp_wait_us`), not on the overlay page. libdragon does not account interrupt time on hardware.
 
 `sky` and `objects` are timed in `scene_draw()` (the sky is the frame's background there; the benchmark times its own object loop); `floor`, `shadows`, `particle_draw`, `hud` and `menu` in the scene callbacks; the `mesh_*` slots inside `mesh_draw()`. `dialog` is the text box, both its update (inside `update`) and its draw, so it is listed under `draw` but also counts time from `update`; it is in the CSV rows and `BENCH_PROF`, not on the overlay page.
 

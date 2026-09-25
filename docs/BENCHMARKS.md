@@ -134,7 +134,7 @@ py tools/bench_compare.py docs/benchmarks/2026-09-23-baseline-debug-a3d.csv new.
 
 Timings depend on code and data layout (D25, D26): compare runs of the same day where possible, and compare renderer changes inside one ROM when a result is close to the limit.
 
-With the profiler on (the debug default), each step also prints a `BENCH_PROF` row: the moving-average µs of `update`, `draw`, `objects`, `mesh_cull`, `mesh_light`, `mesh_tris` and `audio`, to pin a CPU regression to a stage of `mesh_draw` (or to the mixer). Once per run a `BENCH_LAYOUT` row logs the addresses of `bench_draw`'s stack frame and of the pillar mesh's vertex and index arrays, to relate timing changes to D-cache aliasing (D26). `bench_compare.py` ignores both row types.
+With the profiler on (the debug default), each step also prints a `BENCH_PROF` row: the moving-average µs of `update`, `draw`, `objects`, `mesh_cull`, `mesh_light`, `mesh_tris`, `audio`, `menu`, `hud`, `dialog`, `input`, `wait_input`, `particle_draw` and `rsp_wait`, to pin a CPU regression to a stage of `mesh_draw` (or to the mixer, or to waiting for the RSP). Once per run a `BENCH_LAYOUT` row logs the addresses of `bench_draw`'s stack frame and of the pillar mesh's vertex and index arrays, to relate timing changes to D-cache aliasing (D26). `bench_compare.py` ignores both row types.
 
 The tests run with fog and sky off (restored afterwards) on the benchmark scene's dark background; only Overload draws the floor. "All" runs every kind except Overload, 26 steps:
 
@@ -142,7 +142,7 @@ The tests run with fog and sky off (restored afterwards) on the benchmark scene'
 |---|---|---|
 | all step 0 | — | empty scene: engine + status text baseline |
 | objects | 8, 16, 24, 32, 48, 64 | flat-shaded pillars (32 tris each) on a grid |
-| particles | 32, 64, 96, 128 | target particle counts from 4 continuous additive emitters |
+| particles | 32, 64, 96, 128, 1128, 2128 | 4 continuous emitters; param = blend × 1000 + particles: additive, all alpha (1128), two of each (2128) |
 | lights | 0, 1, 2, 4 | 16 pillars under N coloured point lights (sun and ambient dimmed) |
 | textures | 1, 2, 4, 8 | 16 boxes cycling through N distinct 32×32 RGBA16 textures |
 | shadows | 0, 1, 2 | 16 pillars with shadows off / blob / projected |
@@ -770,3 +770,25 @@ Three boot-to-benchmark Bench = All runs and a Bench = Latency run. `mesh_finali
 Low now keeps up with Classic near the budget (S9 with FRESH: 58.6 vs 59.0 FPS) and keeps its vblank of lag in light scenes. At +4 ms AUTO skipped 38 of 240 waits; in the other frames the read was already in (3 µs of waiting on average).
 
 Captures: `docs/benchmarks/2026-09-25-p2-s9_1a-all-bootbench-debug-a3d.csv` and `...-s9_1a-all-bootbench-pad448-...` (runs 1–2), `...-s9_1-all-bootbench-debug-a3d.csv` (run 3, the new Bench = All comparison point), `...-s9_1-latency-debug-a3d.csv`.
+
+## Phase 2 · S10 particle blend modes (2026-09-25, debug build, Analogue 3D)
+
+Boot-to-benchmark Bench = All, now 28 steps (Particles gained an all-alpha step, param 1128, and a two-and-two step, 2128), then the demo: bursts with the new smoke, RDP Check on while bursting and in the menu, and the physics ball at 60 and 30 FPS (for S11). `BENCH_PROF` gained `particle_us` and `rsp_wait_us`, the CPU's spin-waits on the RSP from libdragon's time accounting.
+
+| Particles step | CPU ms | `particle_draw` µs | RDP busy ms | RSP wait µs |
+|---|---|---|---|---|
+| 32 additive | 2.27 | 1155 | 1.17 | 308 |
+| 64 additive | 3.05 | 1854 | 1.26 | 300 |
+| 96 additive | 3.85 | 2545 | 1.36 | 307 |
+| 128 additive | 4.68 | 3260 | 1.47 | 286 |
+| 128 alpha (1128) | 4.69 | 3279 | 1.47 | 307 |
+| 64 + 64 (2128) | 4.70 | 3277 | 1.48 | 309 |
+
+- **Alpha costs what additive costs**, on the CPU and the RDP, and two batches with a blender change in between cost nothing measurable. Against S9.1 the particle steps are −1.7 to +2.7 % (the step's longer description line costs the HUD ~70 µs); the renderer costs 21.9 µs per particle (S9.1: 23.6, S8: 20.8, by `draw`).
+- **D37, one candidate ruled out:** the CPU waits for the RSP a constant ~0.3 ms per frame in these steps, whatever the particle count, so the per-particle cost is CPU work, not waiting.
+- **Mesh steps +3.0 to +4.9 % against S9.1 (each under the gate), objects 32 at 57.3 FPS (59.7); not S10's code,** which runs nothing new in those steps. `mesh_tris` is +7 % (objects 16: 4.40 → 4.72 ms, ~116 CPU cycles per drawn triangle). Every mesh-phase function moved by exactly 160 bytes (the particle renderer at the head of the hot-text block grew), so the phase's I-cache layout is the same pattern shifted; its data, geometry and stack sit on the same D-cache colours (`hot_data.py`, `BENCH_LAYOUT`); and the CPU waits 56–65 µs per frame for the RSP. The same kind of move as the particles in S9: per-primitive costs change between builds in a way the cache tools don't capture. D37 now covers both.
+- **D38, measured:** at 32 and 48 pillars the frame waits 4.0 and 7.2 ms for the RSP, of which 3.1 and 6.4 ms in the audio mix; the other ~0.9 ms is spent at full command buffers, against ~60 µs in the lighter steps.
+- **RDP Check** was clean with smoke, fire and the menu, apart from one burst of errors in the frame it started (commands already in the RDP's buffer, seen without their setup; DEBUGGING.md). The screen tore while it was on (D18: 230 late vblanks), as documented.
+- **Demo:** the smoke looks right on the A3D, and the ball behaved the same at 60 and 30 FPS ("framerate fine").
+
+Capture: `docs/benchmarks/2026-09-25-p2-s10-all-bootbench-debug-a3d.csv` (the new Bench = All comparison point).

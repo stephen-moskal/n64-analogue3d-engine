@@ -53,7 +53,7 @@ static const char *kind_names[BENCH_KIND_COUNT] = {
 static const char *kind_desc[BENCH_KIND_COUNT] = {
     "Empty scene: engine baseline",
     "%d flat pillars, 32 tris each",
-    "~%d additive particles, 4 emitters",
+    "%d: blend*1000+particles (0 additive, 1 alpha, 2 both)",
     "16 pillars lit by %d point lights",
     "16 boxes, %d distinct textures",
     "16 pillars, shadow mode %d:off/blob/proj",
@@ -218,7 +218,9 @@ static void build_steps(BenchKind which) {
         for (unsigned i = 0; i < sizeof(n) / sizeof(n[0]); i++) add_step(BENCH_OBJECTS, n[i]);
     }
     if (all || which == BENCH_PARTICLES) {
-        static const int n[] = {32, 64, 96, 128};
+        // param = blend * 1000 + particles: additive, then 128 alpha-blended,
+        // then 64 of each (two batches, one blender change: D13)
+        static const int n[] = {32, 64, 96, 128, 1128, 2128};
         for (unsigned i = 0; i < sizeof(n) / sizeof(n[0]); i++) add_step(BENCH_PARTICLES, n[i]);
     }
     if (all || which == BENCH_LIGHTS) {
@@ -350,7 +352,7 @@ static const ParticleEmitterDef bench_particles = {
 
 // The particle system keeps a pointer to the definition, so it must outlive
 // the emitters (a stack copy here produced no particles at all).
-static ParticleEmitterDef step_particles;
+static ParticleEmitterDef step_particles, step_particles_alpha;
 
 static void destroy_emitters(void) {
     for (int i = 0; i < 4; i++) {
@@ -384,13 +386,19 @@ static void setup_step(Scene *scene) {
         layout_grid(st->param);
         break;
     case BENCH_PARTICLES: {
-        // Four continuous emitters; alive count settles near rate * lifetime
+        // Four continuous emitters; alive count settles near rate * lifetime.
+        // Blend (param / 1000): 0 all additive, 1 all alpha, 2 two of each
+        int blend = st->param / 1000;
         step_particles = bench_particles;
-        int per = st->param / 4;
+        int per = (st->param % 1000) / 4;
         step_particles.spawn_rate = per / step_particles.lifetime_max;
+        step_particles_alpha = step_particles;
+        step_particles_alpha.blend_mode = PARTICLE_BLEND_ALPHA;
         static const vec3_t corners[4] = {{-150,0,-150},{150,0,-150},{-150,0,150},{150,0,150}};
         for (int i = 0; i < 4; i++) {
-            emitters[i] = particle_emitter_create(&step_particles, corners[i], per);
+            bool alpha = blend == 1 || (blend == 2 && i < 2);
+            emitters[i] = particle_emitter_create(alpha ? &step_particles_alpha : &step_particles,
+                                                  corners[i], per);
             if (emitters[i] >= 0) particle_emitter_set_active(emitters[i], true);
         }
         break;
@@ -557,12 +565,13 @@ static void finish_step(void) {
     if (g_prof_on) {
         const ProfilerFrame *pf = profiler_get();
         (void)pf;
-        debugf("BENCH_PROF,%s,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f\n",
+        debugf("BENCH_PROF,%s,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f\n",
                kind_names[st->kind], step_index, st->param,
                pf->avg_us[PROF_UPDATE], pf->avg_us[PROF_DRAW], pf->avg_us[PROF_OBJECTS],
                pf->avg_us[PROF_MESH_CULL], pf->avg_us[PROF_MESH_LIGHT], pf->avg_us[PROF_MESH_TRIS],
                pf->avg_us[PROF_AUDIO], pf->avg_us[PROF_MENU], pf->avg_us[PROF_HUD],
-               pf->avg_us[PROF_DIALOG], pf->avg_us[PROF_INPUT], pf->avg_us[PROF_WAIT_INPUT]);
+               pf->avg_us[PROF_DIALOG], pf->avg_us[PROF_INPUT], pf->avg_us[PROF_WAIT_INPUT],
+               pf->avg_us[PROF_PARTICLE_DRAW], pf->avg_us[PROF_RSP_WAIT]);
     }
 
     // The controller read over the measured frames (input.h): how many frames
@@ -660,7 +669,8 @@ static void bench_init(Scene *scene) {
     debugf("BENCH_PRESENT_HDR,kind,step,param,presents,vb1,vb2,vb3,vb4plus,late,avg_vblanks,torn,torn_worst_halfline,"
            "lag_avg_vblanks,lag_min,lag_max\n");
     debugf("BENCH_PROF_HDR,kind,step,param,update_us,draw_us,objects_us,mesh_cull_us,"
-           "mesh_light_us,mesh_tris_us,audio_us,menu_us,hud_us,dialog_us,input_us,wait_input_us\n");
+           "mesh_light_us,mesh_tris_us,audio_us,menu_us,hud_us,dialog_us,input_us,wait_input_us,"
+           "particle_us,rsp_wait_us\n");
     debugf("BENCH_INPUT_HDR,kind,step,param,sync,pacing,fresh_pct,read_us,wait_us,wait_max_us,timeouts,auto_skips\n");
     setup_step(scene);
 }

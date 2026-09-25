@@ -13,9 +13,13 @@
 
 // --- Enums ---
 
+// Additive particles add colour x alpha to the framebuffer (fire, sparks,
+// magic: order-independent). Alpha particles cover what is behind them by
+// their alpha (smoke, dust); they are drawn first, unsorted (PARTICLES.md).
 typedef enum {
     PARTICLE_BLEND_ADDITIVE,
     PARTICLE_BLEND_ALPHA,
+    PARTICLE_BLEND_COUNT
 } ParticleBlendMode;
 
 typedef enum {

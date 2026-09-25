@@ -1,13 +1,13 @@
 # Particle System
 
-Emitter-based particles for fire, sparks and magic: a fixed pool of 128 particles shared by up to 8 emitters, simulated on the CPU (gravity, drag, colour and size over the lifetime) and drawn as flat-coloured, additive, camera-facing quads sent straight to the RDP. Effects are data (`ParticleEmitterDef`), so one definition can drive any number of emitters.
+Emitter-based particles for fire, sparks, magic and smoke: a fixed pool of 128 particles shared by up to 8 emitters, simulated on the CPU (gravity, drag, colour and size over the lifetime) and drawn as flat-coloured camera-facing quads sent straight to the RDP, additive (light) or alpha-blended (smoke, dust). Effects are data (`ParticleEmitterDef`), so one definition can drive any number of emitters.
 
 ## Files
 
 | File | Contents |
 |---|---|
 | [src/render/particle.h](../src/render/particle.h) | public API, `ParticleEmitterDef`, limits |
-| [src/render/particle.c](../src/render/particle.c) | simulation: pool, emitters, spawning, `particle_update()`. No rendering calls, so it is compiled into the host tests ([tests/host/test_particle.c](../tests/host/test_particle.c)) |
+| [src/render/particle.c](../src/render/particle.c) | simulation: pool, emitters, spawning, `particle_update()`, and `particle_batches()`, which groups the emitters by blend mode for the renderer. No rendering calls, so it is compiled into the host tests ([tests/host/test_particle.c](../tests/host/test_particle.c)) |
 | [src/render/particle_draw.c](../src/render/particle_draw.c) | renderer, `particle_draw()`. `ENGINE_HOT`: linked into the hot-text block (`*render/particle_draw.o` in `src/engine/hot_text.ld`, phase `particle` in `tools/hot_text.py`) |
 | [src/render/particle_internal.h](../src/render/particle_internal.h) | `Particle`, `ParticleEmitter` and the pool state shared by the two `.c` files. Not a public API: include `particle.h` |
 
@@ -23,10 +23,10 @@ The split (Phase 2 S3) keeps the simulation testable on the host and lets the ho
 | `velocity_min`, `velocity_max` | initial velocity range, per axis |
 | `gravity` | acceleration per second² (any direction: the demo's magic effect uses +20 on Y to float up) |
 | `drag` | each update multiplies the velocity by `1 − drag × dt` (0 = no drag) |
-| `color_start`, `color_end` | RGBA at birth and at death; alpha scales the brightness in the additive blend |
+| `color_start`, `color_end` | RGBA at birth and at death; alpha scales an additive particle's brightness and is an alpha-blended particle's opacity |
 | `scale_start`, `scale_end` | quad half-size in world units at birth and at death |
 | `spawn_shape`, `spawn_radius` | `PARTICLE_SPAWN_POINT`, or `PARTICLE_SPAWN_SPHERE` with this radius |
-| `blend_mode` | `PARTICLE_BLEND_ADDITIVE` or `PARTICLE_BLEND_ALPHA`; **ignored**, always additive (D13) |
+| `blend_mode` | `PARTICLE_BLEND_ADDITIVE` adds light (fire, sparks, magic); `PARTICLE_BLEND_ALPHA` covers what is behind it by its alpha (smoke, dust). See [Rendering](#rendering) |
 
 From `demo_scene.c`:
 
@@ -54,12 +54,12 @@ static const ParticleEmitterDef fire_effect = {
 
 ## Pool and emitters
 
-`PARTICLE_MAX_POOL` (128) particles and `PARTICLE_MAX_EMITTERS` (8) emitters form one global system for the whole engine, with no heap allocation. Each emitter owns a contiguous slice of the pool, reserved at creation at the end of the used range (`particle_pool_allocated`). The demo with point lights on:
+`PARTICLE_MAX_POOL` (128) particles and `PARTICLE_MAX_EMITTERS` (8) emitters form one global system for the whole engine, with no heap allocation. Each emitter owns a contiguous slice of the pool, reserved at creation at the end of the used range (`particle_pool_allocated`). The demo with point lights on fills the pool:
 
 ```
 particle_pool[128]
-| fire 0-39 | magic 40-79 | torch L 80-95 | torch R 96-111 | free 112-127 |
-                                                           ^ particle_pool_allocated = 112
+| fire 0-39 | magic 40-79 | smoke 80-95 | torch L 96-111 | torch R 112-127 |
+                                                                           ^ particle_pool_allocated = 128
 ```
 
 - `particle_emitter_create()` returns -1 when `particle_init()` hasn't run, `def` is NULL, fewer than `pool_size` particles are free at the end of the pool, or all 8 emitters exist.
@@ -138,18 +138,25 @@ Colour (each RGBA channel, clamped to 0–255) and scale are then interpolated l
 
 ## Rendering
 
-`particle_draw(cam)` follows the direct-RDP pattern of `floor_draw()` rather than going through `mesh_draw()`: one render mode for every particle, then two triangles each.
+`particle_draw(cam)` follows the direct-RDP pattern of `floor_draw()` rather than going through `mesh_draw()`: one render mode for every particle, a blender per blend mode, then two triangles each.
 
-1. Count the live particles (`particles_alive`). With none, return before touching the RDP.
+1. `particle_batches()` (in `particle.c`, once per frame, outside the hot-text block) groups the emitters' pool slices by blend mode and counts each mode's live particles (`particles_alive`). With none, return before touching the RDP.
 2. Set the mode once:
 
    ```c
    rdpq_set_mode_standard();
    rdpq_mode_combiner(RDPQ_COMBINER_FLAT);
    rdpq_mode_zbuf(true, false);                  // Z read on, Z write off
-   rdpq_mode_blender(RDPQ_BLENDER_ADDITIVE);
    ```
-3. For every live particle with a non-zero alpha, transform only its centre:
+3. Draw the alpha batch, then the additive batch, each only if it has live particles:
+
+   ```c
+   rdpq_mode_blender(RDPQ_BLENDER_MULTIPLY);     // alpha:    colour x a + framebuffer x (1 - a)
+   ...                                           //           the alpha emitters' slices
+   rdpq_mode_blender(RDPQ_BLENDER_ADDITIVE);     // additive: colour x a + framebuffer
+   ...                                           //           the additive emitters' slices
+   ```
+4. For every live particle with a non-zero alpha, transform only its centre:
 
    ```c
    const float px = cam->proj.m[0][0] * 160.0f;   // once per call
@@ -163,11 +170,11 @@ Colour (each RGBA channel, clamped to 0–255) and scale are then interpolated l
    ```
 
    The quad spans the camera's right and up axes, so it lies parallel to the image plane (the camera has no roll) and projects to a screen-aligned square at a single depth. One transform gives all four corners exactly; S3 replaced four corner transforms and a frustum-sphere test with it. Particles beyond the far plane, entirely off screen or crossing the guard band are skipped.
-4. **Fog.** When fog is on, the RGBA is multiplied by `1 − fog_calculate_factor(clip.w)`. With additive blending, fading to black is fading out, whereas blending toward the fog colour would make distant particles brighter.
-5. `rdpq_set_prim_color()` is issued only when the colour differs from the previous particle's.
-6. Two `TRIFMT_ZBUF` triangles per particle: X, Y and Z only, no texture, no TMEM.
+5. **Fog.** When fog is on, `f = 1 − fog_calculate_factor(clip.w)`. An additive particle's RGBA is multiplied by `f`: fading to black is fading out, whereas blending toward the fog colour would make distant particles brighter. An alpha particle's alpha alone is multiplied, so distant smoke thins into the fog and keeps its colour.
+6. `rdpq_set_prim_color()` is issued only when the colour differs from the previous particle's.
+7. Two `TRIFMT_ZBUF` triangles per particle: X, Y and Z only, no texture, no TMEM.
 
-**Z read without Z write.** Opaque geometry drawn earlier hides the particles behind it, but particles don't hide each other or anything drawn after them. Additive blending doesn't depend on order, so no sorting is needed. Draw particles after all opaque geometry: the demo and the benchmark call `particle_draw()` at the start of `on_post_draw`, before the HUD.
+**Z read without Z write.** Opaque geometry drawn earlier hides the particles behind it, but particles don't hide each other or anything drawn after them. Additive blending doesn't depend on order. Alpha blending does, and **alpha particles are not sorted by depth**: where puffs overlap, a nearer one may be covered by a farther one drawn later, which shows little at the low alphas smoke uses. The alpha batch is drawn first, so smoke covers what is behind it and fire seen through smoke stays bright. Draw particles after all opaque geometry: the demo and the benchmark call `particle_draw()` at the start of `on_post_draw`, before the HUD.
 
 ## Stats, profiler and cost
 
@@ -189,7 +196,18 @@ Measured in the Phase 1 baseline (2026-09-23, debug build, Analogue 3D, before t
 | 96 (89) | 5.60 | 1.5 |
 | 128 (121) | 7.21 | 1.6 |
 
-That is about 50 µs of CPU per particle and little RDP time; a burst in the demo (60–76 particles alive) cost about 2.3 ms. S3 targets −20 % CPU at 128 particles (ROADMAP_v2 §6.1): re-measure with Debug → Bench = Particles.
+That was about 50 µs of CPU per particle; a burst in the demo (60–76 particles alive) cost about 2.3 ms. After S3 and S10 (2026-09-25, same build and console, `BENCH_PROF` `particle_us` and `rsp_wait_us`):
+
+| Particles step (alive) | CPU avg ms | `particle_draw` µs | RDP busy ms | CPU waiting for the RSP µs |
+|---|---|---|---|---|
+| 32 additive (27) | 2.27 | 1155 | 1.17 | 308 |
+| 64 additive (58) | 3.05 | 1854 | 1.26 | 300 |
+| 96 additive (89) | 3.85 | 2545 | 1.36 | 307 |
+| 128 additive (121) | 4.68 | 3260 | 1.47 | 286 |
+| 128 alpha (param 1128) | 4.69 | 3279 | 1.47 | 307 |
+| 64 alpha + 64 additive (2128) | 4.70 | 3277 | 1.48 | 309 |
+
+About 22 µs of CPU per particle, the same for both blend modes (the 128 step needs 35 % less CPU than the baseline), and a second batch costs nothing measurable. The RSP wait does not grow with the particle count: the renderer is CPU-bound.
 
 ## Usage in the demo and the benchmark
 
@@ -197,15 +215,16 @@ That is about 50 µs of CPU per particle and little RDP time; a burst in the dem
 |---|---|---|---|
 | fire | burst of 30, rising, yellow-orange to dark red | 40 | top of the left pillar (−250, 100, 0); bursts when B (Cancel) spawns or relaunches the physics ball |
 | magic | burst of 25, floats up and grows, light blue to purple | 40 | top of the right pillar (250, 100, 0); same trigger |
+| smoke | burst of 12, **alpha-blended**, rises slowly and spreads (scale 7 → 24), dark grey thinning out over 1.6–2.8 s | 16 | above the left pillar (−250, 115, 0); bursts with the fire |
 | torch L, torch R | continuous, 20 per second, 0.3–0.8 s | 16 each | on both pillars while Lighting → Pt Lights is On; created and destroyed with that item |
-| benchmark (×4) | continuous, 0.9 s lifetime, rate = slice ÷ 0.9 s | param ÷ 4 each | the four corners (±150, 0, ±150) |
+| benchmark (×4) | continuous, 0.9 s lifetime, rate = slice ÷ 0.9 s; additive, all alpha (param 1128) or two of each (2128) | particles ÷ 4 each | the four corners (±150, 0, ±150) |
 
 ## Known limits
 
-- **`blend_mode` is ignored.** Every particle is additive, so `PARTICLE_BLEND_ALPHA` effects (smoke, dust) can't be made, and dark colours barely show. This is defect D13 in [ROADMAP_v2.md](ROADMAP_v2.md); stage S10 plans alpha blending through `RDPQ_BLENDER_MULTIPLY`, batched per mode.
+- **Alpha particles are not depth-sorted** (see Rendering), and all alpha particles are drawn before all additive ones, whatever their depth.
 - **Slices are reclaimed only from the tail** (see Pool and emitters), and a slice's size is fixed when the emitter is created.
 - 128 particles and 8 emitters in total, for the whole engine.
 - Flat-coloured squares: no texture, rotation or animation (sprite-sheet particles belong to Feature 8, ROADMAP_v2 §7.2), and scene lights don't affect them.
 - No clipping: a particle whose centre is nearer than the near plane is dropped whole, and so is a quad crossing the guard band. All four corners share the centre's depth.
-- libdragon's `rdpq_mode.h` notes that the RDP's additive blend doesn't saturate: a sum above 1.0 wraps around to 0. Many bright particles over a bright background may show dark pixels; this hasn't been characterised on the A3D yet.
+- libdragon's `rdpq_mode.h` notes that the RDP's additive blend doesn't saturate: a sum above 1.0 wraps around to 0. Many bright particles over a bright background may show dark pixels. ares shows it as coloured noise in the benchmark's dense clusters of bright orange particles; it hasn't been characterised on the A3D yet.
 - Spawn randomness is seeded from the tick counter, so runs don't repeat exactly.
