@@ -219,7 +219,7 @@ static void page_profiler(float budget_ms) {
     };
     const ProfilerFrame *pf = profiler_get();
     // A wait that is not in use (pace without low-latency pacing, the input
-    // wait with INPUT_SYNC_LATEST) gets no row: the panel stays clear of the HUD
+    // wait when it never waits) gets no row: the panel stays clear of the HUD
     ProfSlot rows[sizeof(all_rows) / sizeof(all_rows[0])];
     int nrows = 0;
     for (unsigned i = 0; i < sizeof(all_rows) / sizeof(all_rows[0]); i++)
@@ -401,7 +401,8 @@ static void page_input(void) {
     panel(bx + IN_SQ_W + PAD + IN_STICK + PAD, rows);
 
     int r = 0;
-    line(r++, COL_HEAD, "INPUT %s, %s", input_sync() == INPUT_SYNC_FRESH ? "fresh" : "latest",
+    static const char *const sync_names[] = {"auto", "fresh", "latest"};
+    line(r++, COL_HEAD, "INPUT %s, %s", sync_names[input_sync()],
          engine_pacing() == ENGINE_PACING_LOW_LATENCY ? "low latency" : "ahead");
     line(r++, COL_TEXT, "Lag %.2f vbl (%d-%d) %.0f ms", ft_cache.lag_avg, ft_cache.lag_min,
          ft_cache.lag_max, ft_cache.lag_avg * (1000.0f / 60.0f));

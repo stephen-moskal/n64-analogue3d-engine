@@ -89,17 +89,17 @@ Input lag here is the time from the controller read a frame used to the vblank t
 **What the engine does.**
 
 - **Poll point.** `input_poll()` runs after `display_get()` and the audio mix, right before the game update (the frame above).
-- **Input sync** (`input_set_sync`, input.h). `INPUT_SYNC_FRESH` (default) waits for the read that started at the latest vblank, at most 3 ms. The wait is exact: the engine's vblank handler runs before libdragon's joypad handler and notes whether the SI is idle, and if it is, the read is the first joybus message and is in after two SI interrupts, so libdragon's once-a-second port identification queued behind it is not waited for. In a light scene the wait overlaps the audio mix and costs ~1.5 ms of idle time; when the CPU is late the read is already in and there is no wait. `INPUT_SYNC_LATEST` never waits and takes the newest complete read, a vblank older.
+- **Input sync** (`input_set_sync`, input.h). `INPUT_SYNC_AUTO` (default) waits for the read that started at the latest vblank, at most 3 ms, while the frame has room: the average CPU work is under 70 % of the budget. Near the budget it skips the wait, because frames no longer queue there, so a fresher read buys little, and a later start can push the frame past its vblank (S9.1). `INPUT_SYNC_FRESH` always waits. The wait is exact: the engine's vblank handler runs before libdragon's joypad handler and notes whether the SI is idle, and if it is, the read is the first joybus message and is in after two SI interrupts, so libdragon's once-a-second port identification queued behind it is not waited for. In a light scene the wait overlaps the audio mix and costs 0.4–0.6 ms of idle time on the A3D (~1.5 ms in ares); when the CPU is late the read is already in and there is no wait. `INPUT_SYNC_LATEST` never waits and takes the newest complete read, a vblank older.
 - **Pacing** (`engine_set_pacing`). `ENGINE_PACING_THROUGHPUT` (default) renders ahead into the free framebuffer. `ENGINE_PACING_LOW_LATENCY` starts a frame only once the previous one is on screen (the `pace` wait), so a frame shows at the vblank after its read. That holds as long as the frame (CPU and RDP) fits the budget; a frame that does not waits for the next vblank, like double buffering (30 FPS steps instead of 45–55).
 - **Taps.** The vblank handler samples every completed read the frame loop did not take (below 60 FPS, reads outnumber frames), so a press and release between two frames still arrives as pressed and released.
 
-| Demo setting (Settings → Latency) | Sync | Pacing | Lag, light scene (ares) |
+| Demo setting (Settings → Latency) | Sync | Pacing | Lag, light scene (ares and A3D) |
 |---|---|---|---|
 | Classic (the engine before S9) | latest | throughput | 3 vblanks |
-| Low (default) | fresh | throughput | 2 vblanks |
+| Low (default) | auto | throughput | 2 vblanks |
 | Lowest | fresh | low latency | 1 vblank |
 
-**Measuring it.** Each framebuffer is tagged with its frame's read vblank (`input_timing()->vblank`) and matched when the VI flips to it. Input overlay page: `Lag` and the read timing; Frame page: "Input lag"; CSV: `FTP` rows (`lag_avg_vblanks,lag_min,lag_max`), and per benchmark step `BENCH_PRESENT` (the same columns) and `BENCH_INPUT` (fresh reads, read arrival, wait). `Bench = Latency` measures the three settings at three CPU loads (BENCHMARKS.md).
+**Measuring it.** Each framebuffer is tagged with its frame's read vblank (`input_timing()->vblank`) and matched when the VI flips to it. Input overlay page: `Lag` and the read timing; Frame page: "Input lag"; CSV: `FTP` rows (`lag_avg_vblanks,lag_min,lag_max`), and per benchmark step `BENCH_PRESENT` (the same columns) and `BENCH_INPUT` (fresh reads, read arrival, wait, AUTO's skipped waits). `Bench = Latency` measures the three settings at three CPU loads (BENCHMARKS.md).
 
 
 ## Source files

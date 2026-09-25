@@ -127,7 +127,7 @@ typedef struct {
 
 | Field | Description |
 |-------|-------------|
-| `vertices`, `indices` | While building: separate arrays that start at 16 vertices / 48 indices and double as needed. After `mesh_finalize()`: one exact-size, 16-byte aligned block (vertices, then indices) owned by `block` (roadmap D8; every mesh used to reserve 512 vertices + 1024 indices, about 18 KB). |
+| `vertices`, `indices` | While building: separate arrays that start at 16 vertices / 48 indices and double as needed. After `mesh_finalize()`: one exact-size block (vertices, then indices) at a fixed D-cache colour (see [Geometry placement](#geometry-placement-s91-d26)), inside the allocation owned by `block` (roadmap D8; every mesh used to reserve 512 vertices + 1024 indices, about 18 KB). |
 | `finalized` | Set by `mesh_finalize()`; `mesh_add_vertex()` / `mesh_add_triangle()` then fail (assert in debug builds). |
 | `materials[]` | Fixed-size array (max 8). Inline to avoid extra allocation. |
 | `groups[]` | Fixed-size array (max 16). Each group references a material and a range of indices. |
@@ -190,7 +190,8 @@ mesh_finalize(&mesh)             // Bounds, group analysis, exact-size geometry 
 | `mesh_add_triangle` | void | Adds 3 indices; auto-updates current group's count |
 | `mesh_begin_group` | Group index (0-15) or -1 | Sets index_start to current index count |
 | `mesh_end_group` | void | No-op (group count tracked automatically) |
-| `mesh_finalize` | void | Calls `mesh_compute_bounds()`, then packs vertices and indices into one exact-size, 16-byte aligned block. Every builder ends with it |
+| `mesh_finalize` | void | Calls `mesh_compute_bounds()`, then packs vertices and indices into one exact-size block at a fixed D-cache colour. Every builder ends with it |
+| `mesh_placement_reset` | void | Restarts the geometry placement at the window's first colour; `scene_init()` calls it |
 | `mesh_compute_bounds` | void | Computes centroid + max-distance bounding sphere and analyses every group |
 
 ### Rendering
@@ -305,7 +306,17 @@ static void object_draw(SceneObject *obj, const Camera *cam, const LightConfig *
 | Max materials per mesh | 8 | One material = one RDP mode + one texture. |
 | Max groups per mesh | 16 | Grouping triangles by material minimizes RDP state changes. |
 | TMEM | 4 KB | Only one texture tile loaded at a time. Groups upload their texture once. |
-| Vertex memory | 32 B per vertex, 2 B per index | Exact size after `mesh_finalize()` (the pillar: 50 vertices + 96 indices = 1.8 KB). Where that block and the `Mesh` struct land in the 8 KB D-cache relative to the render stack can cost up to ~8 % CPU (D26; measure with Bench = Layout). |
+| Vertex memory | 32 B per vertex, 2 B per index | Exact size after `mesh_finalize()` (the pillar: 50 vertices + 96 indices = 1.8 KB), plus up to ~4 KB of alignment in front of it (below). The `Mesh` struct's own place in the 8 KB D-cache still matters: on the render stack's lines it costs up to ~8 % CPU (D26; measure with Bench = Layout). |
+
+### Geometry placement (S9.1, D26)
+
+The VR4300's data cache is 8 KB and direct-mapped, so a mesh's vertex data evicts whatever else sits at the same address modulo 8 KB (its *colour*). Heap placement used to decide that: in S9, 4 KB of new static data moved the heap and put the pillar's vertices on the render stack's lines, and every mesh step lost 8–11 %. `mesh_finalize()` therefore allocates each geometry block 8 KB-aligned and places the data at an offset inside a colour window, `ENGINE_GEOMETRY_COLOUR_LO`–`_HI` (0x0520–0x0F1F, [src/engine/hot.h](../src/engine/hot.h)). The window is clear of the render stack (≈0x1700–0x1E10) and of the pinned data the mesh phase reads (0x0000–0x0517).
+
+- Blocks are packed one after another through the window and wrap to its start. A block larger than the window starts at `LO`: up to 4.5 KB it ends below `ENGINE_GEOMETRY_COLOUR_MAX` (0x1700, where the stack's colours begin); a bigger mesh reaches them.
+- `mesh_placement_reset()` restarts the packing. `scene_init()` calls it, so a scene's meshes take the same colours after every boot and reset.
+- `tools/hot_data.py` (CI) fails if the window shares a line with the mesh or shadow phase's stack or with pinned data they read.
+- Cost: the bytes in front of each block's colour are unused, 1.3–3.8 KB per mesh (+22 KB of heap in the benchmark scene).
+- Not placed: the `Mesh` struct itself (face groups and materials, read per group) lives wherever its owner puts it. A `LAYOUT_PAD=448` build still moves mesh steps by 1–2.5 % (BENCHMARKS.md, S9.1); the P3.1 vertex cache replaces per-mesh reads in the triangle loop.
 
 ## Performance Notes & Optimization Lessons
 

@@ -72,8 +72,8 @@ typedef enum {
 // Latency choices (the demo maps them to input_set_sync and engine_set_pacing)
 typedef enum {
     LATENCY_CLASSIC,            // newest completed read, render ahead: the engine before S9
-    LATENCY_LOW,                // wait for the vblank's read, render ahead (default)
-    LATENCY_LOWEST,             // wait for the read, no rendering ahead
+    LATENCY_LOW,                // wait for the vblank's read while the frame has room, render ahead (default)
+    LATENCY_LOWEST,             // always wait for the read, no rendering ahead
 } LatencyChoice;
 
 // Add the five tabs to a menu that has none yet (main.c; the Debug tab

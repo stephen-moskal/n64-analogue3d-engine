@@ -442,7 +442,7 @@ vblank: libdragon reads 4 ports ─► input_poll() (engine loop, after display_
                                                      └─► action_ui(p) ─► UiInput ─► menu, text box
 ```
 
-- **Input core** (`src/input/input.c`): owns the joypad module; one `PadState` per port per frame (buttons and edges, sticks, triggers, controller type, accessory, rumble); waits for the vblank's read (`INPUT_SYNC_FRESH`); samples skipped reads from the vblank handler (taps below 60 FPS); rumble; read timing and input lag.
+- **Input core** (`src/input/input.c`): owns the joypad module; one `PadState` per port per frame (buttons and edges, sticks, triggers, controller type, accessory, rumble); waits for the vblank's read while the frame has room (`INPUT_SYNC_AUTO`); samples skipped reads from the vblank handler (taps below 60 FPS); rumble; read timing and input lag.
 - **Action layer** (`src/input/action.c`, pure, host-tested): 4 players, each on a port, each with a stack of `ActionContext`s ordered by priority. A context binds buttons, chords, stick directions and analog axes to action ids; `CTX_CONSUME` hides the inputs its active bindings use from the contexts below, `CTX_MODAL` hides everything. Actions carry pressed / held / released / repeat, a -1..1 value and the held time.
 - **Engine contexts**: `action_ctx_ui` (priority 100, modal: menus and dialogs), `action_ctx_debug` (priority -100: D-Up / D-Down, so any game binding on those buttons wins).
 - **The game's controls** are data: the demo's action ids, default table and names are in `src/scenes/demo_controls.c`; the Controls tab remaps player 1's context (`action_context_set_button`).

@@ -37,7 +37,7 @@ static volatile bool     read_in;
 static volatile bool     read_taken;            // input_poll sampled the latest vblank's read
 
 static PadState    pads[PAD_PORTS];             // this frame's snapshot
-static InputSync   sync_mode = INPUT_SYNC_FRESH;
+static InputSync   sync_mode = INPUT_SYNC_AUTO;
 static InputTiming timing;
 
 static bool  rumble_on = true;                  // master switch
@@ -169,15 +169,18 @@ static void build_pad(int port, const PortSample *s) {
     }
 }
 
-void input_poll(float dt) {
-    // Wait for the latest vblank's read
+void input_poll(float dt, float cpu_ms, float budget_ms) {
+    // Wait for the latest vblank's read (AUTO: only while the frame has room)
     uint32_t t0 = TICKS_READ();
     disable_interrupts();
     uint32_t irqs0 = vb_irqs;
     bool behind = vb_behind;
     enable_interrupts();
     bool fresh = read_complete(irqs0, behind);
-    if (!fresh && sync_mode == INPUT_SYNC_FRESH) {
+    bool room = cpu_ms < budget_ms * INPUT_AUTO_CPU_SHARE;
+    bool wait = sync_mode == INPUT_SYNC_FRESH || (sync_mode == INPUT_SYNC_AUTO && room);
+    if (!fresh && sync_mode == INPUT_SYNC_AUTO && !room) timing.auto_skips++;
+    if (!fresh && wait) {
         const uint32_t limit = TICKS_FROM_US(INPUT_FRESH_TIMEOUT_US);
         while (!(fresh = read_complete(irqs0, behind))) {
             uint32_t t = TICKS_READ();

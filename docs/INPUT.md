@@ -6,7 +6,7 @@ Controllers, players and actions (ROADMAP_v2 S9, D12). Game code asks about **ac
 vblank ─► libdragon reads all 4 ports (SI + PIF, ~1.8 ms)
                 │
 engine loop: display_get() ─► audio mix ─► input_poll()            src/input/input.c
-                                  │  waits for this vblank's read (INPUT_SYNC_FRESH)
+                                  │  waits for this vblank's read while the frame has room (INPUT_SYNC_AUTO)
                                   ▼
                         PadState[4]: buttons + edges, sticks, triggers,
                         controller type, accessory, rumble        src/input/pad.h  ◄── input_pad(port)
@@ -182,10 +182,10 @@ Changes reach the pads at the end of the frame (`input_end_frame`), while the SI
 | Setting (demo: Settings → Latency) | Engine calls | Lag, light scene |
 |---|---|---|
 | Classic: the engine before S9 | `input_set_sync(INPUT_SYNC_LATEST)`, `engine_set_pacing(ENGINE_PACING_THROUGHPUT)` | 3 vblanks |
-| Low (default) | `INPUT_SYNC_FRESH`, `ENGINE_PACING_THROUGHPUT` | 2 vblanks |
+| Low (default) | `INPUT_SYNC_AUTO`, `ENGINE_PACING_THROUGHPUT` | 2 vblanks |
 | Lowest | `INPUT_SYNC_FRESH`, `ENGINE_PACING_LOW_LATENCY` | 1 vblank, while frames fit the budget |
 
-Lag is measured from the controller read a frame used to the vblank it reaches the screen. [ENGINE.md, "Input and latency"](ENGINE.md#input-and-latency-s9) explains the mechanism, and BENCHMARKS.md has the A3D figures (`Bench = Latency`). Low costs nothing when the CPU is late: the read is already in and the frame does not wait. Lowest trades frame rate for lag: a frame that misses the vblank waits for the next one.
+Lag is measured from the controller read a frame used to the vblank it reaches the screen. [ENGINE.md, "Input and latency"](ENGINE.md#input-and-latency-s9) explains the mechanism, and BENCHMARKS.md has the A3D figures (`Bench = Latency`). `INPUT_SYNC_AUTO` waits for the read only while the CPU work (the profiler's average) is under `INPUT_AUTO_CPU_SHARE` (70 %) of the frame budget. Near the budget frames no longer queue behind each other, so the wait would buy almost no lag, and a later start can push the frame past its vblank (Bench = Latency, +4 ms: Low 0.4 FPS behind Classic with `INPUT_SYNC_FRESH` in S9, 0.1 with AUTO in S9.1). `INPUT_SYNC_FRESH` always waits: Lowest uses it, since its pacing already trades frame rate for lag. A frame that misses the vblank waits for the next one.
 
 ## The demo's controls
 
@@ -206,7 +206,7 @@ The Controls tab remaps player 1's first eleven (the choices are the 13 N64 butt
 
 - **Input overlay page** (Debug → Overlay → Input, or D-Up): the sync and pacing in use, `Lag` (average, min–max, ms), `SI` read arrival and the wait (average / worst). Per port: type, accessory, raw stick, a square per button lit while held (redrawn every frame) and the stick's position. Per player: the port and the context stack. Last, player 1's held actions by name.
 - **Profiler slots**: `input` (input_poll's work), `wait_input` (the fresh-read wait, idle), `pace` (low-latency pacing, idle).
-- **CSV**: `FTP` rows with the dump; per benchmark step `BENCH_PRESENT` (lag columns), `BENCH_PROF` (`input_us`, `wait_input_us`), `BENCH_INPUT`.
+- **CSV**: `FTP` rows with the dump; per benchmark step `BENCH_PRESENT` (lag columns), `BENCH_PROF` (`input_us`, `wait_input_us`), `BENCH_INPUT` (with `auto_skips`: the frames AUTO did not wait).
 
 ## Tests
 

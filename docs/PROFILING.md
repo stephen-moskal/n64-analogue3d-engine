@@ -35,7 +35,7 @@ Slots and nesting:
 frame                 loop top to loop top (wall time)
   wait_display        blocked in display_get() for a free framebuffer = idle headroom
   pace                low-latency pacing: waiting for the last frame to reach the screen (idle; S9, ENGINE.md)
-  wait_input          waiting for the vblank's controller read (idle; S9, input.h INPUT_SYNC_FRESH)
+  wait_input          waiting for the vblank's controller read (idle; S9, input.h INPUT_SYNC_AUTO / FRESH)
   input               input_poll(): the pads sampled and mapped to every player's actions
   update              scene_manager_update
     physics (step + body sync) / particle_upd / scene_sys (camera, collider sync, collision)

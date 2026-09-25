@@ -1,5 +1,6 @@
 #include "test.h"
 #include "render/mesh_defs.h"
+#include "engine/hot.h"
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
@@ -164,8 +165,44 @@ static void test_mesh_finalize(void) {
     mesh_defs_cleanup();
 }
 
+// Geometry blocks at fixed D-cache colours (S9.1, D26): packed in the window
+// one after another, restarting after mesh_placement_reset()
+static uint32_t colour_of(const void *p) { return (uint32_t)((uintptr_t)p & (ENGINE_DCACHE_BYTES - 1)); }
+
+static void test_mesh_placement(void) {
+    mesh_placement_reset();
+    mesh_defs_init();
+    const Mesh *shapes[] = {mesh_defs_get_pillar(), mesh_defs_get_platform(),
+                            mesh_defs_get_pyramid(), mesh_defs_get_sphere()};
+    uint32_t prev_end = 0;
+    for (int i = 0; i < 4; i++) {
+        const Mesh *s = shapes[i];
+        size_t bytes = s->vertex_count * sizeof(MeshVertex) + s->index_count * sizeof(uint16_t);
+        uint32_t c = colour_of(s->vertices);
+        CHECK(c >= ENGINE_GEOMETRY_COLOUR_LO);
+        if (bytes <= ENGINE_GEOMETRY_COLOUR_HI - ENGINE_GEOMETRY_COLOUR_LO) {
+            CHECK(c + bytes <= ENGINE_GEOMETRY_COLOUR_HI);          // inside the window
+            if (i > 0 && prev_end + bytes <= ENGINE_GEOMETRY_COLOUR_HI)
+                CHECK(c == prev_end);                             // packed after the last one
+            prev_end = (uint32_t)(c + ((bytes + 15) & ~(size_t)15));
+        } else {
+            CHECK(c == ENGINE_GEOMETRY_COLOUR_LO);                // too big: from the start
+        }
+    }
+    uint32_t pillar = colour_of(mesh_defs_get_pillar()->vertices);
+    CHECK(pillar == ENGINE_GEOMETRY_COLOUR_LO);                   // the first mesh built
+    mesh_defs_cleanup();
+
+    // A scene reset rebuilds its meshes at the same colours
+    mesh_placement_reset();
+    mesh_defs_init();
+    CHECK(colour_of(mesh_defs_get_pillar()->vertices) == pillar);
+    mesh_defs_cleanup();
+}
+
 void run_mesh_tests(void) {
     RUN_TEST(test_mesh_finalize);
+    RUN_TEST(test_mesh_placement);
     RUN_TEST(test_mesh_winding);
     RUN_TEST(test_mesh_planar_groups);
     RUN_TEST(test_sphere_visible_all_sides);

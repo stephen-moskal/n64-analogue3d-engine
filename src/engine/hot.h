@@ -32,6 +32,26 @@
  * its section and tools/hot_text.py finds it by name.
  */
 
+/*
+ * Mesh geometry colours (S9.1, D26). The D-cache is 8 KB, direct-mapped,
+ * 16-byte lines: data whose addresses are equal modulo 8 KB (the same
+ * "colour") share lines. The render path's static data is pinned
+ * (hot_data.ld) and the render stack's colours are fixed, but mesh vertices
+ * and indices, read for every triangle, came from the heap wherever it
+ * happened to be: S9's static data growth moved the pillar's onto the mesh
+ * phase's stack lines and the pinned rdpq state (+13 % per triangle).
+ * mesh_finalize() places each geometry block at a chosen colour instead:
+ * packed inside [LO, HI), the window no drawing phase that reads meshes uses
+ * (above the pinned render data, below the projected shadows' scratch); a
+ * block too big for it starts at LO and may run to MAX, the render stack.
+ * tools/hot_data.py checks the window against the pinned groups and the
+ * computed stack ranges.
+ */
+#define ENGINE_DCACHE_BYTES         8192
+#define ENGINE_GEOMETRY_COLOUR_LO   0x0520
+#define ENGINE_GEOMETRY_COLOUR_HI   0x0F20
+#define ENGINE_GEOMETRY_COLOUR_MAX  0x1700
+
 #if defined(N64)
   #define ENGINE_HOT       __attribute__((section(".text.engine_hot")))
   #define ENGINE_HOT_LOOP  __attribute__((section(".text.engine_hot"), noipa))

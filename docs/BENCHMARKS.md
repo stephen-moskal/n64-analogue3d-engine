@@ -740,3 +740,33 @@ Demo walk-through with the debug ROM: menu, D-Up/D-Down (all seven overlay pages
 **Bench = All against S8: 20 steps +8–11 % CPU, objects 32 60 → 56.1 FPS. Not S9's code: the pillar's vertex data (D26).** `BENCH_PROF`: `mesh_tris` +12–13 % (objects 16 4.27 → 4.85 ms), `mesh_light` +9 %, the textured boxes' `mesh_cull` +20–36 %, particles' draw +3–9 %; the empty scene and fill-rate steps are flat (0.92 → 0.94 ms). `BENCH_LAYOUT`: S9's larger static data moved the heap by 38 KB, and the pillar's vertices (1,600 bytes, read for every triangle) went from D-cache colour 0x0650 (clear of everything hot; S8's gain was this) to 0x1BB0–0x21F0, which covers the mesh phase's stack lines (0x1750–0x1DC0) and wraps onto the pinned rspq/rdpq/profiler state (0x0000–0x01F0). S9.1 places mesh geometry by colour.
 
 Captures: `docs/benchmarks/2026-09-25-p2-s9-all-bootbench-debug-a3d.csv`, `docs/benchmarks/2026-09-25-p2-s9-latency-debug-a3d.csv`. The comparison point stays S8 until S9.1.
+
+## Phase 2 · S9.1 mesh geometry by colour, input sync AUTO (2026-09-25, debug build, Analogue 3D)
+
+Three boot-to-benchmark Bench = All runs and a Bench = Latency run. `mesh_finalize()` now puts each geometry block at a fixed D-cache colour, inside a window (0x0520–0x0F1F) that is clear of the render stack and of the pinned data the mesh phase reads. `BENCH_LAYOUT` shows the pillar's vertices at colour 0x0520 and its indices at 0x0B60 in every build. After run 2 the default input sync became `INPUT_SYNC_AUTO`: wait for the vblank's controller read only while the CPU work is under 70 % of the budget.
+
+| Run | Build | vs S8 (5 % gate) | Notes |
+|---|---|---|---|
+| 1 | S9.1a: geometry by colour | 8 steps over: particles 64–128 +7.7 to +9.8 %, textures 1–8 +6.6 to +8.3 %, objects 32 at 58.8 FPS | mesh steps +3.4 to +4.2 % (S9: +8 to +11 %) |
+| 2 | S9.1a + `LAYOUT_PAD=448` | 1 over: objects 32 CPU +13.7 %, at 60.1 FPS | 2–6 % faster than run 1 in the mesh, texture and particle steps: vs S8, mesh steps +1.1 to +2.1 %, textures +1.2 to +2.1 %, particles +3.8 to +4.2 % |
+| 3 | S9.1: run 1 + `INPUT_SYNC_AUTO` | 7 over: particles 64–128 +7.0 to +8.7 %, textures 1, 2 and 8 +5.2 to +6.5 %, objects 32 at 59.7 FPS | **vs S9: 0 regressions.** Mesh, light and shadow steps −6 to −7 %; objects 32 56.1 → 59.7 FPS, 48 37.8 → 40.1, 64 28.5 → 30.2. Mesh steps vs S8: +2.3 to +3.1 % |
+
+- **The geometry no longer moves.** `mesh_tris` at 16 pillars: S8 4.27 ms, S9 4.85, run 1 4.54, run 3 4.40, run 2 4.39. A static-data change can no longer put the pillar's vertices on the render stack's lines (S9: +13 %).
+- **`INPUT_SYNC_AUTO`.** In run 1 the fresh-read wait (0.4–0.6 ms of idle time in light steps) also ran in the heavy steps. At 32 pillars it made frames end late, and the audio mix then waited behind them (D38): 58.8 FPS, `audio` 2.9 ms. AUTO skips the wait while the average CPU work is at or above 70 % of the budget: 151 of 240 frames at 32 pillars, 7 at 48, 6 at 64, none in the lighter steps, where it waits like FRESH.
+- **What still differs from S8 is not the geometry:**
+  - **Particles +7–9 % (+4 % in run 2).** Since S9 the particle renderer costs 23.6 µs per particle. S6.3–S8 measured 20.8–21.5 µs, and run 2 21.8 µs. Every function and variable of the particle phase is pinned, and `hot_text.py` and `hot_data.py` report the same placement as in S8, so the cost follows something the tools don't track. Filed as D37; S10 measures it with libdragon's time accounting (interrupt time, CPU waits on the RSP).
+  - **Textures +5–6.5 % (+1–2 % in run 2).** The texture upload path is unpinned by design ([HARDWARE.md](HARDWARE.md)). The textured boxes' `Mesh` structs (6.4 KB of face groups and materials, read per group) are benchmark statics, and 90 of their lines share colours with the mesh stack in this build. Across the S6.3–S9.1 builds the textures steps' `draw` has ranged 4.65–5.34 ms.
+  - **Objects 32: 59.7 FPS** (1 of 240 frames late), `audio` 2.2 ms. The step sits at the 60 FPS edge: a frame that ends late makes the next audio mix wait for the RSP. That wait is 0.1–0.6 ms or 2.2–3.2 ms depending on the build (S7.1, S8 and run 2 the first, S7, S9 and runs 1 and 3 the second), and 6 ms at 48 pillars and 10 ms at 64 in every build since S6. Filed as D38.
+- **Heap:** each geometry block is 8 KB-aligned and starts at its colour, and the bytes before it stay unused: +22 KB in the benchmark scene (799 → 821 KB).
+
+**Input lag, Bench = Latency** (the S9 scene and loads):
+
+| Load (CPU) | Classic (latest, render ahead) | Low (AUTO, render ahead; default) | Lowest (fresh, low-latency pacing) |
+|---|---|---|---|
+| light (9.3 ms) | 60.0 FPS, lag **3.00** | 60.0 FPS, lag **2.00** | 60.0 FPS, lag **1.00** |
+| +4 ms (15.0 ms) | 59.9 FPS, lag 2.21 | 59.8 FPS, lag 2.16 | 30.0 FPS, lag 2.00 |
+| +8 ms (21.4 ms) | 46.6 FPS, lag 2.38 | 46.5 FPS, lag 2.39 | 30.0 FPS, lag 2.00 |
+
+Low now keeps up with Classic near the budget (S9 with FRESH: 58.6 vs 59.0 FPS) and keeps its vblank of lag in light scenes. At +4 ms AUTO skipped 38 of 240 waits; in the other frames the read was already in (3 µs of waiting on average).
+
+Captures: `docs/benchmarks/2026-09-25-p2-s9_1a-all-bootbench-debug-a3d.csv` and `...-s9_1a-all-bootbench-pad448-...` (runs 1–2), `...-s9_1-all-bootbench-debug-a3d.csv` (run 3, the new Bench = All comparison point), `...-s9_1-latency-debug-a3d.csv`.

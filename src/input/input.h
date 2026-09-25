@@ -10,7 +10,10 @@
  * input_poll() once per frame, right after display_get() and the audio mix:
  * with INPUT_SYNC_FRESH it first waits (at most INPUT_FRESH_TIMEOUT_US) for
  * the read that started at the latest vblank, so the frame acts on input a
- * vblank newer than the last completed read. The engine's vblank handler
+ * vblank newer than the last completed read. INPUT_SYNC_AUTO (the default)
+ * waits only while the frame has room: near the budget frames no longer
+ * queue, so the wait would buy almost no lag and would start the drawing
+ * later (S9.1: 32 pillars dropped from 60 FPS). The engine's vblank handler
  * also samples every read (input_on_vblank), so a press and release between
  * two frames (a tap below 60 FPS) still reaches the game.
  *
@@ -25,11 +28,13 @@
 #include "action.h"
 
 typedef enum {
-    INPUT_SYNC_FRESH,       // wait for the read started at the latest vblank (default)
+    INPUT_SYNC_AUTO,        // FRESH while the CPU work is under INPUT_AUTO_CPU_SHARE of the budget, else LATEST (default)
+    INPUT_SYNC_FRESH,       // always wait for the read started at the latest vblank
     INPUT_SYNC_LATEST,      // never wait: the newest completed read, up to a vblank older
 } InputSync;
 
 #define INPUT_FRESH_TIMEOUT_US 3000
+#define INPUT_AUTO_CPU_SHARE   0.70f
 
 // Engine hooks: init once (joypad_init, the SI hook, action_init); the
 // vblank handler (interrupt; it must run before libdragon's joypad handler,
@@ -37,7 +42,9 @@ typedef enum {
 // update; once per frame after it (rumble reaches the pads).
 void input_init(void);
 void input_on_vblank(uint32_t vblank);
-void input_poll(float dt);
+// cpu_ms: the frame's recent CPU work (the engine passes the profiler's
+// average), budget_ms: the frame budget; INPUT_SYNC_AUTO compares them
+void input_poll(float dt, float cpu_ms, float budget_ms);
 void input_end_frame(float dt);
 
 void      input_set_sync(InputSync sync);
@@ -77,6 +84,7 @@ typedef struct {
     float    wait_sum_us;   // every wait, summed (mean = sum / frames)
     float    wait_max_us;
     uint32_t timeouts;      // waits that gave up (INPUT_FRESH_TIMEOUT_US)
+    uint32_t auto_skips;    // frames INPUT_SYNC_AUTO did not wait (no room)
 } InputTiming;
 
 const InputTiming *input_timing(void);

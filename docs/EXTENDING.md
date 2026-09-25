@@ -176,7 +176,7 @@ Gotchas:
 - **Limits fail quietly** (512 vertices, 1024 indices, 8 materials, 16 groups): `mesh_add_vertex`, `mesh_add_material` and `mesh_begin_group` return -1, `mesh_add_triangle` drops the triangle, and after a failed `mesh_begin_group` triangles land in the previous group.
 - Forgetting `mesh_finalize()` doesn't crash: the radius stays 0, so the mesh vanishes as soon as its centre leaves the view, every group takes the slower curved path, and the build arrays keep their spare capacity.
 - Build arrays start at 16 vertices / 48 indices and double while building; `mesh_finalize()` trims them into one block. Adding vertices or triangles after it fails (assert in debug builds).
-- Placement matters: a mesh whose geometry or `Mesh` struct shares D-cache sets with the render stack draws up to ~8 % slower (D26). Bench = Layout measures it.
+- Placement matters: a mesh whose geometry or `Mesh` struct shares D-cache sets with the render stack draws up to ~8 % slower (D26). `mesh_finalize()` places the geometry at a fixed colour (S9.1, [MESH_SYSTEM.md](MESH_SYSTEM.md#geometry-placement-s91-d26)); keep `Mesh` structs off the stack's colours (`hot_data.py --verbose` lists them) and build a scene's meshes in `on_init`, after `scene_init()` has reset the placement. Bench = Layout measures it.
 - UVs are in texels (0–32 for a 32×32 sprite), and the slot of a `MATERIAL_TEXTURED` material must be loaded before the first draw (`texture_upload()` asserts in debug builds).
 
 ---
@@ -383,7 +383,7 @@ Gotchas:
 | `BENCH` | every step | kind, step, param, frames, fps, avg and p99 ms, 1 % low, CPU avg and max, RDP busy ms and %, tris, uploads, heap KB |
 | `BENCH_PRESENT` | every step | presented frames: vblanks each was shown (1, 2, 3, 4+), late, torn; input lag in vblanks (avg, min, max) |
 | `BENCH_PROF` | every step, profiler on | average µs of `update`, `draw`, `objects`, `mesh_cull`, `mesh_light`, `mesh_tris`, `audio`, `menu`, `hud`, `dialog`, `input`, `wait_input` |
-| `BENCH_INPUT` | every step | input sync and pacing; % of frames on the latest vblank's read, its mean arrival after the vblank, the mean and worst wait, timeouts |
+| `BENCH_INPUT` | every step | input sync and pacing; % of frames on the latest vblank's read, its mean arrival after the vblank, the mean and worst wait, timeouts, frames `INPUT_SYNC_AUTO` did not wait (`auto_skips`) |
 | `BENCH_LAYOUT` | once per run | addresses of `bench_draw()`'s stack frame and of the pillar's vertex and index data (D26) |
 | `BENCH,END` / `BENCH,ABORTED` | at the end / on Start | step count and seconds / step index |
 

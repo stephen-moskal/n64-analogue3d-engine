@@ -1,7 +1,9 @@
 #include "mesh.h"
 #include <stdlib.h>
 #include <string.h>
+#include <malloc.h>
 #include <math.h>
+#include "../engine/hot.h"
 
 // Mesh building and bounds. No rendering dependencies, so this file is also
 // compiled into the host unit tests (tests/host).
@@ -192,21 +194,49 @@ void mesh_analyze_group(const Mesh *mesh, MeshFaceGroup *group) {
     }
 }
 
+// --- Geometry placement (S9.1, D26; the colours are in engine/hot.h) ---
+
+// Next free colour in the window. Reset at every scene init, so a scene's
+// meshes get the same colours after every boot and every reset.
+static uint32_t geometry_cursor = ENGINE_GEOMETRY_COLOUR_LO;
+
+void mesh_placement_reset(void) {
+    geometry_cursor = ENGINE_GEOMETRY_COLOUR_LO;
+}
+
+// A block of `bytes` at a chosen D-cache colour: packed after the previous
+// block in [LO, HI), wrapping; a larger block starts at LO. The allocation is
+// 8 KB aligned, so the colour is its offset; the bytes before it (at most
+// HI - 16) are the price of a fixed colour. *raw gets the pointer to free.
+static char *geometry_alloc(size_t bytes, void **raw) {
+    size_t size = (bytes + 15) & ~(size_t)15;
+    uint32_t colour = ENGINE_GEOMETRY_COLOUR_LO;
+    if (size <= ENGINE_GEOMETRY_COLOUR_HI - ENGINE_GEOMETRY_COLOUR_LO) {
+        if (geometry_cursor + size > ENGINE_GEOMETRY_COLOUR_HI) geometry_cursor = ENGINE_GEOMETRY_COLOUR_LO;
+        colour = geometry_cursor;
+        geometry_cursor += (uint32_t)size;
+    }
+    char *block = memalign(ENGINE_DCACHE_BYTES, colour + size);
+    *raw = block;
+    return block ? block + colour : NULL;
+}
+
 // --- Finalize ---
 
 void mesh_finalize(Mesh *mesh) {
     if (mesh->finalized) return;
     mesh_compute_bounds(mesh);
 
-    // One allocation for both arrays, aligned to the 16-byte D-cache line: a
-    // 32-byte vertex then spans exactly two lines, and a mesh's vertex and
-    // index data sit together. The build arrays (grown by doubling) are freed.
+    // One allocation for both arrays, at a chosen D-cache colour (above) and
+    // so aligned to the 16-byte line: a 32-byte vertex spans exactly two
+    // lines, and a mesh's vertex and index data sit together. The build
+    // arrays (grown by doubling) are freed.
     size_t vbytes = sizeof(MeshVertex) * (size_t)mesh->vertex_count;
     size_t ibytes = sizeof(uint16_t) * (size_t)mesh->index_count;
     if (vbytes + ibytes > 0) {
-        char *raw = malloc(vbytes + ibytes + 15);
-        if (raw) {      // out of memory: keep the (valid) build arrays
-            char *data = (char *)(((uintptr_t)raw + 15) & ~(uintptr_t)15);
+        void *raw;
+        char *data = geometry_alloc(vbytes + ibytes, &raw);
+        if (data) {     // out of memory: keep the (valid) build arrays
             if (vbytes) memcpy(data, mesh->vertices, vbytes);
             if (ibytes) memcpy(data + vbytes, mesh->indices, ibytes);
             free(mesh->vertices);

@@ -30,7 +30,7 @@ typedef enum {
     PROF_FRAME,             // wall time, loop top to loop top
     PROF_WAIT_DISPLAY,      // blocked in display_get() waiting for a free framebuffer
     PROF_PACE,              // low-latency pacing: waiting for the last frame to reach the screen (engine.h)
-    PROF_WAIT_INPUT,        // waiting for the vblank's controller read (input.h, INPUT_SYNC_FRESH)
+    PROF_WAIT_INPUT,        // waiting for the vblank's controller read (input.h, INPUT_SYNC_FRESH / AUTO)
     PROF_INPUT,             //   input_poll(): pads to actions
     PROF_UPDATE,            //   scene_manager_update()
     PROF_PHYSICS,           //     physics_world_update()

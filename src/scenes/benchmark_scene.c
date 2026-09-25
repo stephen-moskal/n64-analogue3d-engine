@@ -376,7 +376,7 @@ static void setup_step(Scene *scene) {
     L->point_light_count = 0;
     for (int i = 0; i < MAX_POINT_LIGHTS; i++) L->point_lights[i].active = false;
     L->shadow.mode = SHADOW_OFF;
-    input_set_sync(INPUT_SYNC_FRESH);           // the defaults; LATENCY steps set their own
+    input_set_sync(INPUT_SYNC_AUTO);            // the defaults; LATENCY steps set their own
     engine_set_pacing(ENGINE_PACING_THROUGHPUT);
 
     switch (st->kind) {
@@ -446,7 +446,7 @@ static void setup_step(Scene *scene) {
         layout_grid(16);
         draw_floor = true;
         burn_ms = st->param % 100;
-        input_set_sync(l == 0 ? INPUT_SYNC_LATEST : INPUT_SYNC_FRESH);
+        input_set_sync(l == 0 ? INPUT_SYNC_LATEST : l == 1 ? INPUT_SYNC_AUTO : INPUT_SYNC_FRESH);
         engine_set_pacing(l == 2 ? ENGINE_PACING_LOW_LATENCY : ENGINE_PACING_THROUGHPUT);
         break;
     }
@@ -573,11 +573,12 @@ static void finish_step(void) {
     float read_us = it->reads_timed ? it->read_sum_us / it->reads_timed : -1.0f;
     float wait_us = it->frames ? it->wait_sum_us / it->frames : 0.0f;
     (void)it; (void)fresh_pct; (void)read_us; (void)wait_us;
-    debugf("BENCH_INPUT,%s,%d,%d,%s,%s,%.1f,%.0f,%.0f,%.0f,%lu\n",
+    debugf("BENCH_INPUT,%s,%d,%d,%s,%s,%.1f,%.0f,%.0f,%.0f,%lu,%lu\n",
            kind_names[st->kind], step_index, st->param,
-           input_sync() == INPUT_SYNC_FRESH ? "fresh" : "latest",
+           input_sync() == INPUT_SYNC_AUTO ? "auto" : input_sync() == INPUT_SYNC_FRESH ? "fresh" : "latest",
            engine_pacing() == ENGINE_PACING_LOW_LATENCY ? "low_latency" : "throughput",
-           fresh_pct, read_us, wait_us, it->wait_max_us, (unsigned long)it->timeouts);
+           fresh_pct, read_us, wait_us, it->wait_max_us, (unsigned long)it->timeouts,
+           (unsigned long)it->auto_skips);
 }
 
 // ------------------------------------------------------------------------
@@ -634,7 +635,7 @@ static void bench_init(Scene *scene) {
     // would drop heavy steps to 30 FPS); restored on exit
     saved_sync = input_sync();
     saved_pacing = engine_pacing();
-    input_set_sync(INPUT_SYNC_FRESH);
+    input_set_sync(INPUT_SYNC_AUTO);
     engine_set_pacing(ENGINE_PACING_THROUGHPUT);
 
     action_context_init(&bench_ctx, "Benchmark", 0, CTX_CONSUME, bench_bindings, ARRAY_LEN(bench_bindings));
@@ -660,7 +661,7 @@ static void bench_init(Scene *scene) {
            "lag_avg_vblanks,lag_min,lag_max\n");
     debugf("BENCH_PROF_HDR,kind,step,param,update_us,draw_us,objects_us,mesh_cull_us,"
            "mesh_light_us,mesh_tris_us,audio_us,menu_us,hud_us,dialog_us,input_us,wait_input_us\n");
-    debugf("BENCH_INPUT_HDR,kind,step,param,sync,pacing,fresh_pct,read_us,wait_us,wait_max_us,timeouts\n");
+    debugf("BENCH_INPUT_HDR,kind,step,param,sync,pacing,fresh_pct,read_us,wait_us,wait_max_us,timeouts,auto_skips\n");
     setup_step(scene);
 }
 

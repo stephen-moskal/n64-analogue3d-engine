@@ -238,7 +238,7 @@ void engine_run(const EngineApp *app) {
 
         // Input as of the vblank display_get() woke on (input.h), then the
         // game: everything the frame shows reacts to it
-        input_poll(dt);
+        input_poll(dt, profiler_cpu_ms(), engine_frame_budget_ms());
         lag_frame_begin(fb, input_timing()->vblank);
 
         PROF_BEGIN(PROF_UPDATE);

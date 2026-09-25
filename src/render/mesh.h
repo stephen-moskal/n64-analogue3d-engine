@@ -97,9 +97,15 @@ void mesh_compute_bounds(Mesh *mesh);   // also analyses every face group
 void mesh_analyze_group(const Mesh *mesh, MeshFaceGroup *group);
 
 // Last build step: computes bounds and face-group data (mesh_compute_bounds)
-// and moves the geometry into one exact-size, 16-byte aligned allocation,
-// vertices then indices. Adding vertices or triangles afterwards fails.
+// and moves the geometry into one exact-size allocation, vertices then
+// indices, placed at a fixed D-cache colour (engine/hot.h, D26). Adding
+// vertices or triangles afterwards fails.
 void mesh_finalize(Mesh *mesh);
+
+// Start packing geometry blocks from the window's first colour again. The
+// scene system calls it at every scene init, so a scene's meshes take the
+// same colours after every boot and reset.
+void mesh_placement_reset(void);
 
 // World-space bounding sphere of a mesh under a model matrix: the centre is
 // transformed, the radius scaled by the largest axis scale (squared column

@@ -93,6 +93,25 @@ MARKS = {g[0] for g in GROUPS} | {g[1] for g in GROUPS}
 # sat at that address (S8: libdragon's font data, "on the stack" in every phase).
 NO_DATA_SCAN = {"rspq_next_buffer", "__rspq_deferred_poll", "rspq_flush_internal", "memset"}
 
+# Mesh geometry (S9.1, D26): mesh_finalize() places vertex and index blocks
+# at colours in [LO, HI), or up to MAX for a block too big for that window
+# (src/engine/hot.h). The phases that read mesh geometry, and how far into the
+# window their blocks may reach there.
+GEOMETRY_PHASES = {"mesh": "MAX", "shadow": "HI"}
+
+
+def geometry_window():
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src", "engine", "hot.h")
+    text = open(path, encoding="utf-8").read()
+    vals = {}
+    for key in ("LO", "HI", "MAX"):
+        m = re.search(r"#define\s+ENGINE_GEOMETRY_COLOUR_%s\s+(0x[0-9A-Fa-f]+|\d+)" % key, text)
+        if not m:
+            raise RuntimeError(f"ENGINE_GEOMETRY_COLOUR_{key} not found in {path}")
+        vals[key] = int(m.group(1), 0)
+    return vals
+
+
 # Arrays of which only a prefix is hot: the shadow scratch is indexed by vertex,
 # so a caster touches its first vertex_count entries (the demo's largest caster,
 # the 6x6 sphere, has fewer than 64; 128 leaves room)
@@ -232,6 +251,11 @@ def main():
         return texts[f]
 
     errors, notes, summary = [], [], []
+    try:
+        geo = geometry_window()
+    except (OSError, RuntimeError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
 
     # Pinned groups: colour and contents
     pinned_where = {}
@@ -325,6 +349,20 @@ def main():
                     errors.append(f"{phase}: pinned {name} and {other[1]} share D-cache set "
                                   f"{(line % N_SETS) * DLINE:#06x}")
                     break
+        # The geometry window: clear of this phase's stack and pinned data
+        if phase in GEOMETRY_PHASES:
+            lo, hi = geo["LO"], geo[GEOMETRY_PHASES[phase]]
+            window = {s for s in range(lo // DLINE, hi // DLINE)}
+            if window & stack_sets:
+                errors.append(f"{phase}: the mesh geometry window {lo:#06x}..{hi:#06x} shares "
+                              f"{len(window & stack_sets)} D-cache lines with the stack")
+            for name in sorted(n for n in touched if n in pinned_where):
+                a, size, _ = touched[name]
+                size = min(size, HOT_PREFIX.get(name, size))
+                shared = sets_of(a, a + max(size, 1)) & window
+                if shared:
+                    errors.append(f"{phase}: pinned {name} shares {len(shared)} D-cache lines with "
+                                  f"the mesh geometry window {lo:#06x}..{hi:#06x}")
         unpinned = [f"{n} ({k})" for n, k in clashes if n not in pinned_where]
         if unpinned:
             notes.append(f"{phase}: unpinned data on the stack's lines: {', '.join(unpinned)}")

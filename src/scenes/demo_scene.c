@@ -996,11 +996,13 @@ static void demo_update(Scene *scene, float dt) {
     if (settings_take(SETTING_FRAME_RATE))
         engine_set_fps_limit(settings_int(SETTING_FRAME_RATE));
     // Latency: Classic uses the newest completed controller read and renders
-    // ahead (the engine before S9); Low waits for the vblank's read; Lowest
-    // also starts each frame only once the last one is on screen
+    // ahead (the engine before S9); Low waits for the vblank's read while the
+    // frame has room (INPUT_SYNC_AUTO); Lowest always waits and also starts
+    // each frame only once the last one is on screen
     if (settings_take(SETTING_LATENCY)) {
         LatencyChoice l = (LatencyChoice)settings_int(SETTING_LATENCY);
-        input_set_sync(l == LATENCY_CLASSIC ? INPUT_SYNC_LATEST : INPUT_SYNC_FRESH);
+        input_set_sync(l == LATENCY_CLASSIC ? INPUT_SYNC_LATEST :
+                       l == LATENCY_LOW ? INPUT_SYNC_AUTO : INPUT_SYNC_FRESH);
         engine_set_pacing(l == LATENCY_LOWEST ? ENGINE_PACING_LOW_LATENCY : ENGINE_PACING_THROUGHPUT);
     }
     if (settings_take(SETTING_RUMBLE))

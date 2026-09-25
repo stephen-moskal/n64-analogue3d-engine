@@ -2,6 +2,7 @@
 #include "../debug/stats.h"
 #include "../debug/profiler.h"
 #include "../render/texture.h"
+#include "../render/mesh.h"
 #include "../render/atmosphere.h"
 #include "../engine/engine_config.h"
 #include "../engine/hot.h"
@@ -36,6 +37,9 @@ static ENGINE_HOT_LOOP void scene_draw_objects(Scene *scene) {
 void scene_init(Scene *scene) {
     // No objects yet; empty collision and physics worlds
     scene_objects_init(scene);
+
+    // The scene's meshes take their D-cache colours from the start (D26)
+    mesh_placement_reset();
 
     // Initialize lighting
     lighting_init(&scene->lighting);
