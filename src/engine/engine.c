@@ -57,19 +57,22 @@ const surface_t *engine_framebuffer(void) { return frame_fb; }
 static volatile uint32_t heap_pad_bytes __attribute__((section(".data"))) = ENGINE_HEAP_PAD;
 uint32_t engine_heap_pad(void) { return heap_pad_bytes; }
 
-// Frame queue: two rspq queues used in turn. A queue is rewritten only after
-// the RSP has run it (the syncpoint queued behind its run), which is normally
-// long past: waiting there means the RSP is a whole frame behind. A queue
-// grows to the largest frame recorded (~100 bytes per triangle) and keeps
-// that memory.
-#define FRAME_QUEUES  2
+// Frame queue: each frame is recorded into an rspq queue from a small pool
+// and run when the frame is complete. A queue is reused once the RSP has run
+// it (the syncpoint queued behind its run); the lowest-numbered finished
+// queue is taken, so only as many queues grow as there are frames in flight.
+// Each keeps its largest frame (~100 bytes per triangle) until
+// engine_frame_queue_release(). (Submitting a frame in segments, every 8
+// mesh draws, was measured in S2b: 3 % more CPU and no less input lag.)
+#define FRAME_QUEUES  4
 #define PENDING_CALLS 32
 static bool             frame_queue_on = true;
 static bool             frame_recording;
-static rspq_queue_t    *frame_queue[FRAME_QUEUES];
-static rspq_syncpoint_t frame_queue_done[FRAME_QUEUES];
-static bool             frame_queue_ran[FRAME_QUEUES];
-static int              frame_queue_next;
+static int              fq_cur = -1;            // pool index being recorded
+static uint32_t         fq_serial;              // submission order (0: never run)
+static rspq_queue_t    *fq_queue[FRAME_QUEUES];
+static rspq_syncpoint_t fq_done[FRAME_QUEUES];
+static uint32_t         fq_ran[FRAME_QUEUES];   // serial of the queue's last run
 static struct { void (*fn)(void *); void *arg; } pending_call[PENDING_CALLS];
 static int              pending_calls;
 
@@ -94,29 +97,53 @@ void engine_call_after_rdp(void (*fn)(void *), void *arg) {
     pending_calls++;
 }
 
-static rspq_queue_t *frame_record_begin(void) {
-    if (!frame_queue_on) return NULL;
-    int i = frame_queue_next;
-    if (!frame_queue[i]) {
-        frame_queue[i] = rspq_queue_create();
-    } else if (frame_queue_ran[i]) {
-        rspq_syncpoint_wait(frame_queue_done[i]);
-        rspq_queue_clear(frame_queue[i]);
+// A queue the RSP is done with: the lowest-numbered finished one, else a new
+// one, else wait for the oldest in flight (the RSP is frames behind).
+// Queues are created in index order, so an empty slot comes after every
+// existing queue. Not while recording.
+static int fq_acquire(void) {
+    int oldest = -1;
+    for (int i = 0; i < FRAME_QUEUES; i++) {
+        if (!fq_queue[i]) {
+            fq_queue[i] = rspq_queue_create();
+            return i;
+        }
+        if (!fq_ran[i] || rspq_syncpoint_check(fq_done[i])) {
+            rspq_queue_clear(fq_queue[i]);
+            return i;
+        }
+        if (oldest < 0 || fq_ran[i] < fq_ran[oldest]) oldest = i;
     }
-    rspq_queue_switch(frame_queue[i]);
-    frame_recording = true;
-    return frame_queue[i];
+    rspq_syncpoint_wait(fq_done[oldest]);
+    rspq_queue_clear(fq_queue[oldest]);
+    return oldest;
 }
 
-static void frame_record_end(rspq_queue_t *q) {
-    if (q) {
-        int i = frame_queue_next;
+void engine_frame_queue_release(void) {
+    if (frame_recording) return;
+    rspq_wait();
+    for (int i = 0; i < FRAME_QUEUES; i++) {
+        if (fq_queue[i]) rspq_queue_destroy(fq_queue[i]);
+        fq_queue[i] = NULL;
+        fq_ran[i] = 0;
+    }
+}
+
+static void frame_record_begin(void) {
+    if (!frame_queue_on) return;
+    fq_cur = fq_acquire();
+    rspq_queue_switch(fq_queue[fq_cur]);
+    frame_recording = true;
+}
+
+static void frame_record_end(void) {
+    if (frame_recording) {
         rspq_queue_switch(NULL);
         frame_recording = false;
-        rspq_queue_run(q);
-        frame_queue_done[i] = rspq_syncpoint_new();
-        frame_queue_ran[i] = true;
-        frame_queue_next = (i + 1) % FRAME_QUEUES;
+        rspq_queue_run(fq_queue[fq_cur]);
+        fq_done[fq_cur] = rspq_syncpoint_new();
+        fq_ran[fq_cur] = ++fq_serial;
+        fq_cur = -1;
         for (int c = 0; c < pending_calls; c++)
             rdpq_call_deferred(pending_call[c].fn, pending_call[c].arg);
         pending_calls = 0;
@@ -357,7 +384,7 @@ void engine_run(const EngineApp *app) {
         // Render
         rdp_debug_frame_begin();   // one-frame RDP capture, if requested
         rdpq_attach(fb, zbuf);
-        rspq_queue_t *fq = frame_record_begin();
+        frame_record_begin();
         PROF_BEGIN(PROF_DRAW);
         scene_manager_draw(app->scenes);
         PROF_END(PROF_DRAW);
@@ -372,7 +399,7 @@ void engine_run(const EngineApp *app) {
                                   .color = RGBA32(0xFF, 0x80, 0x40, 0xFF) };
             text_draw(&tbc, tb);
         }
-        frame_record_end(fq);
+        frame_record_end();
         rdpq_detach_show();
         last_fb = PhysicalAddr(fb->buffer);
         rdp_debug_frame_end();

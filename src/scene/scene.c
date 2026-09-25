@@ -5,6 +5,7 @@
 #include "../render/mesh.h"
 #include "../render/atmosphere.h"
 #include "../engine/engine_config.h"
+#include "../engine/frame_queue.h"
 #include "../engine/hot.h"
 #include <string.h>
 
@@ -160,6 +161,7 @@ void scene_manager_switch(SceneManager *mgr, Scene *next,
         if (mgr->current && mgr->current->loaded) {
             scene_cleanup(mgr->current);
         }
+        if (mgr->current != next) engine_frame_queue_release();   // the old scene's queue memory
         mgr->current = next;
         scene_init(next);
         mgr->transitioning = false;
@@ -204,6 +206,7 @@ void scene_manager_update(SceneManager *mgr, float dt) {
             if (mgr->current && mgr->current->loaded) {
                 scene_cleanup(mgr->current);
             }
+            if (mgr->current != mgr->pending) engine_frame_queue_release();
             mgr->current = mgr->pending;
             mgr->pending = NULL;
             scene_init(mgr->current);

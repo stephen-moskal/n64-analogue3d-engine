@@ -171,6 +171,8 @@ scene_cleanup(scene)
 └── scene->loaded = false
 ```
 
+When the scene manager then switches to a different scene, it also calls `engine_frame_queue_release()`: the engine's frame queues keep the size of the largest frame they recorded, so a heavy scene's command memory is given back ([ENGINE.md](ENGINE.md), frame queue). A soft reset keeps them.
+
 ### Soft Reset
 
 Setting `scene->reset_requested = true` makes the next `scene_manager_update()` run `scene_cleanup()` and `scene_init()` on the current scene and skip that frame's update. The demo's Settings → Reset Scene and the Debug tab's Reset Soak use it. Level restarts or a death screen can use the same mechanism.

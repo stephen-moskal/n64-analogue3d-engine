@@ -913,3 +913,17 @@ Adding the RDP Z clear to the queue changed nothing (±0.05 ms CPU, +0.5 ms RDP)
 - **Input lag** (vblanks, BENCH_PRESENT): Bench = UI 2.8–2.9 → 2.0, objects 32 2.85 → 2.0, Latency Low+4 ms 2.16 → 2.0. **Longer where the RDP's share of the frame is large**, because the RDP now starts a frame only once the CPU has recorded all of it: Classic+4 ms 2.21 → 3.0, Classic+8 ms 2.38 → 2.97, Low+8 ms 2.39 → 2.97, objects 48 2.58 → 2.97 (at 60 instead of 41 FPS), objects 64 3.02 → 3.50. Lowest (low-latency pacing) is unchanged at 1.0 / 2.0 / 2.0. S2b submits the frame in segments to win this back.
 - **Memory:** Reset Soak ×10: 0 B. Each queue keeps its largest frame (~100 bytes per triangle): the demo's heap after the benchmarks was 1,172,112 B against 964,592 B at S13 (+207 KB). S2b releases queue memory on scene switches.
 - **Mix start (`BENCH_RSPSTATE`):** with the frame queue, the RDP is idle at almost every mix start (48 pillars: busy 6 of 239 samples, against 239 of 239 before). `SP_PC` sampling was dropped: the A3D reported every sample in the first 256 bytes of IMEM, ares anywhere.
+
+## Phase 3 · S2b frame-queue segments measured, queue memory released (2026-09-25, debug build, Analogue 3D)
+
+**Segments.** A build submitting each frame in segments (every 8 drawn meshes and between `scene_draw()`'s phases) ran Bench = All, Latency and RSP (`...-p3-s2b-segments-*`). Bench = RSP compared it in one ROM with the single segment:
+
+| Pillars | one segment: CPU / lag | segments: CPU / lag |
+|---|---|---|
+| 32 | 10.95 ms / 2.00 vblanks | 11.24 ms (+2.6 %) / 2.00 |
+| 48 | 15.87 ms / 2.93 | 16.40 ms (+3.3 %) / 2.76 |
+| 64 | 20.98 ms / 3.50 | 21.55 ms (+2.7 %) / 3.50 |
+
+Bench = Latency was no better (Classic and Low with 4–8 ms burns 2.9–3.0 vblanks either way, Lowest 1.0 / 2.0 / 2.0). The RSP cannot forward frame N+1 before the RDP has finished frame N, and the lag added in S2a is frames queuing ahead in the triple buffer once the CPU keeps up with the display, which Latency = Lowest already prevents. Segments were dropped.
+
+**Kept:** the queues come from a pool of four (lowest finished first) and are destroyed on scene switches. Final build (`...-p3-s2b-all-bootbench-...`, `...-p3-s2b-soak-...`): Bench = All within ±1.7 % of S2a in every step, 0 regressions; Reset Soak ×10 0 B; the demo's heap after two benchmark runs 1,025,744 B (S2a 1,172,112, S13 964,592: the demo's own frame queues are ~61 KB). The benchmark was entered and left three times and the dialog opened with no fault. In ares one demo tour in four froze with no crash output (the screen stopped ~10 emulated seconds before the log); the other three, all earlier builds and the A3D session ran clean, so it is taken for an emulator hiccup. This Bench = All is S3's comparison point.

@@ -11,6 +11,7 @@
 
 #include <libdragon.h>
 #include "engine_config.h"
+#include "frame_queue.h"
 #include "../scene/scene.h"
 #include "../ui/menu.h"
 
@@ -79,6 +80,7 @@ uint32_t engine_heap_pad(void);
 // SYNC_FULL the RSP sends nothing until the RDP has finished that frame.
 // While the queue records, drawing code must not wait for the RSP
 // (rspq_wait, rdpq_call_deferred assert): use engine_call_after_rdp().
+// engine_frame_queue_release() (frame_queue.h) gives back its memory.
 void engine_set_frame_queue(bool on);
 bool engine_frame_queue(void);
 
