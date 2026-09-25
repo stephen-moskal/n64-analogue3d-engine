@@ -5,10 +5,13 @@
 #include <libdragon.h>
 
 #include "engine/engine.h"
+#include "input/action.h"
 #include "ui/menu.h"
 #include "ui/settings.h"
 #include "scene/scene.h"
 #include "scenes/demo_scene.h"
+#include "scenes/demo_controls.h"
+#include "scenes/demo_tour.h"
 #include "scenes/benchmark_scene.h"
 #include "debug/debug_menu.h"
 #include "debug/testbed.h"
@@ -23,6 +26,9 @@ static SceneManager scene_mgr;
 // requested from the Debug tab, and back to the demo when a benchmark ends
 static void app_frame(float dt) {
     (void)dt;
+#if defined(ENGINE_TOUR) && ENGINE_TOUR
+    demo_tour_frame();                    // make TOUR=1: the scripted screenshot tour
+#endif
     int req_scene, req_bench;
     if (debug_consume_scene_request(&req_scene, &req_bench)) {
         if (req_scene == 1) {
@@ -42,12 +48,15 @@ static void app_frame(float dt) {
 int main(void) {
     engine_init();
 
+    // The demo's action names (the Input overlay page shows them)
+    action_set_names(ACTION_GAME_FIRST, demo_action_names, DEMO_ACTION_COUNT);
+
     // The Start menu (a global overlay, kept across scenes): the game's
     // options, tabs 0-4 (ui/settings.c), then the Debug tab
     menu_init(&start_menu, "Start Menu");
     settings_init(&start_menu);
 
-    // Tab 5: Debug (Phase 1 tooling toggles — see src/debug/debug_menu.h)
+    // Tab 5: Debug (Phase 1 tooling toggles â€” see src/debug/debug_menu.h)
     int tab_d = menu_add_tab(&start_menu, "Debug");
     debug_menu_init(&start_menu, tab_d);
 
@@ -71,6 +80,9 @@ int main(void) {
     scene_manager_switch(&scene_mgr, benchmark_scene_get(), TRANSITION_CUT, 0);
 #else
     scene_manager_switch(&scene_mgr, demo_scene_get(), TRANSITION_CUT, 0);
+#endif
+#if defined(ENGINE_TOUR) && ENGINE_TOUR
+    demo_tour_init(&scene_mgr, &start_menu, tab_d);
 #endif
 
     engine_run(&(EngineApp){ .scenes = &scene_mgr, .menu = &start_menu, .on_frame = app_frame });

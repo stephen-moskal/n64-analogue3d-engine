@@ -65,8 +65,8 @@ static void my_init(Scene *scene) {
 }
 
 static void my_update(Scene *scene, float dt) {
-    action_update();   // poll the joypad: nothing else does (INPUT.md)
-    // Game logic
+    // The engine polled the controllers just before (input_poll): read actions
+    if (action_pressed(0, ACT_JUMP)) jump();
 }
 
 static void my_draw(Scene *scene) {
@@ -102,7 +102,7 @@ Scene *my_scene_get(void) {
 
 Two things a new scene must do itself:
 
-- **Poll input.** Each scene's `on_update` calls `action_update()` (the demo and benchmark scenes do). Without it no button reaches the game, and the Debug tab's D-Up/D-Down shortcuts stop working too.
+- **Push its controls.** Input is polled by the engine before every scene update (since S9), but a scene's actions only fire once it has pushed its contexts (`action_push_context`, usually in `on_init`, popped in `on_cleanup`; [INPUT.md](INPUT.md)). The Debug tab's D-Up/D-Down shortcuts work in every scene.
 - **Drive the Start menu, if it wants one.** The global menu is opened, updated and drawn by `demo_scene.c` only ([MENU_SYSTEM.md](MENU_SYSTEM.md)); the benchmark scene has none.
 
 A scene becomes active through `scene_manager_switch()`: `main.c` starts the demo and switches between demo and benchmark from the Debug tab's Scene item. The full recipe for adding and registering a scene is in [EXTENDING.md](EXTENDING.md).

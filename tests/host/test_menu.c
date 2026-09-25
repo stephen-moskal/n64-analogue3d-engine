@@ -1,5 +1,6 @@
 #include "test.h"
 #include "ui/menu.h"
+#include <string.h>
 
 // Menu model (menu.c): cursor, values, tabs, scrolling, cancel/revert.
 
@@ -66,6 +67,39 @@ static void test_menu_values_and_tabs(void) {
     CHECK(menu_get_value(&m, 0, 1) == 2);
 }
 
+// One frame of UI input at a time (what action_ui() hands the menu)
+static void test_menu_update(void) {
+    Menu m;
+    build(&m, 3);
+    menu_open(&m);
+    UiInput in = { .down = true };
+    menu_update(&m, &in);
+    CHECK(m.tabs[0].cursor == 1);
+    in = (UiInput){ .right = true };
+    menu_update(&m, &in);
+    CHECK(menu_get_value(&m, 0, 1) == 1);
+    in = (UiInput){ .next_tab = true };
+    menu_update(&m, &in);
+    CHECK(m.active_tab == 1);
+    in = (UiInput){ .start = true };
+    menu_update(&m, &in);
+    CHECK(m.is_open);                              // Start is the caller's
+    in = (UiInput){ .cancel = true };
+    menu_update(&m, &in);
+    CHECK(!m.is_open && menu_get_value(&m, 0, 1) == 0);   // reverted
+
+    menu_open(&m);
+    in = (UiInput){ .left = true };
+    menu_update(&m, &in);                          // item 0 wraps 0 -> 2
+    in = (UiInput){ .confirm = true };
+    menu_update(&m, &in);
+    CHECK(!m.is_open && menu_get_value(&m, 0, 0) == 2);   // applied
+    in = (UiInput){ .down = true };
+    menu_update(&m, &in);                          // closed: ignored
+    CHECK(!m.is_open && m.tabs[0].cursor == 0);
+    menu_update(&m, NULL);
+}
+
 static void test_menu_revert(void) {
     Menu m;
     build(&m, 3);
@@ -94,6 +128,7 @@ void run_menu_tests(void) {
     RUN_TEST(test_menu_cursor);
     RUN_TEST(test_menu_scroll);
     RUN_TEST(test_menu_values_and_tabs);
+    RUN_TEST(test_menu_update);
     RUN_TEST(test_menu_revert);
     RUN_TEST(test_menu_limits);
 }

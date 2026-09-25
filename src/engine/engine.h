@@ -26,8 +26,11 @@ typedef struct {
 // atmosphere and the shared Z-buffer. Call once, first.
 void engine_init(void);
 
-// The frame loop: dt from the display, update the scene, debug tooling, the
-// app's on_frame, render, present. Does not return.
+// The frame loop. Does not return. Each frame: (pacing), a framebuffer
+// (display_get), the audio mix, input as of that vblank (input_poll), the
+// scene update, debug tooling, the app's on_frame, rumble out, render,
+// present. Input is read after the framebuffer wait, not before it, so the
+// frame acts on the newest controller read (docs/ENGINE.md, "Frame loop").
 //
 // dt is display_get_delta_time(): the filtered time between presented
 // frames, a whole number of vblanks (1/60 s at a steady 60 FPS), not the
@@ -38,6 +41,19 @@ void engine_run(const EngineApp *app);
 // enforces it (display_set_fps_limit): display_get() waits, no busy loop.
 void engine_set_fps_limit(int fps);
 int  engine_fps_limit(void);
+
+// Frame pacing. THROUGHPUT renders ahead into the free framebuffer (triple
+// buffering): the steadiest frame rate, input shown about 2 vblanks after
+// its read. LOW_LATENCY starts a frame only once the previous one is on
+// screen: 1 vblank, as long as a frame (CPU and RDP) fits the budget; a
+// frame that does not waits for the next vblank, like double buffering.
+typedef enum {
+    ENGINE_PACING_THROUGHPUT,
+    ENGINE_PACING_LOW_LATENCY,
+} EnginePacing;
+
+void         engine_set_pacing(EnginePacing pacing);
+EnginePacing engine_pacing(void);
 
 // Frame budget in ms for the current cap (16.67 or 33.33)
 float engine_frame_budget_ms(void);

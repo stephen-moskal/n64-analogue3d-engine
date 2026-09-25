@@ -6,13 +6,13 @@
 #include "../scenes/benchmark_scene.h"
 #include "../engine/util.h"
 
-static const char *const overlay_options[] = {"Off", "Stats", "Profiler", "Memory", "Frame", "RSP"};
+static const char *const overlay_options[] = {"Off", "Stats", "Profiler", "Memory", "Frame", "RSP", "Input"};
 static const char *const on_off_options[]  = {"On", "Off"};
 static const char *const off_on_options[]  = {"Off", "On"};
 static const char *const dump_options[]    = {"---", "Dump!"};
 static const char *const reset_options[]   = {"---", "Reset!"};
 static const char *const scene_options[]   = {"Demo", "Benchmark"};
-static const char *const bench_options[]   = {"All", "Objects", "Particles", "Lights", "Textures", "Shadows", "Fillrate", "Overload", "Layout", "Audio", "UI"};
+static const char *const bench_options[]   = {"All", "Objects", "Particles", "Lights", "Textures", "Shadows", "Fillrate", "Overload", "Layout", "Audio", "UI", "Latency"};
 static const char *const run_options[]     = {"---", "Run!"};
 static const char *const capture_options[] = {"---", "Capture!"};
 static const char *const crash_options[]   = {"---", "Assert!"};
@@ -34,7 +34,6 @@ static bool        dump_requested   = false;
 static int         dump_countdown   = 0;      // closed-menu frames until the dump fires
 static bool        reset_requested  = false;
 static bool        dialog_requested = false;
-static bool        shortcuts_on     = true;
 static int         active_scene     = 0;      // scene currently shown (0 demo, 1 benchmark)
 static bool        scene_requested  = false;
 static int         requested_scene  = 0;
@@ -57,6 +56,9 @@ void debug_menu_init(Menu *menu, int tab) {
     menu_add_item(menu, tab, "Menu Sweep",  run_options,     ARRAY_LEN(run_options), 0);
     menu_add_item(menu, tab, "Dialog",      talk_options,    ARRAY_LEN(talk_options), 0);
 
+    // D-Up / D-Down shortcuts for player 1, below every game context
+    action_push_context(0, &action_ctx_debug);
+
 #if !ENGINE_DEBUG
     // Validator and profiler are compiled out of release builds
     menu_item_set_disabled(menu, tab, DBG_ITEM_RDP_CHECK, true);
@@ -65,14 +67,6 @@ void debug_menu_init(Menu *menu, int tab) {
     menu_item_set_disabled(menu, tab, DBG_ITEM_CRASH_TEST, true);
     profiler_enabled = false;
 #endif
-}
-
-// True if no game action is bound to this button (so a fixed shortcut can use it)
-static bool button_is_free(PhysicalButton btn) {
-    for (int a = 0; a < ACTION_COUNT; a++) {
-        if (action_get_binding((GameAction)a) == btn) return false;
-    }
-    return true;
 }
 
 static int item_value(DebugMenuItem item) {
@@ -86,14 +80,13 @@ static void item_set(DebugMenuItem item, int value) {
 void debug_menu_update(void) {
     if (!dbg_menu || dbg_menu->is_open) return;   // apply only after the menu closes
 
-    // Shortcuts (fixed buttons, only when unbound)
-    joypad_buttons_t pressed = joypad_get_buttons_pressed(JOYPAD_PORT_1);
-    if (!shortcuts_on) pressed = (joypad_buttons_t){0};
-    if (pressed.d_up && button_is_free(BTN_D_UP)) {
+    // Shortcuts: the debug context's actions (a context above that uses the
+    // button, or a menu or dialog, takes it first)
+    if (action_pressed(0, ACTION_DEBUG_OVERLAY)) {
         int next = (item_value(DBG_ITEM_OVERLAY) + 1) % OVERLAY_PAGE_COUNT;
         item_set(DBG_ITEM_OVERLAY, next);
     }
-    if (pressed.d_down && button_is_free(BTN_D_DOWN)) {
+    if (action_pressed(0, ACTION_DEBUG_DUMP)) {
         item_set(DBG_ITEM_DUMP_CSV, 1);
     }
 
@@ -182,8 +175,6 @@ void debug_menu_update(void) {
         ENGINE_LOG("[debug] reset peaks requested\n");
     }
 }
-
-void debug_menu_set_shortcuts(bool enabled) { shortcuts_on = enabled; }
 
 OverlayPage debug_overlay_page(void) { return overlay_page; }
 

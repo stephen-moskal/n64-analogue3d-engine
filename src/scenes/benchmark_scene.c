@@ -9,7 +9,7 @@
 #include "../render/shadow.h"
 #include "../render/floor.h"
 #include "../render/atmosphere.h"
-#include "../input/action.h"
+#include "../input/input.h"
 #include "../ui/text.h"
 #include "../ui/menu.h"
 #include "../ui/menu_view.h"
@@ -20,6 +20,7 @@
 #include "../engine/engine_config.h"
 #include "../engine/engine.h"
 #include "../engine/hot.h"
+#include "../engine/util.h"
 #include "../debug/stats.h"
 #include "../debug/profiler.h"
 #include "../debug/frametime.h"
@@ -45,6 +46,7 @@ typedef struct {
 
 static const char *kind_names[BENCH_KIND_COUNT] = {
     "all", "objects", "particles", "lights", "textures", "shadows", "fillrate", "overload", "layout", "audio", "ui",
+    "latency",
 };
 
 // One-line description shown under the status line (param is substituted)
@@ -60,6 +62,7 @@ static const char *kind_desc[BENCH_KIND_COUNT] = {
     "%d: variant*1000+pillars (0 shared, 1-4 at 0/2/4/6 KB, 5 reversed)",
     "%d: codec*100+poll*10+sfx (0 none 1 raw 2 vadpcm 3 opus)",
     "%d: menu 0x-1x, style 2x-3x, HUD 4x, dlg 5x",
+    "%d: latency*100+burn ms (0 classic, 1 low, 2 lowest)",
 };
 
 static BenchKind  configured_kind = BENCH_ALL;
@@ -272,6 +275,13 @@ static void build_steps(BenchKind which) {
         static const int p[] = {0, 10, 1, 11, 2, 12, 3, 13, 4, 14, 20, 30, 40, 41, 50, 51};
         for (unsigned i = 0; i < sizeof(p) / sizeof(p[0]); i++) add_step(BENCH_UI, p[i]);
     }
+    if (which == BENCH_LATENCY) {
+        // param = latency setting*100 + CPU burn (ms) over the demo-like load
+        // (floor + 16 pillars, ~8 ms): each setting light, loaded, near the budget
+        static const int burn[] = {0, 4, 8};
+        for (unsigned i = 0; i < sizeof(burn) / sizeof(burn[0]); i++)
+            for (int l = 0; l <= 2; l++) add_step(BENCH_LATENCY, l * 100 + burn[i]);
+    }
 }
 
 // Lay out n instances on a square grid centred on the origin
@@ -366,6 +376,8 @@ static void setup_step(Scene *scene) {
     L->point_light_count = 0;
     for (int i = 0; i < MAX_POINT_LIGHTS; i++) L->point_lights[i].active = false;
     L->shadow.mode = SHADOW_OFF;
+    input_set_sync(INPUT_SYNC_FRESH);           // the defaults; LATENCY steps set their own
+    engine_set_pacing(ENGINE_PACING_THROUGHPUT);
 
     switch (st->kind) {
     case BENCH_OBJECTS:
@@ -426,6 +438,16 @@ static void setup_step(Scene *scene) {
         audio_sfx = (st->param % 10) != 0;
         if (codec == 0) snd_music_stop(0.0f);
         else            snd_music_play(audio_track[codec], 0.0f);
+        break;
+    }
+    case BENCH_LATENCY: {
+        // The demo's Latency choices (settings.h, LatencyChoice)
+        int l = st->param / 100;
+        layout_grid(16);
+        draw_floor = true;
+        burn_ms = st->param % 100;
+        input_set_sync(l == 0 ? INPUT_SYNC_LATEST : INPUT_SYNC_FRESH);
+        engine_set_pacing(l == 2 ? ENGINE_PACING_LOW_LATENCY : ENGINE_PACING_THROUGHPUT);
         break;
     }
     case BENCH_UI:
@@ -523,10 +545,11 @@ static void finish_step(void) {
 
     // What reached the screen during the step: vblanks per presented frame
     // (frametime.h; the last 256 presents of the measured frames)
-    debugf("BENCH_PRESENT,%s,%d,%d,%d,%u,%u,%u,%u,%d,%.3f,%d,%d\n",
+    debugf("BENCH_PRESENT,%s,%d,%d,%d,%u,%u,%u,%u,%d,%.3f,%d,%d,%.3f,%d,%d\n",
            kind_names[st->kind], step_index, st->param, ft.presents,
            ft.present_hist[0], ft.present_hist[1], ft.present_hist[2], ft.present_hist[3],
-           ft.late, ft.present_avg_vblanks, ft.torn, ft.torn_worst_halfline);
+           ft.late, ft.present_avg_vblanks, ft.torn, ft.torn_worst_halfline,
+           ft.lag_avg, ft.lag_min, ft.lag_max);
 
     // CPU breakdown of the step (profiler moving averages, ~32 frames), so a
     // regression can be pinned to a stage of mesh_draw. Separate row type:
@@ -534,18 +557,39 @@ static void finish_step(void) {
     if (g_prof_on) {
         const ProfilerFrame *pf = profiler_get();
         (void)pf;
-        debugf("BENCH_PROF,%s,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f\n",
+        debugf("BENCH_PROF,%s,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f\n",
                kind_names[st->kind], step_index, st->param,
                pf->avg_us[PROF_UPDATE], pf->avg_us[PROF_DRAW], pf->avg_us[PROF_OBJECTS],
                pf->avg_us[PROF_MESH_CULL], pf->avg_us[PROF_MESH_LIGHT], pf->avg_us[PROF_MESH_TRIS],
                pf->avg_us[PROF_AUDIO], pf->avg_us[PROF_MENU], pf->avg_us[PROF_HUD],
-               pf->avg_us[PROF_DIALOG]);
+               pf->avg_us[PROF_DIALOG], pf->avg_us[PROF_INPUT], pf->avg_us[PROF_WAIT_INPUT]);
     }
+
+    // The controller read over the measured frames (input.h): how many frames
+    // got the latest vblank's read, when it came in after its vblank (-1: no
+    // read timed), the frame's wait for it, the worst wait, the timeouts
+    const InputTiming *it = input_timing();
+    float fresh_pct = it->frames ? 100.0f * it->fresh_frames / it->frames : 0.0f;
+    float read_us = it->reads_timed ? it->read_sum_us / it->reads_timed : -1.0f;
+    float wait_us = it->frames ? it->wait_sum_us / it->frames : 0.0f;
+    (void)it; (void)fresh_pct; (void)read_us; (void)wait_us;
+    debugf("BENCH_INPUT,%s,%d,%d,%s,%s,%.1f,%.0f,%.0f,%.0f,%lu\n",
+           kind_names[st->kind], step_index, st->param,
+           input_sync() == INPUT_SYNC_FRESH ? "fresh" : "latest",
+           engine_pacing() == ENGINE_PACING_LOW_LATENCY ? "low_latency" : "throughput",
+           fresh_pct, read_us, wait_us, it->wait_max_us, (unsigned long)it->timeouts);
 }
 
 // ------------------------------------------------------------------------
 // Scene callbacks
 // ------------------------------------------------------------------------
+
+// Start (any player) aborts the run. Consuming, not modal: the debug
+// context below it keeps the D-Up / D-Down shortcuts during a run.
+static const ActionBinding bench_bindings[] = { BIND(ACTION_UI_START, BTN_START) };
+static ActionContext bench_ctx;
+static InputSync     saved_sync;
+static EnginePacing  saved_pacing;
 
 static void bench_init(Scene *scene) {
     finished = false;
@@ -586,6 +630,16 @@ static void bench_init(Scene *scene) {
     atmosphere_set_fog_enabled(false);
     atmosphere_set_sky_enabled(false);
 
+    // The default latency settings for comparable numbers (a demo on Lowest
+    // would drop heavy steps to 30 FPS); restored on exit
+    saved_sync = input_sync();
+    saved_pacing = engine_pacing();
+    input_set_sync(INPUT_SYNC_FRESH);
+    engine_set_pacing(ENGINE_PACING_THROUGHPUT);
+
+    action_context_init(&bench_ctx, "Benchmark", 0, CTX_CONSUME, bench_bindings, ARRAY_LEN(bench_bindings));
+    for (int p = 0; p < ACTION_PLAYERS; p++) action_push_context(p, &bench_ctx);
+
     CameraConfig cfg = CAMERA_DEFAULT;
     cfg.distance  = 1100.0f;
     cfg.elevation = 0.55f;
@@ -602,9 +656,11 @@ static void bench_init(Scene *scene) {
            kind_names[configured_kind], step_count, WARMUP_FRAMES, MEASURE_FRAMES);
     debugf("BENCH_HDR,kind,step,param,frames,fps,avg_ms,p99_ms,low1_fps,cpu_avg_ms,cpu_max_ms,"
            "rdp_busy_ms,rdp_busy_pct,tris,tex_uploads,heap_kb\n");
-    debugf("BENCH_PRESENT_HDR,kind,step,param,presents,vb1,vb2,vb3,vb4plus,late,avg_vblanks,torn,torn_worst_halfline\n");
+    debugf("BENCH_PRESENT_HDR,kind,step,param,presents,vb1,vb2,vb3,vb4plus,late,avg_vblanks,torn,torn_worst_halfline,"
+           "lag_avg_vblanks,lag_min,lag_max\n");
     debugf("BENCH_PROF_HDR,kind,step,param,update_us,draw_us,objects_us,mesh_cull_us,"
-           "mesh_light_us,mesh_tris_us,audio_us,menu_us,hud_us,dialog_us\n");
+           "mesh_light_us,mesh_tris_us,audio_us,menu_us,hud_us,dialog_us,input_us,wait_input_us\n");
+    debugf("BENCH_INPUT_HDR,kind,step,param,sync,pacing,fresh_pct,read_us,wait_us,wait_max_us,timeouts\n");
     setup_step(scene);
 }
 
@@ -612,9 +668,7 @@ static void bench_update(Scene *scene, float dt) {
     (void)dt;
     if (finished) return;
 
-    action_update();   // polls the joypad (debug shortcuts rely on it too)
-    joypad_buttons_t pressed = joypad_get_buttons_pressed(JOYPAD_PORT_1);
-    if (pressed.start) {
+    if (action_any_pressed(ACTION_UI_START, NULL)) {
         aborted = true;
         finished = true;
         debugf("BENCH,ABORTED,%d\n", step_index);
@@ -677,7 +731,10 @@ static void bench_update(Scene *scene, float dt) {
     scene->camera.azimuth = step_frame * (CAMERA_SPIN / 60.0f);
     scene->camera.dirty = true;
 
-    if (step_frame == WARMUP_FRAMES) frametime_reset();
+    if (step_frame == WARMUP_FRAMES) {
+        frametime_reset();
+        input_reset_timing();
+    }
     if (step_frame > WARMUP_FRAMES) {
         const EngineStats *s = stats_get();          // previous (measured) frame
         acc_tris    += stats_tris_total(s);
@@ -858,6 +915,9 @@ static void bench_cleanup(Scene *scene) {
     texture_cleanup();
     atmosphere_set_fog_enabled(saved_fog);
     atmosphere_set_sky_enabled(saved_sky);
+    input_set_sync(saved_sync);
+    engine_set_pacing(saved_pacing);
+    for (int p = 0; p < ACTION_PLAYERS; p++) action_pop_context(p, &bench_ctx);
     if (!aborted && !finished) debugf("BENCH,ABORTED,%d\n", step_index);
 }
 

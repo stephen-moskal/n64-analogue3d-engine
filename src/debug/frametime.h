@@ -21,6 +21,10 @@
  * scanning the picture is "torn": the lines below it come from the new frame,
  * the lines above from the old one (D18: the RDP validator delays the vblank
  * interrupt this way).
+ *
+ * Input lag (S9): for each presented frame, the vblanks from the controller
+ * read its input came from (input.h) to the vblank it reached the screen
+ * (frametime_record_lag). The scanout adds the time down to a given line.
  * Pure C (no libdragon) so it can be unit-tested on the host.
  */
 
@@ -30,6 +34,7 @@
 #define FRAMETIME_BUCKETS  24      // 1.5 ms each, 0-36 ms; last bucket = overflow
 #define FRAMETIME_BUCKET_US 1500
 #define FRAMETIME_PRESENT_BUCKETS 4   // shown for 1, 2, 3, 4+ vblanks
+#define FRAMETIME_LAG_BUCKETS 4       // input lag of 1, 2, 3, 4+ vblanks
 
 typedef struct {
     int      count;                // frames in the window
@@ -47,6 +52,12 @@ typedef struct {
     float    present_avg_vblanks;
     int      torn;                 // flips after the active picture had started
     int      torn_worst_halfline;  // latest such flip (VI half-line), 0 if none
+
+    // Input lag of the presented frames (the last FRAMETIME_WINDOW), in vblanks
+    int      lag_count;
+    float    lag_avg;
+    int      lag_min, lag_max;
+    uint16_t lag_hist[FRAMETIME_LAG_BUCKETS];      // 1, 2, 3, 4+
 } FrameTimeStats;
 
 void frametime_record(uint32_t frame_us, uint32_t cpu_us);
@@ -54,6 +65,9 @@ void frametime_record(uint32_t frame_us, uint32_t cpu_us);
 // torn_halfline: the VI half-line the flip happened at when that was inside
 // the active picture (a tear), else 0. Safe to call from the vblank interrupt.
 void frametime_record_present(int vblanks, int torn_halfline);
+// A frame reached the screen this many vblanks after the controller read it
+// used. Safe to call from the vblank interrupt.
+void frametime_record_lag(int vblanks);
 void frametime_get(FrameTimeStats *out, float budget_ms);
 void frametime_reset(void);
 void frametime_dump_csv(uint32_t frame_index, float budget_ms);

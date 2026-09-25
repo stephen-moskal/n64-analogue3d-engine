@@ -17,9 +17,10 @@ static bool header_sent = false;
 static const struct { const char *name; int depth; } slot_info[PROF_SLOT_COUNT] = {
     [PROF_FRAME]           = {"frame",         0},
     [PROF_WAIT_DISPLAY]    = {"wait_display",  1},
-    [PROF_LIMITER]         = {"limiter",       1},
+    [PROF_PACE]            = {"pace",          1},
+    [PROF_WAIT_INPUT]      = {"wait_input",    1},
+    [PROF_INPUT]           = {"input",         1},
     [PROF_UPDATE]          = {"update",        1},
-    [PROF_INPUT]           = {"input",         2},
     [PROF_PHYSICS]         = {"physics",       2},
     [PROF_PARTICLE_UPDATE] = {"particle_upd",  2},
     [PROF_SCENE_SYS]       = {"scene_sys",     2},
@@ -185,7 +186,8 @@ void profiler_reset_peaks(void) {
 }
 
 float profiler_cpu_ms(void) {
-    float us = pf.avg_us[PROF_FRAME] - pf.avg_us[PROF_WAIT_DISPLAY] - pf.avg_us[PROF_LIMITER];
+    float us = pf.avg_us[PROF_FRAME] - pf.avg_us[PROF_WAIT_DISPLAY] - pf.avg_us[PROF_PACE]
+             - pf.avg_us[PROF_WAIT_INPUT];
     return us > 0.0f ? us / 1000.0f : 0.0f;
 }
 

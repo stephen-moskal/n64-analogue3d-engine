@@ -17,9 +17,9 @@
  * (release builds) and are skipped at runtime when the Debug tab's
  * Profiler item is Off.
  *
- * FRAME, WAIT_DISPLAY and LIMITER are always measured (three reads per frame)
- * so CPU work = FRAME - WAIT_DISPLAY - LIMITER can be compared with the
- * profiler on and off.
+ * FRAME and the three waits (WAIT_DISPLAY, PACE, WAIT_INPUT) are always
+ * measured, so CPU work = FRAME minus the waits can be compared with the
+ * profiler on and off (profiler_cpu_ms).
  */
 
 #include <stdint.h>
@@ -29,9 +29,10 @@
 typedef enum {
     PROF_FRAME,             // wall time, loop top to loop top
     PROF_WAIT_DISPLAY,      // blocked in display_get() waiting for a free framebuffer
-    PROF_LIMITER,           // unused since S6.2 (the display module paces; kept for CSV columns)
+    PROF_PACE,              // low-latency pacing: waiting for the last frame to reach the screen (engine.h)
+    PROF_WAIT_INPUT,        // waiting for the vblank's controller read (input.h, INPUT_SYNC_FRESH)
+    PROF_INPUT,             //   input_poll(): pads to actions
     PROF_UPDATE,            //   scene_manager_update()
-    PROF_INPUT,             //     action/input polling
     PROF_PHYSICS,           //     physics_world_update()
     PROF_PARTICLE_UPDATE,   //     particle_update()
     PROF_SCENE_SYS,         //     camera_update + collision_test_all

@@ -70,7 +70,7 @@ ares (Homebrew Mode on): Tools → Tracer (CPU trace), Tools → Memory. Remembe
 - **Crash on startup** — asset format mismatch (see above), a `sprite_load`/`wav64_open` path typo (paths are `rom:/...`), or a DMA buffer that is not uncached/8-byte aligned.
 - **Graphics wrong on hardware only** — RDP mode/format mismatch (fill mode with triangles, `TRIFMT_ZBUF_*` without an attached Z-buffer, combiner vs vertex format). Enable `rdpq_debug_start()`.
 - **RSP timeout in `display_get`** — RDP pipeline misconfiguration; same checks.
-- **Input not working** — `action_init()` (which calls `joypad_init()`) must run before polling; check the port.
+- **Input not working** — the scene must push a context that binds the action (`action_push_context`), and a modal context above it (a menu or dialog left open) hides everything; the Input overlay page shows each player's port and context stack. Check the port.
 
 ## Performance
 

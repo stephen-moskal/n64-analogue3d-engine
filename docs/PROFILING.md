@@ -27,16 +27,18 @@ PROF_END(PROF_FLOOR);
 - Scopes compile out in release (`ENGINE_PROFILE=0`) and are skipped at runtime when Debug → Profiler is Off. Overhead measured on the A3D: ~0.1 ms per frame.
 - A slot can be entered many times per frame (once per mesh); time and calls accumulate. Nested slots are timed separately, so a parent includes its children.
 - Values: exponential moving average over ~32 frames (`avg_us`), last frame (`last_us`), and peak since boot or Reset Peaks (`peak_us`).
-- `frame`, `wait_display` and `limiter` are always measured. **CPU work = frame − wait_display − limiter** (the HUD's CPU value). Since S6.2 the 30 FPS wait is inside `wait_display` and `limiter` is 0.
+- `frame` and the three waits (`wait_display`, `pace`, `wait_input`) are always measured. **CPU work = frame − wait_display − pace − wait_input** (the HUD's CPU value). The 30 FPS wait is inside `wait_display` (S6.2).
 
 Slots and nesting:
 
 ```
 frame                 loop top to loop top (wall time)
   wait_display        blocked in display_get() for a free framebuffer = idle headroom
-  limiter             unused since S6.2 (the display module paces inside wait_display); kept for the CSV columns
+  pace                low-latency pacing: waiting for the last frame to reach the screen (idle; S9, ENGINE.md)
+  wait_input          waiting for the vblank's controller read (idle; S9, input.h INPUT_SYNC_FRESH)
+  input               input_poll(): the pads sampled and mapped to every player's actions
   update              scene_manager_update
-    input / physics (step + body sync) / particle_upd / scene_sys (camera, collider sync, collision)
+    physics (step + body sync) / particle_upd / scene_sys (camera, collider sync, collision)
   draw                scene_manager_draw
     sky / floor / shadows / objects / particle_draw / hud / menu / dialog
       objects > mesh_cull / mesh_light / mesh_tris

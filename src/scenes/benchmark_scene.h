@@ -34,6 +34,7 @@ typedef enum {
     BENCH_LAYOUT,       // data-placement sensitivity (not part of "All"); roadmap D26
     BENCH_AUDIO,        // mixer cost per music encoding and poll point (not part of "All")
     BENCH_UI,           // Start menu drawn immediate vs cached, with scripted input (not part of "All")
+    BENCH_LATENCY,      // input lag per latency setting and CPU load (not part of "All"); S9
     BENCH_KIND_COUNT
 } BenchKind;
 

@@ -6,8 +6,10 @@
  *
  * The tab lives in the global start menu (built in main.c). Values are read
  * every frame while the menu is closed, so B (Cancel) reverts changes like any
- * other tab. Shortcuts while the menu is closed and the button is not bound to
- * a game action: D-Up cycles overlay pages, D-Down requests a CSV dump.
+ * other tab. Shortcuts: the engine's debug context (action_ctx_debug, pushed
+ * for player 1 at the bottom of the stack): D-Up cycles overlay pages, D-Down
+ * requests a CSV dump, unless a game context or a menu or dialog above it
+ * uses the button (docs/INPUT.md).
  */
 
 #include <stdbool.h>
@@ -15,7 +17,7 @@
 
 // Item order in the Debug tab (append new items at the end)
 typedef enum {
-    DBG_ITEM_OVERLAY,       // Off / Stats / Profiler / Memory / Frame / RSP
+    DBG_ITEM_OVERLAY,       // Off / Stats / Profiler / Memory / Frame / RSP / Input
     DBG_ITEM_PROFILER,      // On / Off
     DBG_ITEM_RDP_CHECK,     // Off / On  (debug builds only)
     DBG_ITEM_DUMP_CSV,      // --- / Dump!   (self-resetting)
@@ -38,6 +40,7 @@ typedef enum {
     OVERLAY_MEMORY,
     OVERLAY_FRAMETIME,
     OVERLAY_RSP,
+    OVERLAY_INPUT,
     OVERLAY_PAGE_COUNT
 } OverlayPage;
 
@@ -45,10 +48,6 @@ void debug_menu_init(Menu *menu, int tab);
 
 // Call once per frame after the scene update (input has been polled).
 void debug_menu_update(void);
-
-// The D-Up / D-Down shortcuts are paused while a scene shows a modal UI that
-// reads the D-pad (e.g. a dialog choice). Scenes set it each frame they need it.
-void debug_menu_set_shortcuts(bool enabled);
 
 OverlayPage debug_overlay_page(void);
 const char *debug_overlay_page_name(OverlayPage page);

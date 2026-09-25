@@ -3,7 +3,7 @@
 ## Project Overview
 Nintendo 64 homebrew game engine built on libdragon (`preview` branch, vendored as the `libdragon/` git submodule pinned at `39d0d6096`, 2026-09-15; upgraded from `10f3bd43e` in Phase 2 S4b). Verified on real hardware (Analogue 3D via SummerCart64) and in the ares emulator. Long-term goal: an action-RPG engine supporting souls-like combat and Final Fantasy Tactics-style battles, general enough for other genres.
 
-Current state (2026-09-24): engine features from v1 (mesh system, multi-object scenes, camera, collision, physics, lighting + shadows, billboards, particles, fog/atmosphere, audio, action-mapped input, tabbed menu, text) plus the Phase 1 developer tooling in `src/debug/` (profiler, stats, memory, frame time, overlay pages, RDP counters, RDP capture, crash test, Reset Soak, Menu Sweep), a benchmark scene, host unit tests and CI. Planning lives in `docs/ROADMAP_v2.md`: Phases 0 and 1 are done; Phase 2 (engine hardening, stages S0–S13) is in progress with S0–S4b verified on the A3D (S4b: libdragon upgrade fixing the RSP race D28, sound module rework); S5 (UI core: cached menu, HUD and overlay text, three styles; dialog system with JSON source and text box) and S6 (engine core in src/engine/, frame pacing, hot data pinned to fixed D-cache colours, D18 root-caused in libdragon's validator) S7 (the scene owns physics and colliders; object flags), S7.1 (the per-object draw path pinned, D35) and S8 (settings module: the game's options as one table, D10, D27) verified 2026-09-24; next S9 (input unification), then CPU-path graphics features and Tiny3D. The engine is CPU-bound (see `docs/BENCHMARKS.md`).
+Current state (2026-09-25): engine features from v1 (mesh system, multi-object scenes, camera, collision, physics, lighting + shadows, billboards, particles, fog/atmosphere, audio, action-mapped input, tabbed menu, text) plus the Phase 1 developer tooling in `src/debug/` (profiler, stats, memory, frame time, overlay pages, RDP counters, RDP capture, crash test, Reset Soak, Menu Sweep), a benchmark scene, host unit tests and CI. Planning lives in `docs/ROADMAP_v2.md`: Phases 0 and 1 are done; Phase 2 (engine hardening, stages S0–S13) is in progress with S0–S4b verified on the A3D (S4b: libdragon upgrade fixing the RSP race D28, sound module rework); S5 (UI core: cached menu, HUD and overlay text, three styles; dialog system with JSON source and text box) and S6 (engine core in src/engine/, frame pacing, hot data pinned to fixed D-cache colours, D18 root-caused in libdragon's validator) S7 (the scene owns physics and colliders; object flags), S7.1 (the per-object draw path pinned, D35) and S8 (settings module: the game's options as one table, D10, D27) verified 2026-09-24; S9 (input: 4 players, action contexts, one input path for game, UI and tools, lowest-latency polling with measured input lag, rumble; D12) 2026-09-25; next S10 (particle blend modes), then CPU-path graphics features and Tiny3D. The engine is CPU-bound (see `docs/BENCHMARKS.md`).
 
 ## Build & Deploy
 Development happens on Windows 11 (PowerShell) and macOS. The `libdragon` npm CLI runs `make` inside the Docker container `ghcr.io/dragonminded/libdragon:preview` (config in `.libdragon/config.json`, vendor strategy = submodule). Full setup: `docs/SETUP.md`.
@@ -12,6 +12,7 @@ Development happens on Windows 11 (PowerShell) and macOS. The `libdragon` npm CL
 libdragon make                    # debug build -> engine-debug.z64 (validator, asserts, profiler)
 libdragon make BUILD=release      # release build -> engine.z64 (debug code compiled out)
 libdragon make BENCH=1            # engine-debug-bench.z64: boots straight into the full benchmark (BENCH_KIND=AUDIO: one kind)
+libdragon make TOUR=1             # engine-debug-tour.z64: scripted screenshot tour of the demo (README images)
 libdragon make clean              # also deletes generated filesystem/ assets; next make regenerates them
 libdragon install                 # rebuild libdragon into the container after touching the submodule
 libdragon exec bash tools/ci_build.sh   # what CI runs: both ROMs, host tests, budgets, hot-text layout
@@ -46,7 +47,8 @@ VS Code tasks (`.vscode/tasks.json`) wrap the same commands with per-OS variants
 - Every mesh builder ends with `mesh_finalize()` (bounds, group analysis, exact-size geometry block); nothing can be added afterwards.
 - Mesh winding: front faces are counter-clockwise seen from outside (the curved-group cull and the projected-shadow cull depend on it; `tests/host/test_mesh.c` checks the `mesh_defs` shapes).
 - The camera rebuilds its matrices only when `dirty` (set by the `camera_*` setters) or when following a target; code that edits `Camera` fields directly must set `dirty`.
-- Scenes poll input themselves (`action_update()` in `on_update`); the Start menu is driven by the demo scene only. The menu is nearly full (6/6 tabs; Debug uses 12 of 12 items, Controls 11) and `menu_add_item` returns -1 past the limits.
+- **Input (S9, docs/INPUT.md):** the engine polls the controllers once per frame, after `display_get()` and before the scene update (`input_poll`); scenes read actions (`action_pressed(player, id)` ...), never `joypad_poll()` / `joypad_get_*()` (the vblank interrupt polls the joypad module too; raw state is `input_pad(port)`). Actions come from per-player context stacks: a scene pushes its contexts in `on_init` and pops them in `on_cleanup`; the engine's `action_ctx_ui` (modal) is pushed for whoever drives a menu or dialog, `action_ctx_debug` (D-Up/D-Down) sits below every game context. Game action ids start at `ACTION_GAME_FIRST`; the demo's are in `src/scenes/demo_controls.c`. `menu_update()` and `textbox_update()` take a `UiInput` (`action_ui(player)`). The engine's vblank handler must stay installed before `joypad_init()` (it notes the SI state before libdragon queues the read), and VI registers are read with `vi_read()` in vblank handlers (libdragon writes them after all handlers ran).
+- The Start menu is driven by the demo scene only (any player's Start opens it; the opener drives it). The menu is nearly full (6/6 tabs; Debug uses 12 of 12 items, Settings 9, Controls 11) and `menu_add_item` returns -1 past the limits.
 - Game options (Start menu tabs 0–4) are one table in `src/ui/settings.c`: label, choices and values side by side with static asserts. Read them by `SettingId` with the typed accessors and apply them when they change (`settings_take` / `settings_take_range`); never index the Start menu by raw tab or item numbers (D10). `demo_init()` calls `settings_invalidate()` so every option is re-applied after a reset (D27).
 - Particle emitters keep the `ParticleEmitterDef` pointer: definitions must have static storage.
 - Frame pacing (docs/ENGINE.md): `dt` is `display_get_delta_time()` and the 30 FPS cap is `engine_set_fps_limit()` (libdragon's display limit, no busy-wait). Under triple buffering the loop time jitters (~12.5/21 ms) while every frame still reaches the screen on time, so judge smoothness by presented frames (Frame page "Shown late", `FTP` / `BENCH_PRESENT` rows), not loop p99.
@@ -65,16 +67,19 @@ src/render/                camera (orbital/fixed/follow, frustum, collision), me
                            4 point lights), shadow (blob + projected), billboard, particle (128 pool: simulation
                            particle.c, renderer particle_draw.c), atmosphere (fog, sky, 7 presets), floor (10x10 grid),
                            texture (16 slots)
-src/input/                 action (remappable ActionContext), input (camera adapter)
+src/input/                 pad (PadState per port), action (players, context stacks, bindings, action state; pure,
+                           host-tested), input (the input core: joypad, fresh-read wait, vblank sampling, rumble, lag)
 src/collision/             sphere/AABB colliders, raycasts, layers (64 max)
 src/physics/               semi-fixed timestep bodies, gravity, bounce, ground raycast
 src/scene/                 Scene/SceneObject lifecycle, SceneManager, transitions, soft reset, background (sky or clear);
                            scene_objects.c: objects own a collider and a physics body (Scene.physics), flags (host-tested)
-src/scenes/demo_scene.c    the demo (objects, menu semantics, HUD), the largest file
-src/scenes/benchmark_scene.c   stress test (All = 26 steps, plus Layout, Overload, Audio, UI); BENCH / BENCH_PROF / BENCH_LAYOUT rows
+src/scenes/demo_scene.c    the demo (objects, menu semantics, HUD), the largest file; demo_controls.c (its actions and
+                           bindings), demo_tour.c (make TOUR=1: scripted screenshot tour)
+src/scenes/benchmark_scene.c   stress test (All = 26 steps, plus Layout, Overload, Audio, UI, Latency); BENCH / BENCH_PRESENT /
+                           BENCH_PROF / BENCH_INPUT / BENCH_LAYOUT rows
 src/audio/                 sound module (snd_*): crossfading music slots, 8 prioritised SFX voices, positional sound,
                            master/music/SFX volume ramps; snd_mix (pure, host-tested); sound_bank table
-src/ui/                    text (fonts, text_draw), menu (model + input, host-tested), settings (the game's options: one table
+src/ui/                    text (fonts, text_draw), menu (model + UiInput, host-tested), ui_input (UiInput), settings (the game's options: one table
                            of choices and values, typed accessors, change tracking; host-tested), menu_view (drawing in a UiStyle),
                            ui_layer (cached text slots), ui_hud (HUD panels), ui_style (Debug/Classic/Minimal),
                            ui_draw (rectangles, gradients, gauges), textbox (dialog box: pages, reveal, choices); docs/UI.md

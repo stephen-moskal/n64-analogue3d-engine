@@ -17,6 +17,8 @@ ENGINE_SRCS := \
 	$(SRC)/physics/physics.c \
 	$(SRC)/scene/scene_objects.c \
 	$(SRC)/input/action.c \
+	$(SRC)/input/pad.c \
+	$(SRC)/scenes/demo_controls.c \
 	$(SRC)/render/camera.c \
 	$(SRC)/render/mesh_build.c \
 	$(SRC)/render/mesh_defs.c \

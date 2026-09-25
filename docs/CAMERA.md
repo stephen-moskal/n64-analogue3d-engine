@@ -57,7 +57,7 @@ z = target.z + distance * cos(elevation) * cos(azimuth);
 
 #### Orbital Controls
 
-The controls in this and the following tables are the demo scene's (`demo_update()`), fed by `InputState` ([INPUT.md](INPUT.md)); values are per frame.
+The controls in this and the following tables are the demo scene's (`demo_update()`), read from player 1's actions by `camera_input()` (the stick is the analog `ACT_LOOK_X`/`ACT_LOOK_Y`, 0.16 rad per frame at full deflection; [INPUT.md](INPUT.md)); values are per frame.
 
 | Input | Action | Scale |
 |-------|--------|-------|

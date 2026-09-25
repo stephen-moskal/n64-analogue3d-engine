@@ -16,25 +16,27 @@ How to see what the engine is doing, catch hardware-only mistakes, and read cras
 
 Use the debug ROM day to day; its extra cost is about 0.1 ms per frame. Switches live in `src/debug/engine_debug.h` (`ENGINE_DEBUG`, `ENGINE_PROFILE`, `ENGINE_STATS`, `ENGINE_ASSERT`, `ENGINE_LOG`).
 
+Two more debug variants build into their own directory and ROM: `make BENCH=1` boots straight into a benchmark ([BENCHMARKS.md](BENCHMARKS.md)), `make TOUR=1` runs the screenshot tour (below).
+
 ## The Debug tab
 
 Start → L/R to the **Debug** tab (the Start menu exists in the demo scene). Values apply when the menu closes with A; B reverts. One-shot items (`Dump!`, `Reset!`, `Capture!`, `Assert!`, `Run!`) fire once and reset to `---`.
 
 | Item | Options | What it does |
 |---|---|---|
-| Overlay | Off / Stats / Profiler / Memory / Frame / RSP | on-screen page (see PROFILING.md); hidden while the menu is open. Text is cached per row (docs/UI.md); ~120 KB while a page is shown |
+| Overlay | Off / Stats / Profiler / Memory / Frame / RSP / Input | on-screen page (see PROFILING.md; Input: INPUT.md, "Debugging"); hidden while the menu is open. Text is cached per row (docs/UI.md); ~120 KB while a page is shown |
 | Profiler | On / Off | CPU scope timing (debug) |
 | RDP Check | Off / On | runtime RDP validator (debug) |
 | Dump CSV | --- / Dump! | writes STATS, PROF, RDP, RSP, FT, MEM rows to the log, 120 frames (~2 s) after the menu closes so the averages no longer include the menu |
 | Reset Peaks | --- / Reset! | clears profiler peaks, frame-time window, heap baseline |
 | Scene | Demo / Benchmark | switches scene with a fade |
-| Bench | All / Objects / Particles / Lights / Textures / Shadows / Fillrate / Overload / Layout / Audio / UI | which benchmark the Benchmark scene runs (BENCHMARKS.md) |
+| Bench | All / Objects / Particles / Lights / Textures / Shadows / Fillrate / Overload / Layout / Audio / UI / Latency | which benchmark the Benchmark scene runs (BENCHMARKS.md) |
 | RDP Log | --- / Capture! | logs two frames of RDP commands (debug) |
 | Crash Test | --- / Assert! | triggers `assertf()` (debug) |
 | Reset Soak | --- / Run! | one warm-up and 10 measured scene resets, logs the heap delta (see below) |
 | Menu Sweep | --- / Run! | steps every menu option, restores the originals (see below) |
 
-Shortcuts with the menu closed: **D-Up** cycles overlay pages, **D-Down** dumps CSV (with the same ~2 s delay). They only work while those buttons are not bound to a game action in the Controls tab, and they read the joypad state the scene polled (`action_update()` in the scene's update).
+Shortcuts with the menu closed: **D-Up** cycles overlay pages, **D-Down** dumps CSV (with the same ~2 s delay). They are the engine's debug context (`action_ctx_debug`, [INPUT.md](INPUT.md)), which the Debug tab pushes for player 1 below every game context. A game binding on D-Up or D-Down (the Controls tab) therefore takes the button first, and so do a menu or a dialog, whose UI context is modal. They work in every scene, the benchmark's included.
 
 The tab is built by `debug_menu_init()` and applied by `debug_menu_update()` (`src/debug/debug_menu.c`), whose item order is the `DebugMenuItem` enum; how to add an item is in [EXTENDING.md](EXTENDING.md).
 
@@ -44,6 +46,23 @@ Automated robustness checks in `src/debug/testbed.c`, started from the Debug tab
 
 - **Reset Soak** requests a soft reset of the current scene ([SCENE_SYSTEM.md](SCENE_SYSTEM.md)) 11 times, 30 frames apart: one warm-up reset, then 10 measured ones. It logs `SOAK,start,resets=10` and at the end `SOAK,resets=10,heap_before=…,heap_after=…,delta=…,per_reset=…`, then resets the Memory page's heap baseline. A leak-free scene reports `delta=0`.
 - **Menu Sweep** runs with the menu closed (it pauses while the menu is open). It steps every item of every tab except Controls and Debug (and skips Reset Scene) through all its options, holding each for 15 frames so the scene applies it, restores each item's original value, and logs one `SWEEP,<tab>,<item>,<options>` line per item and `SWEEP,END,items=…,options=…`. Run it with RDP Check on to validate every menu combination.
+
+## Screenshot tour
+
+`libdragon make TOUR=1` builds `engine-debug-tour.z64`: the demo walks itself through a fixed list of states on a timer, no controller needed (`src/scenes/demo_tour.c`). Each state logs `TOUR,<step>,<name>,<seconds since boot>` as it begins:
+
+| Step | Seconds | On screen |
+|---|---|---|
+| hero | 0–6 | Clear Day, projected shadows, the default front view |
+| menu_settings | 6–11 | the Start menu, Settings tab, cursor on Latency |
+| menu_classic | 11–16 | the Lighting tab in the Classic style |
+| sunset | 16–21 | the Sunset preset |
+| night | 21–26 | the Night preset with point lights (torches) |
+| profiler / frame / input | 26–41 | the three overlay pages, 5 s each (HUD off for the Profiler page) |
+| dialog | 41–48 | the demo conversation's first page |
+| benchmark | 48– | Bench = Objects (8 to 64 pillars), then back to the demo |
+
+The README images are ares window captures taken in the middle of each state and cropped to the picture. Re-shoot them after a visible change, and compare a tour run before and after a change that should not alter the picture. The tour only sets options and the Debug tab through their public calls (`settings_set_choice`, `menu_set_value`), so it also checks that those paths still reach the scene.
 
 ## Log channels
 
@@ -109,10 +128,10 @@ Crashes seen so far:
 
 ## Unit tests
 
-Modules without rendering dependencies have host tests in `tests/host`: vec3, collision (including sparse collider slots), physics (including kinematic bodies), scene objects (collider and body ownership, the per-frame sync, flag queries), action mapping, camera math and the camera's dirty/follow behaviour, frame-time statistics, mesh building and the built-in shapes (winding, planar groups), and the particle simulation. They are compiled with the host compiler against a small libdragon stand-in, `tests/host/shim/libdragon.h` (colour types, `debugf`/`assertf`, `TICKS_READ()`, and a joypad whose state the tests set), with `-Wall -Werror`:
+Modules without rendering dependencies have host tests in `tests/host`: vec3, collision (including sparse collider slots), physics (including kinematic bodies), scene objects (collider and body ownership, the per-frame sync, flag queries), the action layer (contexts, chords, players, analog), the menu model and the settings table, camera math and the camera's dirty/follow behaviour, frame-time statistics, mesh building and the built-in shapes (winding, planar groups), and the particle simulation. They are compiled with the host compiler against a small libdragon stand-in, `tests/host/shim/libdragon.h` (colour types, `debugf`/`assertf`, `TICKS_READ()`; the action layer takes `PadState` snapshots, so no joypad), with `-Wall -Werror`:
 
 ```powershell
-libdragon exec make -C tests/host run      # 123 checks, 0 failures
+libdragon exec make -C tests/host run      # 1280 checks, 0 failures (S9)
 ```
 
-They run in CI on every push (`.github/workflows/build.yml` → `tools/ci_build.sh`, which also builds both ROMs, checks ROM/RAM budgets with `tools/rom_budget.py` and the I-cache layout of the render path with `tools/hot_text.py`). They already caught one doc/behaviour mismatch: `action_analog_x()` is inverted. How to add a test: [EXTENDING.md](EXTENDING.md).
+They run in CI on every push (`.github/workflows/build.yml` → `tools/ci_build.sh`, which also builds both ROMs, checks ROM/RAM budgets with `tools/rom_budget.py` and the I-cache layout of the render path with `tools/hot_text.py`). How to add a test: [EXTENDING.md](EXTENDING.md).

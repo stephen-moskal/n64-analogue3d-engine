@@ -124,7 +124,7 @@ Measured with Bench = Audio on the A3D (2026-09-23, debug build). Each step runs
 
 The Opus figures come from a `SND_OPUS=1` build, in which VADPCM at the default point measured 0.46 ms.
 
-- **After `display_get()` is 4–7× cheaper than the other two points.** At 60 FPS the loop is paced by `display_get()` (the limiter is off; D19). The update is short, so both other points run just after the previous frame was queued, while the RSP is most likely still working through it. After `display_get()` returns, that frame has usually drained.
+- **After `display_get()` is 4–7× cheaper than the other two points.** At 60 FPS the loop is paced by `display_get()` (the limiter is off; D19). The update is short, so both other points run just after the previous frame was queued, while the RSP is most likely still working through it. After `display_get()` returns, that frame has usually drained. (Measured in S4b.2. Since S9 the update runs after `display_get()`, so the other two points run back to back after the present, which is still the RSP's busiest moment.)
 - **The old placement drops frames.** Its wait lands inside the frame and pushes some frames past 16.7 ms, which explains the 2.7 ms average and 10.2 ms peak of the demo's `audio` slot after the libdragon upgrade (BENCHMARKS.md, S4b.1). The upgrade also doubled libdragon's buffer rate (25 → 50 per second), so the mixer runs twice as often.
 - **Before `display_get()` has the highest average but keeps frames on time.** Its wait apparently replaces time the loop would otherwise spend blocked in `display_get()`.
 - **VADPCM costs the same as raw PCM**, so decoding VADPCM is not the bottleneck.

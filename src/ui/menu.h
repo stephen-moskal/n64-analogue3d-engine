@@ -2,10 +2,12 @@
 #define MENU_H
 
 // Tabbed option menu: the model (tabs, items, values, cursor, cancel/revert)
-// and its joypad input. Drawing lives in menu_view.h, so one model can be
-// shown in any style and the model is testable on the host. See docs/UI.md.
+// and what a frame of UI input does to it. Drawing lives in menu_view.h, so
+// one model can be shown in any style, and the model is testable on the
+// host. See docs/UI.md.
 
 #include <stdbool.h>
+#include "ui_input.h"
 
 #define MENU_MAX_TABS        6
 #define MENU_MAX_ITEMS      12
@@ -35,7 +37,6 @@ typedef struct {
     int active_tab;                          // Currently visible tab
     bool is_open;
     int snapshot[MENU_MAX_TABS][MENU_MAX_ITEMS]; // Saved values for cancel/revert
-    int analog_cooldown;                     // Frame counter for analog repeat
 } Menu;
 
 // Building
@@ -48,8 +49,11 @@ int  menu_add_item(Menu *menu, int tab, const char *label,
 void menu_open(Menu *menu);
 void menu_close(Menu *menu, bool apply);
 
-// Joypad: D-pad/stick, L/R tabs, A apply, B cancel. Port 1, already polled.
-void menu_update(Menu *menu);
+// One frame of UI input (action_ui() for the player driving the menu): up and
+// down move the cursor, left and right change the value, the tabs switch
+// tabs, confirm closes and applies, cancel closes and reverts. Start is left
+// to the caller (the demo closes and applies).
+void menu_update(Menu *menu, const UiInput *in);
 
 // Model operations (what menu_update does; also for scripted input and tests)
 void menu_move_cursor(Menu *menu, int dir);   // wraps, scrolls; disabled items can be visited

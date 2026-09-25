@@ -16,7 +16,8 @@ The menu model and its API are in [MENU_SYSTEM.md](MENU_SYSTEM.md), the dialog f
 | `menu_view.c/h` | `MenuView`: draws a `Menu` in a style through a `UiLayer` |
 | `ui_hud.c/h` | `HudPanel`: anchored blocks of HUD text, refreshed at a fixed rate |
 | `textbox.c/h` | `TextBox`: shows a dialog conversation (name plate, pages, typewriter reveal, choices); [DIALOG.md](DIALOG.md) |
-| `menu.c/h` | The menu model and its joypad input ([MENU_SYSTEM.md](MENU_SYSTEM.md)) |
+| `menu.c/h` | The menu model and what a frame of `UiInput` does to it ([MENU_SYSTEM.md](MENU_SYSTEM.md)) |
+| `ui_input.h` | `UiInput`: one frame of UI input (up/down/left/right, confirm, cancel, tabs, start), filled by `action_ui()` ([INPUT.md](INPUT.md)) |
 | `settings.c/h` | The game's options: the Start menu's first five tabs as one table of choices and values ([MENU_SYSTEM.md](MENU_SYSTEM.md), "Settings") |
 
 ## Why text is cached

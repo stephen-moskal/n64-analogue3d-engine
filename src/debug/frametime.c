@@ -22,6 +22,11 @@ static volatile uint16_t ring_torn[FRAMETIME_WINDOW];     // half-line of a torn
 static volatile int     present_head  = 0;
 static volatile int     present_count = 0;
 
+// Input lag of presented frames (vblanks): also written by the vblank interrupt
+static volatile uint8_t ring_lag[FRAMETIME_WINDOW];
+static volatile int     lag_head  = 0;
+static volatile int     lag_count = 0;
+
 #ifdef N64
 #define PRESENT_LOCK()   disable_interrupts()
 #define PRESENT_UNLOCK() enable_interrupts()
@@ -40,6 +45,14 @@ void frametime_record_present(int vblanks, int torn_halfline) {
     if (present_count < FRAMETIME_WINDOW) present_count++;
 }
 
+void frametime_record_lag(int vblanks) {
+    if (vblanks < 0) vblanks = 0;
+    if (vblanks > 255) vblanks = 255;
+    ring_lag[lag_head] = (uint8_t)vblanks;
+    lag_head = (lag_head + 1) % FRAMETIME_WINDOW;
+    if (lag_count < FRAMETIME_WINDOW) lag_count++;
+}
+
 void frametime_record(uint32_t frame_us, uint32_t cpu_us) {
     ring_frame[ring_head] = frame_us;
     ring_cpu[ring_head]   = cpu_us;
@@ -53,6 +66,8 @@ void frametime_reset(void) {
     PRESENT_LOCK();
     present_head = 0;
     present_count = 0;
+    lag_head = 0;
+    lag_count = 0;
     PRESENT_UNLOCK();
 }
 
@@ -86,9 +101,31 @@ static void present_stats(FrameTimeStats *out, float budget_ms) {
     out->present_avg_vblanks = n ? (float)sum / n : 0.0f;
 }
 
+// Input lag of the presented frames
+static void lag_stats(FrameTimeStats *out) {
+    uint8_t snap[FRAMETIME_WINDOW];
+    PRESENT_LOCK();
+    int n = lag_count;
+    for (int i = 0; i < n; i++) snap[i] = ring_lag[i];
+    PRESENT_UNLOCK();
+    uint32_t sum = 0;
+    out->lag_min = n ? 255 : 0;
+    for (int i = 0; i < n; i++) {
+        int v = snap[i];
+        sum += v;
+        if (v < out->lag_min) out->lag_min = v;
+        if (v > out->lag_max) out->lag_max = v;
+        int b = v < 1 ? 1 : v > FRAMETIME_LAG_BUCKETS ? FRAMETIME_LAG_BUCKETS : v;
+        out->lag_hist[b - 1]++;
+    }
+    out->lag_count = n;
+    out->lag_avg = n ? (float)sum / n : 0.0f;
+}
+
 void frametime_get(FrameTimeStats *out, float budget_ms) {
     memset(out, 0, sizeof(*out));
     present_stats(out, budget_ms);
+    lag_stats(out);
     int n = ring_count;
     out->count = n;
     if (n == 0) return;
@@ -145,10 +182,12 @@ void frametime_dump_csv(uint32_t frame_index, float budget_ms) {
     for (int b = 0; b < FRAMETIME_BUCKETS; b++) debugf(",%u", s.histogram[b]);
     debugf("\n");
     if (!present_header_sent) {
-        debugf("FTP_HDR,frame,presents,vb1,vb2,vb3,vb4plus,late,avg_vblanks,torn,torn_worst_halfline\n");
+        debugf("FTP_HDR,frame,presents,vb1,vb2,vb3,vb4plus,late,avg_vblanks,torn,torn_worst_halfline,"
+               "lag_avg_vblanks,lag_min,lag_max\n");
         present_header_sent = 1;
     }
-    debugf("FTP,%lu,%d,%u,%u,%u,%u,%d,%.3f,%d,%d\n", (unsigned long)frame_index, s.presents,
+    debugf("FTP,%lu,%d,%u,%u,%u,%u,%d,%.3f,%d,%d,%.3f,%d,%d\n", (unsigned long)frame_index, s.presents,
            s.present_hist[0], s.present_hist[1], s.present_hist[2], s.present_hist[3],
-           s.late, s.present_avg_vblanks, s.torn, s.torn_worst_halfline);
+           s.late, s.present_avg_vblanks, s.torn, s.torn_worst_halfline,
+           s.lag_avg, s.lag_min, s.lag_max);
 }

@@ -63,9 +63,13 @@ This engine uses the middle ground that fits a small cartridge: a JSON file of n
    if (dialog_start(&runner, bank, "intro", &hooks))       // e.g. when the player talks
        textbox_open(&box, &runner);
 
-   // update: while textbox_active(&box), feed it input and skip game input
-   UiInput in = { .confirm = a_pressed, .cancel = b_pressed, .up = up, .down = down };
+   // when it opens: the player's pad goes to the box (modal UI context)
+   action_push_context(0, &action_ctx_ui);
+
+   // update: while textbox_active(&box), feed it input; the game sees none
+   UiInput in = action_ui(0);
    textbox_update(&box, &in, dt);
+   if (!textbox_active(&box)) action_pop_context(0, &action_ctx_ui);
 
    // post-draw, after the 3D scene
    if (textbox_active(&box)) textbox_draw(&box, style);
@@ -181,7 +185,7 @@ Variables are filled when a line starts (the runner holds the filled text), so a
 | Talk sound | `on_blip(ctx)` every `blip_every` revealed glyphs (3); the demo plays the menu tick |
 | Style change | the box lays itself out again and keeps its place; a page already shown stays shown |
 
-**Input.** `textbox_update()` takes a `UiInput` (confirm, cancel, up, down), so the game decides the buttons. The demo maps A/B through the action map (remappable) and the D-pad or stick for choices. While the box is open it skips object interaction, camera control and Start, pauses the Debug D-pad shortcuts (`debug_menu_set_shortcuts()`), and hides the bottom HUD band that the box covers.
+**Input.** `textbox_update()` takes a `UiInput` (confirm, cancel, up, down; `src/ui/ui_input.h`), so the game decides the buttons. The demo pushes the engine's UI context (`action_ctx_ui`, modal: A confirm, B cancel, D-pad or stick up/down, repeating) on player 1's stack when a conversation opens, reads `action_ui(0)`, and pops the context when the box closes ([INPUT.md](INPUT.md)). While it is open the game, the camera, Start and the Debug D-pad shortcuts see nothing (before S9 the demo gated each by hand and paused the shortcuts with `debug_menu_set_shortcuts()`). It also hides the bottom HUD band that the box covers.
 
 **Cost.** A page is laid out (`rdpq_paragraph_build`) and rendered once into a cached layer ([UI.md](UI.md), canvas). While it types, each frame blits the completed lines and a growing part of the current one, cut at the next glyph's pen position. So a revealing box costs a few rectangles and two or three blits; a new page costs one text render. On the A3D (Bench = UI steps 50 and 51, `dialog_us`): **0.30 ms per frame while reading, 0.53 ms when skipping** through pages; a page change frame costs up to ~5.5 ms ([BENCHMARKS.md](BENCHMARKS.md), "Phase 2 · S5.3").
 

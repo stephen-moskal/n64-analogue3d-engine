@@ -59,6 +59,10 @@ static const int ui_style_values[] = {0, 1, 2};    // index into ui_styles[]
 CHOICE_TABLE(ui_style_names, ui_style_values);
 _Static_assert(ARRAY_LEN(ui_style_names) == UI_STYLE_COUNT, "one choice per built-in UI style");
 
+static const char *const latency_names[] = {"Classic", "Low", "Lowest"};
+static const int latency_values[] = {LATENCY_CLASSIC, LATENCY_LOW, LATENCY_LOWEST};
+CHOICE_TABLE(latency_names, latency_values);
+
 // --- Sound tab ---
 
 static const char *const volume_names[] = {
@@ -153,15 +157,16 @@ static const color_t fog_color_values[] = {
 };
 CHOICE_TABLE(fog_color_names, fog_color_values);
 
-// --- Controls tab: built by settings_init() from the action module ---
+// --- Controls tab: built by settings_init() from the demo's actions ---
 
-static const char *button_names[BTN_COUNT];         // action_button_name(), per PhysicalButton
+// The buttons an action can be bound to, in the order the tab cycles through
+// them (Start opens the menu; X and Y exist on a GameCube controller only)
 static const int button_values[] = {
     BTN_A, BTN_B, BTN_Z, BTN_L, BTN_R, BTN_D_UP, BTN_D_DOWN, BTN_D_LEFT, BTN_D_RIGHT,
     BTN_C_UP, BTN_C_DOWN, BTN_C_LEFT, BTN_C_RIGHT,
 };
-_Static_assert(ARRAY_LEN(button_values) == BTN_COUNT, "one choice per physical button");
-_Static_assert(BTN_COUNT <= MENU_MAX_OPTIONS, "every button fits in a menu item");
+static const char *button_names[ARRAY_LEN(button_values)];   // pad_button_name()
+_Static_assert(ARRAY_LEN(button_values) <= MENU_MAX_OPTIONS, "every button fits in a menu item");
 
 // --- The table ---
 
@@ -182,6 +187,8 @@ static const SettingDef defs[SETTING_BINDING_FIRST] = {
     [SETTING_FRAME_RATE]      = { G, "Frame Rate",   CHOICES(fps_names),        1, VALUES(SETTING_TYPE_INT, fps_values) },    // 60
     [SETTING_RESET_SCENE]     = { G, "Reset Scene",  CHOICES(reset_names),      0, .type = SETTING_TYPE_ACTION },
     [SETTING_UI_STYLE]        = { G, "UI Style",     CHOICES(ui_style_names),   0, VALUES(SETTING_TYPE_INT, ui_style_values) },
+    [SETTING_LATENCY]         = { G, "Latency",      CHOICES(latency_names),    1, VALUES(SETTING_TYPE_INT, latency_values) },  // Low
+    [SETTING_RUMBLE]          = { G, "Rumble",       CHOICES(on_off),           0, VALUES(SETTING_TYPE_BOOL, on_off_values) },
 
     [SETTING_SOUND]           = { S, "Master",       CHOICES(on_off),           1, VALUES(SETTING_TYPE_BOOL, on_off_values) },   // Off
     [SETTING_SFX_VOLUME]      = { S, "SFX Vol",      CHOICES(volume_names),     8, VALUES(SETTING_TYPE_FLOAT, volume_values) },  // 80%
@@ -216,10 +223,10 @@ _Static_assert(SETTING_SOUND - SETTING_BG_COLOR <= MENU_MAX_ITEMS, "Settings tab
 _Static_assert(SETTING_SUN_DIR - SETTING_SOUND <= MENU_MAX_ITEMS, "Sound tab too long");
 _Static_assert(SETTING_ATMOSPHERE - SETTING_SUN_DIR <= MENU_MAX_ITEMS, "Lighting tab too long");
 _Static_assert(SETTING_BINDING_FIRST - SETTING_ATMOSPHERE <= MENU_MAX_ITEMS, "Environ tab too long");
-_Static_assert(ACTION_COUNT <= MENU_MAX_ITEMS, "one Controls item per action");
+_Static_assert(DEMO_REMAP_COUNT <= MENU_MAX_ITEMS, "one Controls item per remappable action");
 _Static_assert(SETTINGS_TAB_COUNT + 1 <= MENU_MAX_TABS, "the settings tabs and the Debug tab");
 
-static SettingDef binding_defs[ACTION_COUNT];      // Controls tab (settings_init)
+static SettingDef binding_defs[DEMO_REMAP_COUNT];  // Controls tab (settings_init)
 
 // --- State ---
 
@@ -232,19 +239,27 @@ const SettingDef *settings_def(SettingId id) {
     return id < SETTING_BINDING_FIRST ? &defs[id] : &binding_defs[id - SETTING_BINDING_FIRST];
 }
 
+// The Controls choice for a button (0 if it is not one of them)
+static int button_choice(PadButton btn) {
+    for (int c = 0; c < (int)ARRAY_LEN(button_values); c++)
+        if (button_values[c] == btn) return c;
+    return 0;
+}
+
 void settings_init(Menu *m) {
     assertf(m->tab_count == 0, "settings_init: the settings tabs come first");
     menu = m;
 
-    // Controls: one option per action, its choices the physical buttons, its
-    // default the Exploration context's binding (the action module's names)
-    for (int b = 0; b < BTN_COUNT; b++)
-        button_names[b] = action_button_name((PhysicalButton)b);
-    for (int a = 0; a < ACTION_COUNT; a++) {
-        binding_defs[a] = (SettingDef){
-            .tab = SETTINGS_TAB_CONTROLS, .label = action_name((GameAction)a),
-            .choices = button_names, .count = BTN_COUNT,
-            .default_choice = ACTION_CTX_EXPLORATION.bindings[a],
+    // Controls: one option per remappable demo action, its choices the
+    // bindable buttons, its default the action's default button
+    for (int c = 0; c < (int)ARRAY_LEN(button_values); c++)
+        button_names[c] = pad_button_name((PadButton)button_values[c]);
+    for (int i = 0; i < DEMO_REMAP_COUNT; i++) {
+        ActionId a = (ActionId)(DEMO_REMAP_FIRST + i);
+        binding_defs[i] = (SettingDef){
+            .tab = SETTINGS_TAB_CONTROLS, .label = demo_action_names[a - ACTION_GAME_FIRST],
+            .choices = button_names, .count = ARRAY_LEN(button_values),
+            .default_choice = button_choice(demo_default_button(a)),
             VALUES(SETTING_TYPE_INT, button_values),
         };
     }

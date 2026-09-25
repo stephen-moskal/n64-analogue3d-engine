@@ -72,14 +72,7 @@ High-level RDP command interface with automatic state management and command bat
 
 #### Joypad
 
-```c
-joypad_init();
-joypad_poll();
-joypad_inputs_t inputs = joypad_get_inputs(JOYPAD_PORT_1);
-joypad_buttons_t pressed = joypad_get_buttons_pressed(JOYPAD_PORT_1);
-```
-
-Supports N64 and GameCube controllers. Provides analog stick values, held/pressed/released button states.
+Supports N64 and GameCube controllers (and the N64 mouse): buttons, sticks, triggers, accessories, rumble. libdragon reads all four ports at every vblank over the SI. The engine's input core owns the module: it calls `joypad_init()` and `joypad_poll()` itself, including from the vblank interrupt, so game code reads `input_pad(port)` and actions instead of `joypad_get_*()` ([INPUT.md](INPUT.md)).
 
 #### ROM Filesystem (DFS)
 
@@ -107,7 +100,8 @@ DMA buffers (used by RSP) must be uncached and 8-byte aligned.
 ```
 main.c                  [the demo game: Start menu, scenes, scene switches]
 ├── engine/engine       [init, frame loop, build constants: ENGINE.md]
-├── input/action        [action mapping, joypad polling, context management]
+├── input/input         [input core: joypad, pads, fresh-read wait, rumble, lag: INPUT.md]
+│   └── input/action    [players, contexts, bindings, action state (pure)]
 ├── ui/text             [font rendering]
 ├── ui/menu             [global start menu, built here (6 tabs)]
 │   └── ui/text
@@ -123,7 +117,7 @@ main.c                  [the demo game: Start menu, scenes, scene switches]
 │   ├── render/atmosphere [sky background]
 │   └── collision/collision [collision detection, raycasting]
 ├── scenes/demo_scene   [demo scene: objects, selection, menu semantics, HUD]
-│   ├── input/input     [camera input adapter, reads from action API]
+│   ├── scenes/demo_controls [the demo's actions, default bindings, names]
 │   ├── render/cube     [cube geometry definition (textured)]
 │   │   └── render/mesh [mesh_build.c builder, mesh.c mesh_draw()]
 │   │       ├── render/camera
@@ -153,11 +147,12 @@ display_init(...);          // Framebuffers
 memstats_init(...);         // RDRAM size, stack painting
 rdpq_init();                // RDP command queue (validator off; Debug tab)
 dfs_init(...);              // ROM filesystem
-action_init();              // Joypad + action mapping
+vi_install_vblank_handler(on_vblank);   // before joypad_init: runs before libdragon's joypad handler
+input_init();               // Joypad, SI hook, players and the engine's contexts
 text_init();                // Load fonts
 snd_init();                 // Audio mixer, SFX preload
 atmosphere_init();          // Fog/sky global state
-surface_alloc(...);         // Z-buffer (shared across scenes)
+display_get_zbuf();         // Z-buffer (shared across scenes)
 
 // The game (main.c): menu, scene manager, first scene, then engine_run()
 menu_init(&start_menu, ...);// Global start menu; tabs and items added here,
@@ -186,19 +181,23 @@ Game logic runs once per rendered frame (`engine_run()` in `src/engine/engine.c`
 while (1) {
     float dt = display_get_delta_time();   // time between presented frames
 
-    // Update game logic once per frame
+    pace_wait();                       // low-latency pacing only: the last frame is on screen
+    surface_t *fb = display_get();    // Waits for a free framebuffer
+    audio_poll(SND_POLL_AFTER_DISPLAY, dt);   // snd_update(): mix the audio (default poll point)
+    input_poll(dt);                    // this vblank's controller read -> pads -> actions
+
+    // Update game logic once per frame, on this frame's input
     scene_manager_update(&mgr, dt);
     //   -> scene_update(current, dt)
     //      -> per-object on_update(dt)
-    //      -> scene->on_update(dt) [input, menu, game logic]
+    //      -> scene->on_update(dt) [menu, game logic: reads actions]
     //      -> camera_update()
     //      -> collision_test_all()
-    debug_menu_update();               // Debug tab, D-Up/D-Down shortcuts
+    debug_menu_update();               // Debug tab, D-Up/D-Down shortcuts (actions)
     testbed_update();                  // Reset Soak / Menu Sweep
+    input_end_frame(dt);               // rumble out to the pads
 
     // Render
-    surface_t *fb = display_get();    // Waits for a free framebuffer
-    audio_poll(SND_POLL_AFTER_DISPLAY, dt);   // snd_update(): mix the audio (default poll point)
     rdpq_attach(fb, zbuf);            // zbuf = display_get_zbuf()
     scene_manager_draw(&mgr);
     //   -> scene_draw(current)
@@ -212,7 +211,7 @@ while (1) {
 }
 ```
 
-With triple buffering, `display_get()` waits for a free framebuffer rather than for vsync, so loop times alternate short and long (about 12.5 / 21 ms) at a steady 60 FPS. Until S6.2 `dt` was that loop time and inherited the jitter (defect D19); it now comes from the display, and a vblank handler measures how long each frame actually stays on screen (ENGINE.md, "Pacing and time"). The profiler, stats and memory hooks around this loop are described in PROFILING.md.
+The update runs after `display_get()` (since S9), so the frame acts on the controller read that started at the vblank `display_get()` woke on: one vblank less input lag than updating before the wait (ENGINE.md, "Input and latency"). With triple buffering, `display_get()` waits for a free framebuffer rather than for vsync, so loop times alternate short and long (about 12.5 / 21 ms) at a steady 60 FPS. Until S6.2 `dt` was that loop time and inherited the jitter (defect D19); it now comes from the display, and a vblank handler measures how long each frame actually stays on screen (ENGINE.md, "Pacing and time"). The profiler, stats and memory hooks around this loop are described in PROFILING.md.
 
 **Why variable timestep:** A previous fixed-timestep accumulator (30Hz logic) caused every other frame at 60 FPS to be an identical duplicate — the accumulator hadn't reached the 33ms threshold, so no logic update ran. Motion was effectively 30Hz regardless of display rate, making 30 and 60 FPS feel identical. Variable timestep ensures every rendered frame has a unique logic update.
 
@@ -432,103 +431,22 @@ Each preset includes a `LightingHint` with `sun_intensity`, `ambient` color, and
 
 ENVIRON tab (tab 3) with 6 items: Preset (8 options), Fog On/Off, Fog Near, Fog Far, Fog Color, Sky On/Off. Named presets auto-enable fog+sky and sync menu toggles. Custom mode allows individual control; with a named preset the five sub-items are disabled (the demo updates the disabled states only when the preset changes).
 
-## Action Mapping System
+## Input and Actions
 
-Data-driven input abstraction that decouples game logic from physical button assignments. Game code queries named actions instead of raw buttons, enabling runtime remapping and per-scene control schemes.
-
-### Architecture
+Full documentation: [INPUT.md](INPUT.md). Since S9 (D12) every piece of input goes through one path: menus, dialogs, the Debug shortcuts and the benchmark's abort as well as the game.
 
 ```
-joypad_poll()  →  action_update()  →  action_pressed/held/released()
-                      ↓                         ↑
-              PhysicalButton → GameAction    scene logic queries
-              (via ActionContext bindings)    actions, not buttons
+vblank: libdragon reads 4 ports ─► input_poll() (engine loop, after display_get)
+                                     PadState[4] ─► action_update(): per player, contexts top-down
+                                                     ├─► action_pressed/held/released/repeat/value(p, id)
+                                                     └─► action_ui(p) ─► UiInput ─► menu, text box
 ```
 
-### Key Types
-
-| Type | Purpose |
-|------|---------|
-| `PhysicalButton` | Enum of 13 N64 buttons (A, B, Z, L, R, D-pad×4, C-buttons×4) |
-| `GameAction` | Enum of 11 remappable actions (Confirm, Cancel, Select, Camera, Cycle, Zoom, Shift) |
-| `ActionContext` | Named binding set with per-context analog deadzone and sensitivity |
-
-### Design Rules
-
-- **Start button**: Always toggles menu — hardcoded, not remappable (system-level; the demo scene reads it from the raw joypad)
-- **Menu navigation**: D-pad, A/B, L/R in `menu.c` stay hardcoded (standard UI convention)
-- **Analog stick**: Sensitivity/deadzone configurable per context, but not remapped to buttons; `action_analog_x()` is inverted (stick right = negative)
-- **InputState preserved**: `input_update()` is a thin adapter reading from the action API — camera code unchanged
-- **Polling**: each scene calls `action_update()` at the start of its `on_update`; nothing else polls the joypad ([INPUT.md](INPUT.md))
-
-### Contexts
-
-An `ActionContext` defines a complete set of button-to-action bindings:
-
-```c
-const ActionContext ACTION_CTX_EXPLORATION = {
-    .name = "Exploration",
-    .bindings = {
-        [ACTION_CONFIRM]       = BTN_A,
-        [ACTION_CANCEL]        = BTN_B,
-        [ACTION_SELECT_MODE]   = BTN_Z,
-        [ACTION_CAM_MODE_NEXT] = BTN_R,
-        [ACTION_CAM_MODE_PREV] = BTN_L,
-        [ACTION_CYCLE_NEXT]    = BTN_D_RIGHT,
-        [ACTION_CYCLE_PREV]    = BTN_D_LEFT,
-        [ACTION_ZOOM_IN]       = BTN_C_UP,
-        [ACTION_ZOOM_OUT]      = BTN_C_DOWN,
-        [ACTION_SHIFT_UP]      = BTN_C_RIGHT,
-        [ACTION_SHIFT_DOWN]    = BTN_C_LEFT,
-    },
-    .analog_deadzone = 8.0f,
-    .analog_sensitivity = 0.002f,
-};
-```
-
-Developers define new contexts as `static const` data arrays — no code changes needed. Call `action_set_context()` to switch on scene init.
-
-### Runtime Remapping
-
-The Controls menu tab (tab 4) lists all 11 game actions, generated from the action module by `settings_init()`. Each action's choices are all 13 physical buttons, and its value is the button; the demo applies a binding when its option changes:
-
-```c
-for (int a = 0; a < ACTION_COUNT; a++) {
-    if (settings_take(SETTING_BINDING(a)))
-        action_set_binding((GameAction)a, (PhysicalButton)settings_int(SETTING_BINDING(a)));
-}
-```
-
-Cancel (B button) reverts all bindings to pre-menu-open values via the menu snapshot system.
-
-### API
-
-```c
-// Lifecycle
-void action_init(void);                          // joypad_init + default context
-void action_update(void);                        // joypad_poll + map buttons→actions
-
-// Query (called by game logic instead of raw joypad)
-bool  action_pressed(GameAction action);          // Edge-triggered
-bool  action_held(GameAction action);             // Continuous
-bool  action_released(GameAction action);         // Edge-triggered
-
-// Analog stick
-float action_analog_x(void);                      // Filtered by deadzone/sensitivity; inverted
-float action_analog_y(void);
-bool  action_has_analog(void);
-
-// Context/remapping
-void action_set_context(const ActionContext *ctx);
-void action_set_binding(GameAction action, PhysicalButton button);
-PhysicalButton action_get_binding(GameAction action);
-```
-
-### Performance
-
-- O(ACTION_COUNT=11) per `action_update()` call — negligible
-- Zero heap allocation — all state is static arrays
-- No overhead when not remapped — default context matches previous hardcoded behavior
+- **Input core** (`src/input/input.c`): owns the joypad module; one `PadState` per port per frame (buttons and edges, sticks, triggers, controller type, accessory, rumble); waits for the vblank's read (`INPUT_SYNC_FRESH`); samples skipped reads from the vblank handler (taps below 60 FPS); rumble; read timing and input lag.
+- **Action layer** (`src/input/action.c`, pure, host-tested): 4 players, each on a port, each with a stack of `ActionContext`s ordered by priority. A context binds buttons, chords, stick directions and analog axes to action ids; `CTX_CONSUME` hides the inputs its active bindings use from the contexts below, `CTX_MODAL` hides everything. Actions carry pressed / held / released / repeat, a -1..1 value and the held time.
+- **Engine contexts**: `action_ctx_ui` (priority 100, modal: menus and dialogs), `action_ctx_debug` (priority -100: D-Up / D-Down, so any game binding on those buttons wins).
+- **The game's controls** are data: the demo's action ids, default table and names are in `src/scenes/demo_controls.c`; the Controls tab remaps player 1's context (`action_context_set_button`).
+- **Cost**: state is bit masks per player, and only held or pressed actions touch per-action data; a player whose pad shows no activity skips its contexts.
 
 ## Collision Detection
 

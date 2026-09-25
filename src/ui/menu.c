@@ -1,10 +1,5 @@
 #include "menu.h"
-#include <libdragon.h>
 #include <string.h>
-
-// Analog stick menu threshold and repeat delay
-#define ANALOG_THRESHOLD 40
-#define ANALOG_COOLDOWN  10
 
 void menu_init(Menu *menu, const char *title) {
     memset(menu, 0, sizeof(Menu));
@@ -73,7 +68,6 @@ void menu_open(Menu *menu) {
         keep_visible(&menu->tabs[t]);
     }
     menu->active_tab = 0;
-    menu->analog_cooldown = 0;
     menu->is_open = true;
 }
 
@@ -122,34 +116,18 @@ void menu_switch_tab(Menu *menu, int dir) {
     keep_visible(tab);
 }
 
-void menu_update(Menu *menu) {
-    if (!menu->is_open || menu->tab_count == 0) return;
+void menu_update(Menu *menu, const UiInput *in) {
+    if (!menu->is_open || menu->tab_count == 0 || !in) return;
 
-    joypad_buttons_t pressed = joypad_get_buttons_pressed(JOYPAD_PORT_1);
+    if (in->prev_tab) menu_switch_tab(menu, -1);
+    if (in->next_tab) menu_switch_tab(menu, 1);
+    if (in->up)    menu_move_cursor(menu, -1);
+    if (in->down)  menu_move_cursor(menu, 1);
+    if (in->left)  menu_change_value(menu, -1);
+    if (in->right) menu_change_value(menu, 1);
 
-    if (pressed.l) menu_switch_tab(menu, -1);
-    if (pressed.r) menu_switch_tab(menu, 1);
-    if (pressed.d_up)   menu_move_cursor(menu, -1);
-    if (pressed.d_down) menu_move_cursor(menu, 1);
-    if (pressed.d_left)  menu_change_value(menu, -1);
-    if (pressed.d_right) menu_change_value(menu, 1);
-
-    // Analog stick left/right with cooldown
-    if (menu->analog_cooldown > 0) {
-        menu->analog_cooldown--;
-    } else {
-        joypad_inputs_t inputs = joypad_get_inputs(JOYPAD_PORT_1);
-        if (inputs.stick_x < -ANALOG_THRESHOLD) {
-            menu_change_value(menu, -1);
-            menu->analog_cooldown = ANALOG_COOLDOWN;
-        } else if (inputs.stick_x > ANALOG_THRESHOLD) {
-            menu_change_value(menu, 1);
-            menu->analog_cooldown = ANALOG_COOLDOWN;
-        }
-    }
-
-    if (pressed.a) menu_close(menu, true);     // confirm
-    if (pressed.b) menu_close(menu, false);    // cancel
+    if (in->confirm) menu_close(menu, true);
+    else if (in->cancel) menu_close(menu, false);
 }
 
 int menu_get_value(const Menu *menu, int tab, int item_index) {

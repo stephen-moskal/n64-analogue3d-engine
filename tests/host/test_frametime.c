@@ -54,8 +54,26 @@ static void test_presents(void) {
     CHECK(s.presents == 0 && s.late == 0 && s.torn == 0);
 }
 
+// Input lag of presented frames (S9): recorded from the vblank interrupt
+static void test_lag(void) {
+    frametime_reset();
+    for (int i = 0; i < 10; i++) frametime_record_lag(2);
+    frametime_record_lag(1);
+    frametime_record_lag(5);                               // 4+ bucket
+    FrameTimeStats s;
+    frametime_get(&s, 16.67f);
+    CHECK(s.lag_count == 12);
+    CHECK(s.lag_min == 1 && s.lag_max == 5);
+    CHECK_NEAR(s.lag_avg, (20 + 1 + 5) / 12.0, 1e-4);
+    CHECK(s.lag_hist[0] == 1 && s.lag_hist[1] == 10 && s.lag_hist[2] == 0 && s.lag_hist[3] == 1);
+    frametime_reset();
+    frametime_get(&s, 16.67f);
+    CHECK(s.lag_count == 0 && s.lag_min == 0 && s.lag_max == 0);
+}
+
 void run_frametime_tests(void) {
     RUN_TEST(test_presents);
+    RUN_TEST(test_lag);
     RUN_TEST(test_stats);
     RUN_TEST(test_ring_wraps);
 }

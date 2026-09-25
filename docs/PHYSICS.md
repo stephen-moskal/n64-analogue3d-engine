@@ -303,7 +303,7 @@ Nothing to call: `scene_update()` runs `physics_world_update()` and `scene_sync_
 static void my_scene_update(Scene *scene, float dt) {
     SceneObject *obj = scene_get_object(scene, ball_index);
     PhysicsBody *body = obj ? physics_body_get(&scene->physics, obj->body_handle) : NULL;
-    if (body && body->grounded && action_pressed(ACTION_CONFIRM)) {
+    if (body && body->grounded && action_pressed(0, ACT_JUMP)) {
         physics_body_apply_impulse(body, (vec3_t){0, 300, 0});   // jump
     }
 }

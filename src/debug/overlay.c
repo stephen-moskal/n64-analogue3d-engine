@@ -7,6 +7,8 @@
 #include "stats.h"
 #include "memstats.h"
 #include "frametime.h"
+#include "../input/input.h"
+#include "../engine/engine.h"
 #include "../ui/text.h"
 #include "../ui/ui_layer.h"
 
@@ -55,7 +57,7 @@ static int     panel_y1;
 
 // Deferred bars: text and rectangles use different RDP modes, so bars are
 // queued while the page is built and drawn together afterwards.
-#define MAX_BARS 48
+#define MAX_BARS 96        // the Input page: 18 per port
 static struct { int16_t x, y, w, h; color_t c; } bars[MAX_BARS];
 static int bar_count;
 static int panel_x1;          // right edge of the current panel (for clamping)
@@ -193,14 +195,36 @@ static void page_stats(void) {
          (unsigned long)s->ui_renders, (unsigned long)s->ui_blits);
 }
 
+// The profiler page's name for a slot: the waits read as idle time
+static const char *prof_label(ProfSlot s) {
+    switch (s) {
+    case PROF_WAIT_DISPLAY: return "idle fb";
+    case PROF_WAIT_INPUT:   return "idle input";
+    case PROF_PACE:         return "idle pace";
+    default:                return profiler_slot_name(s);
+    }
+}
+
+// The waits are idle time, drawn dim
+static bool prof_idle(ProfSlot s) {
+    return s == PROF_WAIT_DISPLAY || s == PROF_WAIT_INPUT || s == PROF_PACE;
+}
+
 static void page_profiler(float budget_ms) {
-    static const ProfSlot rows[] = {
-        PROF_UPDATE, PROF_SCENE_SYS, PROF_DRAW, PROF_FLOOR, PROF_OBJECTS,
-        PROF_MESH_TRIS, PROF_PARTICLE_DRAW, PROF_SHADOWS, PROF_HUD, PROF_MENU,
-        PROF_AUDIO, PROF_OVERLAY, PROF_WAIT_DISPLAY,
+    // (menu is left out: the page is hidden while the menu is open; the CSV has it)
+    static const ProfSlot all_rows[] = {
+        PROF_INPUT, PROF_UPDATE, PROF_SCENE_SYS, PROF_DRAW, PROF_FLOOR, PROF_OBJECTS,
+        PROF_MESH_TRIS, PROF_PARTICLE_DRAW, PROF_SHADOWS, PROF_HUD,
+        PROF_AUDIO, PROF_OVERLAY, PROF_WAIT_DISPLAY, PROF_WAIT_INPUT, PROF_PACE,
     };
-    const int nrows = (int)(sizeof(rows) / sizeof(rows[0]));
     const ProfilerFrame *pf = profiler_get();
+    // A wait that is not in use (pace without low-latency pacing, the input
+    // wait with INPUT_SYNC_LATEST) gets no row: the panel stays clear of the HUD
+    ProfSlot rows[sizeof(all_rows) / sizeof(all_rows[0])];
+    int nrows = 0;
+    for (unsigned i = 0; i < sizeof(all_rows) / sizeof(all_rows[0]); i++)
+        if (!prof_idle(all_rows[i]) || all_rows[i] == PROF_WAIT_DISPLAY || pf->avg_us[all_rows[i]] >= 5.0f)
+            rows[nrows++] = all_rows[i];
     float cpu = profiler_cpu_ms();
     int bx = bar_col_x(LABEL_COLS);
     int budget_px = (int)(budget_ms * PX_PER_MS + 0.5f);
@@ -222,9 +246,9 @@ static void page_profiler(float budget_ms) {
     for (int i = 0; i < nrows; i++) {
         ProfSlot s = rows[i];
         float ms = pf->avg_us[s] / 1000.0f;
-        bool idle = (s == PROF_WAIT_DISPLAY);
+        bool idle = prof_idle(s);
         line(r, idle ? COL_DIM : COL_TEXT, "%s%-10s%6.2f",
-             profiler_slot_depth(s) > 1 ? " " : "", idle ? "idle" : profiler_slot_name(s), ms);
+             profiler_slot_depth(s) > 1 ? " " : "", prof_label(s), ms);
         queue_bar(bx, row_y(r) + 2, (int)(ms * PX_PER_MS + 0.5f), 5,
                   idle ? COL_DIM : load_color(ms, budget_ms));
         r++;
@@ -261,7 +285,7 @@ static void page_frametime(float budget_ms) {
     const int hist_h = 30;
     int text_right = bar_col_x(TEXT_COLS);
     int hist_right = text_x() + FRAMETIME_BUCKETS * bucket_px + PAD;
-    int rows = 12;
+    int rows = 13;
     panel(text_right > hist_right ? text_right : hist_right, rows);
 
     int r = 0;
@@ -275,6 +299,7 @@ static void page_frametime(float budget_ms) {
     line(r++, (f->late || f->torn) ? COL_YELLOW : COL_TEXT, "Late %d torn %d of %d", f->late, f->torn, f->presents);
     line(r++, COL_TEXT, "vblanks 1:%d 2:%d 3+:%d", f->present_hist[0], f->present_hist[1],
          f->present_hist[2] + f->present_hist[3]);
+    line(r++, COL_TEXT, "Input lag %.2f vbl (%d-%d)", f->lag_avg, f->lag_min, f->lag_max);
     line(r++, COL_DIM, "loop ms, 1.5/bar");
 
     int base_y = row_y(r) + hist_h;
@@ -336,6 +361,109 @@ static void page_rsp(float budget_ms) {
     }
 }
 
+// --- Input page: ports, players, timing -----------------------------------
+// The text refreshes at 4 Hz like every page; the button squares and stick
+// dots are rebuilt every frame (input_bars), so a quick press shows.
+
+#define IN_PORT_ROW   3                 // first port row
+#define IN_TEXT_COLS 20                 // port rows: text, then the squares
+#define IN_SQ          5                // button square pitch (4 px + gap)
+#define IN_STICK       9                // stick box (px), inside one row
+
+// Button squares in controller order: A B Z Start, D-pad, L R, C, X Y
+static const struct { PadButton btn; int8_t gap; color_t on; } in_buttons[] = {
+    {BTN_A, 0, RGBA32(0x40, 0x80, 0xFF, 0xFF)}, {BTN_B, 0, RGBA32(0x30, 0xD0, 0x40, 0xFF)},
+    {BTN_Z, 0, COL_MARK}, {BTN_START, 0, COL_RED},
+    {BTN_D_UP, 2, COL_MARK}, {BTN_D_DOWN, 0, COL_MARK}, {BTN_D_LEFT, 0, COL_MARK}, {BTN_D_RIGHT, 0, COL_MARK},
+    {BTN_L, 2, COL_MARK}, {BTN_R, 0, COL_MARK},
+    {BTN_C_UP, 2, COL_YELLOW}, {BTN_C_DOWN, 0, COL_YELLOW}, {BTN_C_LEFT, 0, COL_YELLOW}, {BTN_C_RIGHT, 0, COL_YELLOW},
+    {BTN_X, 2, COL_MARK}, {BTN_Y, 0, COL_MARK},
+};
+#define IN_SQ_W (16 * IN_SQ + 8)          // squares plus the four group gaps
+
+static const char *accessory_short(const PadState *pad) {
+    switch (pad->accessory) {
+    case PAD_ACC_RUMBLE_PAK:     return "Rmb";
+    case PAD_ACC_CONTROLLER_PAK: return "Pak";
+    case PAD_ACC_TRANSFER_PAK:   return "Xfr";
+    case PAD_ACC_BIO_SENSOR:     return "Bio";
+    case PAD_ACC_SNAP_STATION:   return "Snp";
+    case PAD_ACC_UNKNOWN:        return "?";
+    default:                     return pad->rumble ? "Rmb" : "";
+    }
+}
+
+static void page_input(void) {
+    const InputTiming *t = input_timing();
+    frametime_get(&ft_cache, engine_frame_budget_ms());
+    int bx = bar_col_x(IN_TEXT_COLS);
+    int rows = IN_PORT_ROW + PAD_PORTS + ACTION_PLAYERS + 1;
+    panel(bx + IN_SQ_W + PAD + IN_STICK + PAD, rows);
+
+    int r = 0;
+    line(r++, COL_HEAD, "INPUT %s, %s", input_sync() == INPUT_SYNC_FRESH ? "fresh" : "latest",
+         engine_pacing() == ENGINE_PACING_LOW_LATENCY ? "low latency" : "ahead");
+    line(r++, COL_TEXT, "Lag %.2f vbl (%d-%d) %.0f ms", ft_cache.lag_avg, ft_cache.lag_min,
+         ft_cache.lag_max, ft_cache.lag_avg * (1000.0f / 60.0f));
+    line(r++, t->timeouts ? COL_YELLOW : COL_TEXT, "SI %.2f wait %.2f/%.2f", t->read_avg_us / 1000.0f,
+         t->wait_avg_us / 1000.0f, t->wait_max_us / 1000.0f);
+
+    for (int port = 0; port < PAD_PORTS; port++) {
+        const PadState *pad = input_pad(port);
+        if (pad->style == PAD_NONE)
+            line(r++, COL_DIM, "%d --", port + 1);
+        else
+            line(r++, COL_TEXT, "%d %-5s%-4s%+4d%+4d", port + 1, pad_style_name(pad->style),
+                 accessory_short(pad), pad->stick_x, pad->stick_y);
+    }
+
+    // Players: port, then the context stack from the top
+    for (int p = 0; p < ACTION_PLAYERS; p++) {
+        char chain[TEXT_COLS + 1];
+        int n = 0;
+        chain[0] = '\0';
+        for (int i = 0; i < action_context_count(p) && n < TEXT_COLS; i++)
+            n += snprintf(chain + n, sizeof(chain) - n, "%s%s", i ? ">" : "", action_context_at(p, i)->name);
+        int port = action_port(p);
+        line(r++, action_connected(p) ? COL_TEXT : COL_DIM, "P%d %c %s", p + 1,
+             port >= 0 ? '1' + port : '-', chain);
+    }
+
+    // Player 1's active actions, by name
+    char held[TEXT_COLS + 1];
+    int n = snprintf(held, sizeof(held), "P1:");
+    for (int a = 0; a < ACTION_MAX && n < TEXT_COLS; a++)
+        if (action_held(0, (ActionId)a))
+            n += snprintf(held + n, sizeof(held) - n, " %s", action_name((ActionId)a));
+    line(r++, COL_TEXT, "%s", held);
+}
+
+// Every frame: a square per button (lit while held) and the stick's position
+static void input_bars(void) {
+    int bx = bar_col_x(IN_TEXT_COLS);
+    for (int port = 0; port < PAD_PORTS; port++) {
+        const PadState *pad = input_pad(port);
+        if (pad->style == PAD_NONE) continue;
+        int y = row_y(IN_PORT_ROW + port) + 2;
+        int x = bx;
+        for (unsigned i = 0; i < sizeof(in_buttons) / sizeof(in_buttons[0]); i++) {
+            x += in_buttons[i].gap;
+            bool on = pad->held & PAD_BIT(in_buttons[i].btn);
+            queue_bar(x, y, IN_SQ - 1, 6, on ? in_buttons[i].on : COL_DIM);
+            x += IN_SQ;
+        }
+        // Stick: +-80 raw fills the box
+        int sx = bx + IN_SQ_W + PAD, sy = row_y(IN_PORT_ROW + port);
+        queue_bar(sx, sy, IN_STICK, IN_STICK, COL_DIM);
+        int dx = pad->stick_x * (IN_STICK / 2) / 80, dy = -pad->stick_y * (IN_STICK / 2) / 80;
+        if (dx < -IN_STICK / 2) dx = -IN_STICK / 2;
+        if (dx > IN_STICK / 2 - 1) dx = IN_STICK / 2 - 1;
+        if (dy < -IN_STICK / 2) dy = -IN_STICK / 2;
+        if (dy > IN_STICK / 2 - 1) dy = IN_STICK / 2 - 1;
+        queue_bar(sx + IN_STICK / 2 + dx, sy + IN_STICK / 2 + dy, 2, 2, COL_GREEN);
+    }
+}
+
 void overlay_draw(float budget_ms) {
     OverlayPage page = debug_overlay_page();
     if (page == OVERLAY_OFF) {
@@ -357,11 +485,16 @@ void overlay_draw(float budget_ms) {
         case OVERLAY_MEMORY:    page_memory();             break;
         case OVERLAY_FRAMETIME: page_frametime(budget_ms); break;
         case OVERLAY_RSP:       page_rsp(budget_ms);       break;
+        case OVERLAY_INPUT:     page_input();              break;
         default: break;
         }
         text_build();
         cached_page = (int)page;
         cached_age = 0;
+    }
+    if (page == OVERLAY_INPUT) {
+        bar_count = 0;
+        input_bars();
     }
 
     draw_panel();

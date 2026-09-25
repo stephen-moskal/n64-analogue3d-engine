@@ -26,6 +26,13 @@ What we have measured or learned about the target hardware, and the RDP rules th
 
 Design for 4 MB anyway (a real N64 without Expansion Pak); the extra 4 MB is headroom for debug builds and tooling. Take no timing measurement in the first 10 s after a reset; boot-to-benchmark ROMs wait 15 s before their first step.
 
+## Controllers and the VI (S9)
+
+- **Controller reads.** libdragon's joypad module reads all four ports at every vblank. Its vblank handler queues a joybus message: an SI DMA writes the command block to PIF RAM (first SI interrupt), a second DMA reads the reply once the PIF has run the commands (second interrupt), then the callback copies it. The reply arrives **0.69 ms** after the vblank on the Analogue 3D and 1.76 ms in ares. The joybus queue holds 8 messages; libdragon also queues a port identification once a second, and every Rumble Pak on/off is a message too.
+- **Knowing the read is in.** The SI status register (`0xA4800018`: DMA busy, IO busy, interrupt pending) is idle only when the queue is empty. If it is idle just before the vblank's read is queued, that read is the first message and is in after two SI interrupts. The engine's vblank handler therefore runs before the joypad module's (vblank handlers run in install order; at most 4, three used).
+- **VI register writes.** `vi_write()` / `vi_show()` only update libdragon's copy of the registers; the vblank interrupt writes the hardware after every vblank handler has run. A handler that reads `*VI_ORIGIN` still sees the previous framebuffer; `vi_read(VI_ORIGIN)` returns the one about to be scanned (D36).
+- **Input lag** (Bench = Latency): 3 vblanks from read to screen when the frame acts on the newest completed read and renders ahead, 2 when it waits for the vblank's read, 1 with low-latency pacing while a frame fits the budget ([ENGINE.md](ENGINE.md#input-and-latency-s9)).
+
 ## Analogue 3D vs ares
 
 | Aspect | ares | Analogue 3D |

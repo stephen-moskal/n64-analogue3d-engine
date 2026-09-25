@@ -16,7 +16,7 @@
 #include <stdbool.h>
 #include <libdragon.h>
 #include "menu.h"
-#include "../input/action.h"
+#include "../scenes/demo_controls.h"
 
 typedef enum {
     SETTINGS_TAB_GENERAL,       // "Settings"
@@ -37,6 +37,8 @@ typedef enum {
     SETTING_FRAME_RATE,         // int: FPS limit, 0 = the display's rate
     SETTING_RESET_SCENE,        // action: settings_trigger()
     SETTING_UI_STYLE,           // int: index into ui_styles[]
+    SETTING_LATENCY,            // int: LatencyChoice
+    SETTING_RUMBLE,             // bool
     // Sound tab
     SETTING_SOUND,              // bool: master on/off
     SETTING_SFX_VOLUME,         // float 0..1
@@ -59,12 +61,20 @@ typedef enum {
     SETTING_FOG_FAR,            // float
     SETTING_FOG_COLOR,          // color
     SETTING_SKY,                // bool (Custom)
-    // Controls tab: one per GameAction, in its order; int: PhysicalButton
+    // Controls tab: one per remappable demo action, in its order; int: PadButton
     SETTING_BINDING_FIRST,
-    SETTING_COUNT = SETTING_BINDING_FIRST + ACTION_COUNT
+    SETTING_COUNT = SETTING_BINDING_FIRST + DEMO_REMAP_COUNT
 } SettingId;
 
-#define SETTING_BINDING(action) ((SettingId)(SETTING_BINDING_FIRST + (action)))
+// The Controls option of a remappable demo action (DEMO_REMAP_FIRST ...)
+#define SETTING_BINDING(action) ((SettingId)(SETTING_BINDING_FIRST + (action) - DEMO_REMAP_FIRST))
+
+// Latency choices (the demo maps them to input_set_sync and engine_set_pacing)
+typedef enum {
+    LATENCY_CLASSIC,            // newest completed read, render ahead: the engine before S9
+    LATENCY_LOW,                // wait for the vblank's read, render ahead (default)
+    LATENCY_LOWEST,             // wait for the read, no rendering ahead
+} LatencyChoice;
 
 // Add the five tabs to a menu that has none yet (main.c; the Debug tab
 // follows). Every option starts at its default and counts as changed.

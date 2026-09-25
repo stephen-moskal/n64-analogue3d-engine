@@ -720,3 +720,23 @@ Boot-to-benchmark Bench = All, then the demo: a walk-through of every tab, Cance
 - The gain is layout, not S8's code. The pillar's heap vertex data moved to colour 0x0650, off the pinned camera copy's lines (D26). S7.1's `LAYOUT_PAD=448` build had the same heap colour and the same result (objects 16: 6.54 ms). The idle and fill-rate steps are 3–7 % faster from the HUD text's cold code alone.
 
 Capture: `docs/benchmarks/2026-09-24-p2-s8-all-bootbench-debug-a3d.csv` (the new comparison point).
+
+## Phase 2 · S9 input: players, contexts, lowest-latency polling (2026-09-25, debug build, Analogue 3D)
+
+Demo walk-through with the debug ROM: menu, D-Up/D-Down (all seven overlay pages, the new Input page), the dialog (the shortcuts stay quiet while it is open), a Controls remap onto D-Up, the Latency choices, and a second controller: it shows on the Input page, its Start opens the menu and only it drives the menu, its B launches the ball. No asserts. Then boot-to-benchmark Bench = All and Bench = Latency from the Debug tab.
+
+**Input lag, Bench = Latency** (floor + 16 pillars, plus a CPU burn; lag = vblanks from the controller read a frame used to the vblank it reached the screen, over the 240 measured frames):
+
+| Load (CPU) | Classic (latest, render ahead) | Low (fresh, render ahead; default) | Lowest (fresh, low-latency pacing) |
+|---|---|---|---|
+| light (9.6 ms) | 60.0 FPS, lag **3.00** | 60.0 FPS, lag **2.00** | 60.0 FPS, lag **1.00** |
+| +4 ms (16.5 ms) | 59.0 FPS, lag 2.08 | 58.6 FPS, lag 2.05 | 30.0 FPS, lag 2.00 |
+| +8 ms (21.8 ms) | 45.8 FPS, lag 2.38 | 45.6 FPS, lag 2.34 | 30.0 FPS, lag 2.00 |
+
+- The A3D's controller read arrives **0.69 ms** after its vblank (ares: 1.76 ms). The fresh-read wait costs 0.57 ms of idle time per frame in a light scene and 0.02–0.05 ms once the CPU is the bottleneck (the read is already in); no wait timed out.
+- Lowest removes a vblank of lag while a frame fits the budget and halves the frame rate when it does not; Classic and Low converge once the CPU is late, because frames no longer queue.
+- `input` (`input_poll`: four pads sampled and mapped to four players' actions) costs **70–83 µs** per frame; `update` fell by ~35 µs (input left it).
+
+**Bench = All against S8: 20 steps +8–11 % CPU, objects 32 60 → 56.1 FPS. Not S9's code: the pillar's vertex data (D26).** `BENCH_PROF`: `mesh_tris` +12–13 % (objects 16 4.27 → 4.85 ms), `mesh_light` +9 %, the textured boxes' `mesh_cull` +20–36 %, particles' draw +3–9 %; the empty scene and fill-rate steps are flat (0.92 → 0.94 ms). `BENCH_LAYOUT`: S9's larger static data moved the heap by 38 KB, and the pillar's vertices (1,600 bytes, read for every triangle) went from D-cache colour 0x0650 (clear of everything hot; S8's gain was this) to 0x1BB0–0x21F0, which covers the mesh phase's stack lines (0x1750–0x1DC0) and wraps onto the pinned rspq/rdpq/profiler state (0x0000–0x01F0). S9.1 places mesh geometry by colour.
+
+Captures: `docs/benchmarks/2026-09-25-p2-s9-all-bootbench-debug-a3d.csv`, `docs/benchmarks/2026-09-25-p2-s9-latency-debug-a3d.csv`. The comparison point stays S8 until S9.1.

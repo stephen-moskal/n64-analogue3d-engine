@@ -8,6 +8,8 @@
 #   make BENCH=1 BENCH_VALIDATOR=1  ... with the RDP validator on (Debug > RDP Check)
 #   make LAYOUT_PAD=448   moves every function and static variable that is not pinned
 #                         by 448 bytes: a layout-stability test (docs/HARDWARE.md, D34, D35)
+#   make TOUR=1           debug build that walks the demo through a scripted screenshot
+#                         tour -> engine-debug-tour.z64 (build/debug-tour; docs/DEBUGGING.md)
 #
 # Via the Docker toolchain: `libdragon make` / `libdragon make BUILD=release`.
 
@@ -23,7 +25,13 @@ BENCH_SUFFIX := $(if $(filter 1,$(BENCH)),-bench,)
 BENCH_KIND ?= ALL
 BENCH_VALIDATOR ?= 0
 
-BUILD_DIR  = build/$(BUILD)$(BENCH_SUFFIX)
+# TOUR=1: the demo walks through a fixed list of states on a timer (options,
+# the Start menu, overlay pages, the dialog, a benchmark) for screenshots
+# without a controller (src/scenes/demo_tour.c). Own directory and ROM too.
+TOUR_SUFFIX := $(if $(filter 1,$(TOUR)),-tour,)
+VARIANT_SUFFIX := $(BENCH_SUFFIX)$(TOUR_SUFFIX)
+
+BUILD_DIR  = build/$(BUILD)$(VARIANT_SUFFIX)
 SOURCE_DIR = src
 
 # libdragon APIs still marked "preview" are allowed, but each use warns, so
@@ -33,12 +41,13 @@ LIBDRAGON_PREVIEW = 1
 include $(N64_INST)/include/n64.mk
 
 ifeq ($(BUILD),release)
-ROM_NAME = engine$(BENCH_SUFFIX)
+ROM_NAME = engine$(VARIANT_SUFFIX)
 CFLAGS  += -DNDEBUG -DLIBDRAGON_PROFILE=0 -DENGINE_DEBUG=0 -DENGINE_PROFILE=0
 else
-ROM_NAME = engine-debug$(BENCH_SUFFIX)
+ROM_NAME = engine-debug$(VARIANT_SUFFIX)
 CFLAGS  += -DENGINE_DEBUG=1 -DENGINE_PROFILE=1
 endif
+CFLAGS  += -DENGINE_TOUR=$(if $(filter 1,$(TOUR)),1,0)
 
 N64_ROM_TITLE    = "SMozN64 Engine"
 N64_ROM_SAVETYPE = none

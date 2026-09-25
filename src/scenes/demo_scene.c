@@ -1,4 +1,5 @@
 #include "demo_scene.h"
+#include "demo_controls.h"
 #include <string.h>
 #include <stdio.h>
 #include "../render/cube.h"
@@ -7,7 +8,6 @@
 #include "../render/floor.h"
 #include "../render/texture.h"
 #include "../input/input.h"
-#include "../input/action.h"
 #include "../ui/text.h"
 #include "../ui/menu.h"
 #include "../ui/menu_view.h"
@@ -78,6 +78,44 @@ static TransformMode transform_mode = TRANSFORM_MOVE;
 static int selected_object = -1;
 
 static const char *transform_mode_names[] = {"MOVE", "ROT", "SCALE"};
+
+// ============================================================
+// Controls (demo_controls.h): one context per player; the Controls tab
+// remaps player 1's. Any player's Start opens the Start menu and that player
+// drives it; any player's B launches the ball, and its owner feels the bounces.
+// ============================================================
+
+static ActionContext demo_ctx[ACTION_PLAYERS];
+static int  menu_player = -1;       // who drives the open Start menu (the UI context is on their stack)
+static bool dialog_ui;              // the dialog holds player 1's UI context
+static int  ball_owner;             // last player to launch the ball
+
+// Player 1's camera controls: the stick orbits (or moves the fixed and follow
+// cameras), C-Up/C-Down zoom, C-Right/C-Left shift the view
+typedef struct {
+    float orbit_azimuth;            // stick right: negative (the orbit azimuth convention)
+    float orbit_elevation;          // stick up: positive
+    float zoom_delta;
+    float target_y_delta;
+    bool  has_input;
+} CameraInput;
+
+#define LOOK_SPEED          0.16f   // radians per frame at full deflection
+#define ZOOM_SPEED          5.0f
+#define TARGET_SHIFT_SPEED  2.0f
+
+static CameraInput camera_input(int player) {
+    CameraInput c = {
+        .orbit_azimuth   = -action_value(player, ACT_LOOK_X) * LOOK_SPEED,
+        .orbit_elevation =  action_value(player, ACT_LOOK_Y) * LOOK_SPEED,
+        .has_input       = action_held(player, ACT_LOOK_X) || action_held(player, ACT_LOOK_Y),
+    };
+    if (action_held(player, ACT_ZOOM_IN))    { c.zoom_delta = -ZOOM_SPEED;             c.has_input = true; }
+    if (action_held(player, ACT_ZOOM_OUT))   { c.zoom_delta = ZOOM_SPEED;              c.has_input = true; }
+    if (action_held(player, ACT_SHIFT_UP))   { c.target_y_delta = TARGET_SHIFT_SPEED;  c.has_input = true; }
+    if (action_held(player, ACT_SHIFT_DOWN)) { c.target_y_delta = -TARGET_SHIFT_SPEED; c.has_input = true; }
+    return c;
+}
 
 // Movement speeds for object manipulation
 #define OBJ_MOVE_SPEED    3.0f
@@ -471,22 +509,16 @@ static void dialog_open(Scene *scene, const char *conversation) {
     }
     textbox_open(&dialog_box, &dialog_runner);
     snd_play(SFX_MENU_OPEN);
+    // Player 1 reads the text box through the UI context: modal, so the game,
+    // the camera and the debug shortcuts see nothing until it closes
+    action_push_context(0, &action_ctx_ui);
+    dialog_ui = true;
 }
 
-// Buttons -> UiInput: A/B through the action map, D-pad or stick for choices
-static UiInput dialog_input(void) {
-    static int stick_prev;
-    joypad_buttons_t pressed = joypad_get_buttons_pressed(JOYPAD_PORT_1);
-    joypad_inputs_t in = joypad_get_inputs(JOYPAD_PORT_1);
-    int stick = in.stick_y > 40 ? 1 : in.stick_y < -40 ? -1 : 0;
-    UiInput ui = {
-        .confirm = action_pressed(ACTION_CONFIRM),
-        .cancel  = action_pressed(ACTION_CANCEL),
-        .up      = pressed.d_up   || (stick == 1 && stick_prev != 1),
-        .down    = pressed.d_down || (stick == -1 && stick_prev != -1),
-    };
-    stick_prev = stick;
-    return ui;
+static void dialog_input_end(void) {
+    if (!dialog_ui) return;
+    action_pop_context(0, &action_ctx_ui);
+    dialog_ui = false;
 }
 
 static void demo_init(Scene *scene) {
@@ -497,6 +529,16 @@ static void demo_init(Scene *scene) {
     // no torches): every option counts as changed, so the next update applies
     // them all and the scene matches the menu (D27)
     settings_invalidate();
+
+    // Controls: every player's context from the defaults; the Controls tab's
+    // bindings reach player 1's with the options (settings_invalidate above)
+    for (int p = 0; p < ACTION_PLAYERS; p++) {
+        action_context_init(&demo_ctx[p], "Demo", 0, CTX_CONSUME, demo_bindings, demo_binding_count);
+        action_push_context(p, &demo_ctx[p]);
+    }
+    menu_player = -1;
+    dialog_ui = false;
+    ball_owner = 0;
 
     // Reset object data pool
     object_data_count = 0;
@@ -619,7 +661,7 @@ static void demo_init(Scene *scene) {
 // Object manipulation
 // ============================================================
 
-static void handle_object_manipulation(Scene *scene, const InputState *input) {
+static void handle_object_manipulation(Scene *scene, const CameraInput *input) {
     SceneObject *obj = scene_get_object(scene, selected_object);
     if (!obj) return;
 
@@ -781,24 +823,38 @@ static void apply_point_lights(Scene *scene) {
 // ============================================================
 
 static void demo_update(Scene *scene, float dt) {
-    // Poll input through action mapping layer
-    PROF_BEGIN(PROF_INPUT);
-    action_update();
-    InputState input_state;
-    input_update(&input_state);
-    PROF_END(PROF_INPUT);
-
-    // Menu input (START is fixed — always toggles menu)
-    joypad_buttons_t raw_pressed = joypad_get_buttons_pressed(JOYPAD_PORT_1);
+    // The engine read the controllers just before this update (input_poll):
+    // the actions below are this frame's
+    CameraInput input_state = camera_input(0);
     bool in_dialog = textbox_active(&dialog_box);
-    if (raw_pressed.start && !in_dialog) {
-        if (start_menu.is_open) {
+
+    // --- Start menu: the player who opened it drives it (the UI context,
+    //     modal, is on their stack while it is open) ---
+    int opener;
+    if (start_menu.is_open) {
+        UiInput ui = action_ui(menu_player);
+        int old_tab = start_menu.active_tab;
+        int old_cursor = start_menu.tabs[old_tab].cursor;
+        if (ui.start) {
             menu_close(&start_menu, true);
             snd_play(SFX_MENU_CLOSE);
         } else {
-            menu_open(&start_menu);
-            snd_play(SFX_MENU_OPEN);
+            menu_update(&start_menu, &ui);
+            if (!start_menu.is_open)
+                snd_play(SFX_MENU_SELECT);
+            else if (start_menu.active_tab != old_tab ||
+                     start_menu.tabs[start_menu.active_tab].cursor != old_cursor)
+                snd_play(SFX_MENU_NAV);
         }
+        if (!start_menu.is_open) {
+            action_pop_context(menu_player, &action_ctx_ui);
+            menu_player = -1;
+        }
+    } else if (!in_dialog && action_any_pressed(ACT_MENU, &opener)) {
+        menu_open(&start_menu);
+        menu_player = opener;
+        action_push_context(opener, &action_ctx_ui);
+        snd_play(SFX_MENU_OPEN);
     }
 
     // --- Reset Scene acts once the menu is closed with it on "Reset!" ---
@@ -807,31 +863,34 @@ static void demo_update(Scene *scene, float dt) {
         return;
     }
 
-    // --- Dialog: modal while open (game and camera input wait) ---
+    // --- Dialog: modal while open (the UI context holds player 1's pad) ---
 
     if (!start_menu.is_open && !in_dialog && debug_consume_dialog_request()) {
         dialog_open(scene, "intro");
         in_dialog = textbox_active(&dialog_box);
     } else if (in_dialog) {
         PROF_BEGIN(PROF_DIALOG);
-        UiInput ui = dialog_input();
+        UiInput ui = action_ui(0);
         textbox_update(&dialog_box, &ui, dt);
         PROF_END(PROF_DIALOG);
+        if (!textbox_active(&dialog_box)) dialog_input_end();
     }
-    debug_menu_set_shortcuts(!in_dialog);
 
-    // --- Interaction mode handling ---
+    // --- Interaction mode handling (player 1; the ball for any player) ---
 
     if (!start_menu.is_open && !in_dialog) {
-        // Cancel button: spawn/re-launch physics ball (normal mode)
-        if (interaction_mode == MODE_NORMAL && action_pressed(ACTION_CANCEL)) {
+        // Cancel: spawn / re-launch the physics ball (normal mode)
+        int launcher;
+        if (interaction_mode == MODE_NORMAL && action_any_pressed(ACT_CANCEL, &launcher)) {
             launch_ball(scene);
+            ball_owner = launcher;
             burst_particles();
             snd_play(SFX_MODE_CHANGE);
+            input_rumble_player(launcher, 0.08f);
         }
 
         // Select mode: toggle object select
-        if (action_pressed(ACTION_SELECT_MODE)) {
+        if (action_pressed(0, ACT_SELECT_MODE)) {
             if (interaction_mode == MODE_NORMAL) {
                 interaction_mode = MODE_OBJECT_SELECT;
                 if (selected_object < 0)
@@ -846,31 +905,31 @@ static void demo_update(Scene *scene, float dt) {
 
         if (interaction_mode == MODE_OBJECT_SELECT) {
             // Cycle prev/next through the selectable objects
-            int step = action_pressed(ACTION_CYCLE_NEXT) - action_pressed(ACTION_CYCLE_PREV);
+            int step = action_pressed(0, ACT_CYCLE_NEXT) - action_pressed(0, ACT_CYCLE_PREV);
             int next = step ? scene_find_object(scene, selected_object, step, SCENE_OBJ_SELECTABLE) : -1;
             if (next >= 0) {
                 selected_object = next;
                 snd_play(SFX_MENU_NAV);
             }
             // Confirm: enter transform mode
-            if (action_pressed(ACTION_CONFIRM)) {
+            if (action_pressed(0, ACT_CONFIRM)) {
                 interaction_mode = MODE_OBJECT_TRANSFORM;
                 transform_mode = TRANSFORM_MOVE;
                 snd_play(SFX_MODE_CHANGE);
             }
             // Cancel: exit to normal
-            if (action_pressed(ACTION_CANCEL)) {
+            if (action_pressed(0, ACT_CANCEL)) {
                 interaction_mode = MODE_NORMAL;
                 selected_object = -1;
             }
         } else if (interaction_mode == MODE_OBJECT_TRANSFORM) {
             // Confirm: cycle transform mode
-            if (action_pressed(ACTION_CONFIRM)) {
+            if (action_pressed(0, ACT_CONFIRM)) {
                 transform_mode = (transform_mode + 1) % 3;
                 snd_play(SFX_MODE_CHANGE);
             }
             // Cancel: back to select
-            if (action_pressed(ACTION_CANCEL)) {
+            if (action_pressed(0, ACT_CANCEL)) {
                 interaction_mode = MODE_OBJECT_SELECT;
                 snd_play(SFX_OBJ_DESELECT);
             }
@@ -886,26 +945,12 @@ static void demo_update(Scene *scene, float dt) {
         if (body) body->kinematic = interaction_mode == MODE_OBJECT_TRANSFORM && i == selected_object;
     }
 
-    // --- Camera controls (only when not transforming objects) ---
+    // --- Camera controls (player 1; not while transforming an object) ---
 
-    if (start_menu.is_open) {
-        int old_tab = start_menu.active_tab;
-        int old_cursor = start_menu.tabs[start_menu.active_tab].cursor;
-        bool was_open = start_menu.is_open;
-        menu_update(&start_menu);
-        if (start_menu.is_open) {
-            int new_cursor = start_menu.tabs[start_menu.active_tab].cursor;
-            if (new_cursor != old_cursor || start_menu.active_tab != old_tab) {
-                snd_play(SFX_MENU_NAV);
-            }
-        }
-        if (was_open && !start_menu.is_open) {
-            snd_play(SFX_MENU_SELECT);
-        }
-    } else if (interaction_mode != MODE_OBJECT_TRANSFORM && !in_dialog) {
+    if (!start_menu.is_open && interaction_mode != MODE_OBJECT_TRANSFORM && !in_dialog) {
         // Camera mode cycling: steps the Camera option (applied below)
-        if (action_pressed(ACTION_CAM_MODE_PREV)) settings_step_choice(SETTING_CAMERA_MODE, -1);
-        if (action_pressed(ACTION_CAM_MODE_NEXT)) settings_step_choice(SETTING_CAMERA_MODE, 1);
+        if (action_pressed(0, ACT_CAM_PREV)) settings_step_choice(SETTING_CAMERA_MODE, -1);
+        if (action_pressed(0, ACT_CAM_NEXT)) settings_step_choice(SETTING_CAMERA_MODE, 1);
 
         if (input_state.has_input) {
             switch (scene->camera.mode) {
@@ -950,6 +995,16 @@ static void demo_update(Scene *scene, float dt) {
     }
     if (settings_take(SETTING_FRAME_RATE))
         engine_set_fps_limit(settings_int(SETTING_FRAME_RATE));
+    // Latency: Classic uses the newest completed controller read and renders
+    // ahead (the engine before S9); Low waits for the vblank's read; Lowest
+    // also starts each frame only once the last one is on screen
+    if (settings_take(SETTING_LATENCY)) {
+        LatencyChoice l = (LatencyChoice)settings_int(SETTING_LATENCY);
+        input_set_sync(l == LATENCY_CLASSIC ? INPUT_SYNC_LATEST : INPUT_SYNC_FRESH);
+        engine_set_pacing(l == LATENCY_LOWEST ? ENGINE_PACING_LOW_LATENCY : ENGINE_PACING_THROUGHPUT);
+    }
+    if (settings_take(SETTING_RUMBLE))
+        input_rumble_enable(settings_bool(SETTING_RUMBLE));
     apply_sound_settings();
 
     // UI style: menu and HUD restyle live, even while the menu is open
@@ -969,10 +1024,10 @@ static void demo_update(Scene *scene, float dt) {
     if (settings_take_range(SETTING_POINT_LIGHTS, SETTING_POINT_RADIUS))
         apply_point_lights(scene);
 
-    // Controls tab: one binding per action
-    for (int a = 0; a < ACTION_COUNT; a++) {
+    // Controls tab: player 1's button for each remappable action
+    for (int a = DEMO_REMAP_FIRST; a < DEMO_REMAP_FIRST + DEMO_REMAP_COUNT; a++) {
         if (settings_take(SETTING_BINDING(a)))
-            action_set_binding((GameAction)a, (PhysicalButton)settings_int(SETTING_BINDING(a)));
+            action_context_set_button(&demo_ctx[0], (ActionId)a, 0, (PadButton)settings_int(SETTING_BINDING(a)));
     }
 
     // Background: the preset's; under custom fog, the fog colour (the far
@@ -995,7 +1050,9 @@ static void demo_update(Scene *scene, float dt) {
         float vy = ball_body->velocity.y;
         if (ball_prev_vy < -BOUNCE_SOUND_MIN_SPEED && vy >= 0.0f) {
             float gain = -ball_prev_vy / BOUNCE_SOUND_FULL_SPEED;
-            snd_play_at(SFX_COLLISION, ball_body->position, gain > 1.0f ? 1.0f : gain);
+            if (gain > 1.0f) gain = 1.0f;
+            snd_play_at(SFX_COLLISION, ball_body->position, gain);
+            input_rumble_player(ball_owner, 0.04f + 0.12f * gain);
         }
         ball_prev_vy = vy;
     }
@@ -1183,7 +1240,13 @@ static void demo_cleanup(Scene *scene) {
     dialog_stop(&dialog_runner);
     dialog_bank_free(dialog_bank);
     dialog_bank = NULL;
-    debug_menu_set_shortcuts(true);
+    for (int p = 0; p < ACTION_PLAYERS; p++) {
+        action_pop_context(p, &demo_ctx[p]);
+        action_pop_context(p, &action_ctx_ui);      // a menu or dialog still open
+    }
+    menu_player = -1;
+    dialog_ui = false;
+    input_rumble_stop_all();
     snd_music_stop(0.0f);
     snd_stop_all_sfx();
     particle_cleanup();

@@ -10,14 +10,11 @@
 
 #include "ui_layer.h"
 #include "ui_style.h"
+#include "ui_input.h"
 #include "../dialog/dialog.h"
 
-// One frame of input, however the game maps its buttons
-typedef struct {
-    bool confirm;    // advance / pick (A)
-    bool cancel;     // show the whole page at once (B)
-    bool up, down;   // move through choices
-} UiInput;
+// Input (UiInput): confirm advances or picks, cancel shows the whole page at
+// once, up and down move through the choices.
 
 typedef enum { TB_CLOSED, TB_REVEAL, TB_WAIT, TB_CHOICE } TextBoxState;
 

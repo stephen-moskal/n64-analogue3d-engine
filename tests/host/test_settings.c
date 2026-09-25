@@ -61,17 +61,19 @@ static void test_menu_built(void) {
     CHECK(strcmp(menu.tabs[SETTINGS_TAB_CONTROLS].label, "Controls") == 0);
     CHECK(strcmp(settings_def(SETTING_RESET_SCENE)->label, "Reset Scene") == 0);
 
-    // Controls: one option per action, named and defaulted by the action module
-    for (int a = 0; a < ACTION_COUNT; a++) {
+    // Controls: one option per remappable demo action, named and defaulted by
+    // demo_controls.c; the choices are the bindable buttons, Start not among them
+    CHECK(menu.tabs[SETTINGS_TAB_CONTROLS].item_count == DEMO_REMAP_COUNT);
+    for (int a = DEMO_REMAP_FIRST; a < DEMO_REMAP_FIRST + DEMO_REMAP_COUNT; a++) {
         const SettingDef *d = settings_def(SETTING_BINDING(a));
-        CHECK(strcmp(d->label, action_name((GameAction)a)) == 0);
-        CHECK(d->default_choice == ACTION_CTX_EXPLORATION.bindings[a]);
-        CHECK(d->count == BTN_COUNT);
-        CHECK(settings_int(SETTING_BINDING(a)) == ACTION_CTX_EXPLORATION.bindings[a]);
+        CHECK(strcmp(d->label, demo_action_names[a - ACTION_GAME_FIRST]) == 0);
+        CHECK(settings_int(SETTING_BINDING(a)) == demo_default_button((ActionId)a));
     }
-    for (int b = 0; b < BTN_COUNT; b++) {
-        CHECK(strcmp(settings_def(SETTING_BINDING(0))->choices[b], action_button_name((PhysicalButton)b)) == 0);
-        CHECK(((const int *)settings_def(SETTING_BINDING(0))->values)[b] == b);
+    const SettingDef *c0 = settings_def(SETTING_BINDING(DEMO_REMAP_FIRST));
+    for (int c = 0; c < c0->count; c++) {
+        int btn = ((const int *)c0->values)[c];
+        CHECK(strcmp(c0->choices[c], pad_button_name((PadButton)btn)) == 0);
+        CHECK(btn != BTN_START);
     }
 }
 
@@ -83,6 +85,8 @@ static void test_values(void) {
     CHECK(settings_int(SETTING_FRAME_RATE) == 0);              // 60: the display's rate
     CHECK(settings_int(SETTING_ATMOSPHERE) == -1);             // Custom
     CHECK(settings_int(SETTING_CAMERA_MODE) == CAMERA_MODE_ORBITAL);
+    CHECK(settings_int(SETTING_LATENCY) == LATENCY_LOW);
+    CHECK(settings_bool(SETTING_RUMBLE));
     CHECK_NEAR(settings_float(SETTING_SFX_VOLUME), 0.8, 1e-6);
     CHECK_NEAR(settings_float(SETTING_AMBIENT), 0.20, 1e-6);    // D27: the menu's 20 %
     CHECK_NEAR(settings_float(SETTING_POINT_RADIUS), 300.0, 1e-6);
@@ -152,7 +156,8 @@ static void test_changes(void) {
     CHECK(!settings_take(SETTING_FOG_COLOR));
 
     settings_invalidate();
-    CHECK(settings_take(SETTING_FOG_COLOR) && settings_take(SETTING_BINDING(ACTION_COUNT - 1)));
+    CHECK(settings_take(SETTING_FOG_COLOR) &&
+          settings_take(SETTING_BINDING(DEMO_REMAP_FIRST + DEMO_REMAP_COUNT - 1)));
 
     // The menu edits the live value; Cancel puts the old one back, which
     // counts as a change again (the demo re-applies it)

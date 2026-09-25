@@ -36,15 +36,21 @@ A minimal scene (compare `src/scenes/benchmark_scene.c`):
 #include "../render/mesh_defs.h"
 #include "../input/action.h"
 
+enum { ACT_RESET = ACTION_GAME_FIRST };
+static const ActionBinding my_bindings[] = { BIND(ACT_RESET, BTN_B) };
+static ActionContext my_controls;
+
 static void my_init(Scene *scene) {
     camera_init(&scene->camera, &CAMERA_DEFAULT);   // scene_init() does not reset the camera
     mesh_defs_init();
+    action_context_init(&my_controls, "My Scene", 0, CTX_CONSUME, my_bindings, ARRAY_LEN(my_bindings));
+    action_push_context(0, &my_controls);           // player 1's controls while the scene runs
 }
 
 static void my_update(Scene *scene, float dt) {
     (void)dt;
-    action_update();                                // polls the joypad: nothing else does
-    if (action_pressed(ACTION_CANCEL)) scene->reset_requested = true;
+    // the engine polled the controllers before this update (input_poll)
+    if (action_pressed(0, ACT_RESET)) scene->reset_requested = true;
 }
 
 static void my_draw(Scene *scene) {
@@ -59,6 +65,7 @@ static void my_draw(Scene *scene) {
 static void my_cleanup(Scene *scene) {
     (void)scene;
     mesh_defs_cleanup();
+    action_pop_context(0, &my_controls);
 }
 
 static Scene my_scene = {
@@ -76,7 +83,7 @@ Scene *my_scene_get(void) { return &my_scene; }
 Steps:
 
 1. In `on_init`, build everything the scene uses and reset every static it keeps: `on_init` runs again after each soft reset and each time the scene is entered.
-2. Call `action_update()` at the top of `on_update`. The main loop never polls the joypad; the demo and the benchmark both poll in their update. Start and the Debug shortcuts (D-Up, D-Down) read the same polled state.
+2. Push the scene's controls in `on_init` and pop them in `on_cleanup` ([Add controls](#add-controls)). The engine polls the controllers before every update; the Debug shortcuts (D-Up, D-Down) work in every scene.
 3. Draw 3D geometry in `on_draw`, but don't clear the screen or draw the sky: `scene_draw()` already did. Particles, text and the menu go in `on_post_draw`. Pass the renderers `scene_view_camera()` and `scene_view_light()`, not `&scene->camera` / `&scene->lighting`: `scene_draw()` copies the scene's camera and lighting there each frame, at a pinned D-cache colour (D35).
 4. Free in `on_cleanup` everything `on_init` created: meshes, emitters, hand-loaded textures, the BGM.
 5. In `main.c` (at boot, or in `app_frame()`), include the header and switch with `scene_manager_switch(&scene_mgr, my_scene_get(), TRANSITION_FADE_BLACK, 3.0f)` (the speed is fade progress per second; `TRANSITION_CUT` switches at once).
@@ -90,20 +97,23 @@ Gotchas:
   ```c
   extern Menu start_menu;                          // owned by main.c
 
-  // on_update, after action_update():
-  joypad_buttons_t raw_pressed = joypad_get_buttons_pressed(JOYPAD_PORT_1);
-  if (raw_pressed.start) {
-      if (start_menu.is_open) menu_close(&start_menu, true);
-      else                    menu_open(&start_menu);
+  // on_update (bind BTN_START to an action of your own, here ACT_PAUSE):
+  if (!start_menu.is_open && action_pressed(0, ACT_PAUSE)) {
+      menu_open(&start_menu);
+      action_push_context(0, &action_ctx_ui);      // the menu takes player 1's pad
+  } else if (start_menu.is_open) {
+      UiInput ui = action_ui(0);
+      if (ui.start) menu_close(&start_menu, true);
+      else          menu_update(&start_menu, &ui);
+      if (!start_menu.is_open) action_pop_context(0, &action_ctx_ui);
   }
-  if (start_menu.is_open) menu_update(&start_menu);
 
   // on_post_draw, last:
   menu_draw(&start_menu, &my_menu_view);   // a MenuView of the scene's own (docs/UI.md)
   ```
 - **Soft reset:** `scene->reset_requested = true` makes the next `scene_manager_update()` run `scene_cleanup()` and `scene_init()` and skip that frame's update. The menu keeps its values across the reset (the demo's Settings → Reset Scene uses this).
 - **Camera dirty flag:** `camera_update()` rebuilds the matrices only when `camera.dirty` is set (every `camera_*` setter sets it) or in follow mode with a target. Code that writes `Camera` fields directly (`azimuth`, `fixed_position`, `follow_offset`) must set `scene->camera.dirty = true`, as `demo_update()` and `bench_update()` do.
-- **Global state outlives the scene:** fog and sky (`atmosphere_*`), the particle system, the 16 texture slots, the BGM, the action bindings and `engine_target_fps`. Restore what you change: the benchmark saves fog and sky in `bench_init()` and restores them in `bench_cleanup()`. `texture_cleanup()` frees every slot, not only yours.
+- **Global state outlives the scene:** fog and sky (`atmosphere_*`), the particle system, the 16 texture slots, the BGM, the players' context stacks and ports, the input sync, the frame pacing and rate, and running rumble. Restore what you change: the benchmark saves fog and sky in `bench_init()` and restores them in `bench_cleanup()`. `texture_cleanup()` frees every slot, not only yours.
 - `scene_add_object()` copies the `SceneObject` and returns -1 once the scene holds 32; the copy starts without a collider or body. Attach them with `scene_object_set_collider()` / `scene_object_set_body()`: the scene then moves the object with its body and the collider with the object, and removes both with the object ([SCENE_SYSTEM.md](SCENE_SYSTEM.md)). `SceneObject.data` must outlive the object: the demo keeps static pools (`object_data[]`, `billboard_data[]`). `world_offset` is stored but not read by the engine.
 - **Flags, not index ranges.** Mark shadow casters and selectable objects with `SCENE_OBJ_CASTS_SHADOW` / `SCENE_OBJ_SELECTABLE` and loop over the flags (`scene_find_object()` cycles a selection): objects added later then take part too (D20).
 
@@ -249,8 +259,29 @@ Gotchas:
 Gotchas:
 
 - Options apply while the menu is still open. B reverts every tab to the snapshot taken by `menu_open()`; the reverted options count as changed and are applied again. Reset Scene is acted on only after the menu closes.
-- The Controls tab is generated from the action module (`action_name()`, `action_button_name()`, the Exploration bindings): a new `GameAction` gets its option automatically, and the tab has one slot left.
+- The Controls tab is generated from the demo's actions (`src/scenes/demo_controls.c`): a new remappable action (inserted before `ACT_MENU`) gets its option automatically, and the tab has one slot left. Non-remappable actions go after `ACT_MENU`.
 - Only the demo drives the Start menu (see [Add a scene](#add-a-scene)).
+
+---
+
+## Add controls
+
+**Files:** the game's controls (like `src/scenes/demo_controls.c/h`), the scene that uses them. Background: [INPUT.md](INPUT.md).
+
+1. Number the actions from `ACTION_GAME_FIRST` (the engine owns the ids below it; at most `ACTION_MAX` = 48 in all), and give them names for the Input overlay page and menus with `action_set_names()` (the demo does it in `main.c`).
+2. Write a default binding table: `BIND(act, btn)`, `BIND_NEG` (a digital -1), `BIND_CHORD(act, mod, btn)`, `BIND_STICK(act, dir)`, `BIND_AXIS(act, axis, sign)`. Several bindings may drive one action.
+3. In the scene's `on_init`, build a context from it (`action_context_init(&ctx, name, priority, CTX_CONSUME, table, n)`) and push it for each player (one context per player if they remap separately); pop them in `on_cleanup`.
+4. Read actions in `on_update`: `action_pressed / held / released / repeat(p, a)`, `action_value(p, a)` (-1..1) and `action_held_time(p, a)`; `action_any_pressed(a, &p)` for "whoever pressed".
+5. A menu or dialog: push `action_ctx_ui` for the player driving it and read `action_ui(p)`; pop it when it closes.
+6. Remapping from a menu: `action_context_set_button(ctx, a, n, btn)`. The demo's Controls tab (`src/ui/settings.c`) turns a menu option into a button.
+7. Test: host tests for the logic (feed `PadState` snapshots to `action_update()` as `tests/host/test_action.c` does); on the A3D the Input overlay page shows the pads, each player's port and context stack, and player 1's held actions.
+
+Gotchas:
+
+- Never call `joypad_poll()` or `joypad_get_*()`: the input core polls from the vblank interrupt too. Raw state is `input_pad(port)`.
+- A context's priority is read when it is pushed; changes take effect at the next frame's update. `CTX_CONSUME` hides only the inputs of bindings that are active this frame; `CTX_MODAL` hides everything.
+- A chord's modifier has to be held when the trigger goes down; its own plain binding (if any) fires first.
+- Rumble keeps running across a scene change: stop it in `on_cleanup` (`input_rumble_stop_all()`).
 
 ---
 
@@ -276,7 +307,7 @@ Gotchas:
 Gotchas:
 
 - Menu Sweep skips the Debug tab: test a new item by hand, in both variants.
-- A handler that reads the joypad depends on the scene having called `action_update()`. The D-Up/D-Down shortcuts do, and fire only while no game action is bound to those buttons.
+- Shortcuts are actions of the engine's debug context (`action_ctx_debug`, priority -100): a new one is an `ACTION_DEBUG_*` id below `ACTION_GAME_FIRST` plus a binding in `debug_defaults` (`action.c`). Game contexts above it and a modal menu or dialog take the button first.
 - Option lists that mirror an enum must stay in step with it: Bench with `BenchKind`, Overlay with `OverlayPage` (the only one guarded by a `_Static_assert`).
 
 ---
@@ -296,13 +327,13 @@ Gotchas:
    ```
 
    `PROF_BEGIN` declares a local variable, so a slot can be opened once per C scope; add braces to time the same slot twice in one function. Time and calls add up when a slot runs several times per frame, and a parent includes its children.
-4. To see it on the overlay's Profiler page, add it to the `rows[]` list in `page_profiler()` in `overlay.c`. The page shows 13 slots, and its panel already ends at y = 192, near the demo HUD at the bottom of the screen; every row adds 10 px (so `dialog` is in the CSV rows only).
+4. To see it on the overlay's Profiler page, add it to the `rows[]` list in `page_profiler()` in `overlay.c`. The page shows 16 slots, and its panel already ends at y = 222, over the demo HUD's bottom band; every row adds 10 px (so `dialog` is in the CSV rows only).
 5. CSV: `PROF_HDR`, `PROF_AVG` and `PROF_PEAK` list every slot in enum order without further work, so a slot inserted mid-enum shifts the columns after it; read captures by header name. `BENCH_PROF` reports a fixed list of slots (`finish_step()` in `benchmark_scene.c`); append the new slot there and to `BENCH_PROF_HDR` together if the benchmark should report it (S5.3 appended `dialog_us`).
 6. Add the slot to the tree in PROFILING.md.
 
 Gotchas:
 
-- Scopes compile out of release builds (`ENGINE_PROFILE=0`) and are skipped while Debug → Profiler is Off. `frame`, `wait_display` and `limiter` are measured either way.
+- Scopes compile out of release builds (`ENGINE_PROFILE=0`) and are skipped while Debug → Profiler is Off. `frame` and the waits (`wait_display`, `pace`, `wait_input`) are measured either way.
 - A scope costs two tick-counter reads, and the whole profiler costs about 0.1 ms per frame on the A3D (BENCHMARKS.md). Keep new scopes out of per-triangle loops.
 
 ---
@@ -340,17 +371,19 @@ Gotchas:
          for (unsigned i = 0; i < sizeof(n) / sizeof(n[0]); i++) add_step(BENCH_LIGHTS, n[i]);
      }
      ```
-   - `setup_step()`: a `case` that sets the scene up for one step. Its preamble resets emitters, fill layers, instances, the CPU burn, the floor and the lighting before every step; reset any state you add there too.
+   - `setup_step()`: a `case` that sets the scene up for one step. Its preamble resets emitters, fill layers, instances, the CPU burn, the floor, the lighting, the input sync and the pacing before every step; reset any state you add there too.
    - `bench_update()`, `bench_draw()`, `bench_post_draw()`: the load itself. Keep it deterministic: the camera path is frame-locked and particles update with a fixed 1/60 s step.
    - `bench_cleanup()`: free what the kind allocated.
-3. In `debug_menu.c`, add the name to `bench_options[]` at the same index and raise the count in `menu_add_item(menu, tab, "Bench", bench_options, 11, 0)`.
+3. In `debug_menu.c`, add the name to `bench_options[]` at the same index (a static assert checks the count against `BENCH_KIND_COUNT`).
 4. Run it: Start → Debug → Bench = the new kind, Scene = Benchmark, A. Every step runs 60 warm-up and 240 measured frames, and the scene fades back to the demo at the end. `libdragon make BENCH=1 BENCH_KIND=<NAME>` builds a ROM that boots straight into it.
 
 | Row | Printed | Contents |
 |---|---|---|
-| `BENCH_META`, `BENCH_HDR`, `BENCH_PROF_HDR` | at the start | build, date, RDRAM size, kind, step count; column names |
+| `BENCH_META`, `BENCH_HDR`, `BENCH_PRESENT_HDR`, `BENCH_PROF_HDR`, `BENCH_INPUT_HDR` | at the start | build, date, RDRAM size, kind, step count; column names |
 | `BENCH` | every step | kind, step, param, frames, fps, avg and p99 ms, 1 % low, CPU avg and max, RDP busy ms and %, tris, uploads, heap KB |
-| `BENCH_PROF` | every step, profiler on | average µs of `update`, `draw`, `objects`, `mesh_cull`, `mesh_light`, `mesh_tris` |
+| `BENCH_PRESENT` | every step | presented frames: vblanks each was shown (1, 2, 3, 4+), late, torn; input lag in vblanks (avg, min, max) |
+| `BENCH_PROF` | every step, profiler on | average µs of `update`, `draw`, `objects`, `mesh_cull`, `mesh_light`, `mesh_tris`, `audio`, `menu`, `hud`, `dialog`, `input`, `wait_input` |
+| `BENCH_INPUT` | every step | input sync and pacing; % of frames on the latest vblank's read, its mean arrival after the vblank, the mean and worst wait, timeouts |
 | `BENCH_LAYOUT` | once per run | addresses of `bench_draw()`'s stack frame and of the pillar's vertex and index data (D26) |
 | `BENCH,END` / `BENCH,ABORTED` | at the end / on Start | step count and seconds / step index |
 
@@ -391,9 +424,9 @@ Gotchas:
    `CHECK(cond)` and `CHECK_NEAR(a, b, eps)` print `FAIL <test> (<file>:<line>)` and let the run continue.
 2. Declare `void run_<name>_tests(void);` in `test.h` and call it from `main()` in `test_main.c`.
 3. In `tests/host/Makefile`, add the test file to `TEST_SRCS` and the engine source under test to `ENGINE_SRCS` (`$(SRC)/<dir>/<file>.c`).
-4. Run `libdragon exec make -C tests/host run`. It prints `<n> checks, <m> failures` (123 checks at Phase 2 S3) and exits 1 on any failure; CI runs it through `tools/ci_build.sh`.
+4. Run `libdragon exec make -C tests/host run`. It prints `<n> checks, <m> failures` (1280 checks at Phase 2 S9) and exits 1 on any failure; CI runs it through `tools/ci_build.sh`.
 
-The shim (`tests/host/shim/libdragon.h` and `shim.c`) stands in for `<libdragon.h>`: `color_t` and `RGBA32`, `debugf` (a no-op), `assertf` (plain `assert`), `TICKS_READ()` (always 0), and the joypad API, driven by `shim_joypad_set()`. Rendering, display, RSP/RDP, audio and filesystem calls are deliberately missing: code that needs them isn't host-testable. Move the pure logic into its own file instead, as `mesh_build.c` was split from `mesh.c` and `particle.c` from `particle_draw.c`. `ENGINE_HOT` and `ENGINE_NOINIT` expand to nothing on the host.
+The shim (`tests/host/shim/libdragon.h` and `shim.c`) stands in for `<libdragon.h>`: `color_t` and `RGBA32`, `debugf` (a no-op), `assertf` (plain `assert`) and `TICKS_READ()` (always 0). There is no joypad: the action layer takes `PadState` snapshots, which a test fills in directly (`test_action.c`). Rendering, display, RSP/RDP, audio and filesystem calls are deliberately missing: code that needs them isn't host-testable. Move the pure logic into its own file instead, as `mesh_build.c` was split from `mesh.c` and `particle.c` from `particle_draw.c`. `ENGINE_HOT` and `ENGINE_NOINIT` expand to nothing on the host.
 
 Gotchas:
 
@@ -472,7 +505,7 @@ Gotchas:
 1. Write the conversations in `assets/dialog/<name>.json` (format: DIALOG.md "Source format"; `assets/dialog/demo.json` shows every feature). The Makefile compiles each JSON file to `rom:/dialog/<name>.dlg`; there is nothing to register.
 2. In the scene: load the bank in `on_init` (`dialog_bank_load()`), `textbox_init()` a `TextBox`, and free both in `on_cleanup` (`textbox_close()`, `dialog_bank_free()`): Reset Soak must still show a zero heap delta.
 3. Write the hooks for the events, conditions and variables the JSON names. Log unknown names (`ENGINE_LOG`), so a typo in the JSON shows in the USB log.
-4. Start a conversation with `dialog_start()` + `textbox_open()`. While `textbox_active()`: build a `UiInput` from the buttons, call `textbox_update()`, and skip the scene's own input (and Start); call `debug_menu_set_shortcuts(false)` if the box reads the D-pad. Draw it in `on_post_draw` with `textbox_draw(&box, style)` inside a `PROF_DIALOG` scope.
+4. Start a conversation with `dialog_start()` + `textbox_open()`, and push the engine's UI context (`action_ctx_ui`) for the player who reads it: it is modal, so the scene's own controls, Start and the Debug shortcuts see nothing while it is open. While `textbox_active()`: `UiInput ui = action_ui(p); textbox_update(&box, &ui, dt);`; pop the context when it closes. Draw it in `on_post_draw` with `textbox_draw(&box, style)` inside a `PROF_DIALOG` scope.
 5. Build: a JSON mistake stops `make` with its location. Test in ares, then on the A3D in every UI style.
 
 Gotchas:
