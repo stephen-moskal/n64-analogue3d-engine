@@ -16,3 +16,4 @@
 *.dfs binary
 *.pak binary
 *.bin binary
+*.blend binary

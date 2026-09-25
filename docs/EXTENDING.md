@@ -121,7 +121,7 @@ Gotchas:
 
 ## Add a mesh
 
-**Files:** the scene or module that owns the mesh; for a shared built-in shape, `src/render/mesh_defs.c/.h` and `tests/host/test_mesh.c`. Background: [MESH_SYSTEM.md](MESH_SYSTEM.md).
+**Files:** the scene or module that owns the mesh; for a shared built-in shape, `src/render/mesh_defs.c/.h` and `tests/host/test_mesh.c`. Background: [MESH_SYSTEM.md](MESH_SYSTEM.md). To generate the builder from a Blender model: [BLENDER_MCP.md](BLENDER_MCP.md).
 
 The builder API is declared in `src/render/mesh.h` and implemented in `mesh_build.c`: `mesh_init` → `mesh_add_material` → for each face group `mesh_begin_group`, `mesh_add_vertex`, `mesh_add_triangle`, `mesh_end_group` → `mesh_finalize`. From `build_platform()` in `mesh_defs.c`:
 
@@ -363,7 +363,7 @@ Gotchas:
 2. In `benchmark_scene.c`:
    - `kind_names[]`: the CSV `kind` column, and half of the key `bench_compare.py` matches steps by.
    - `kind_desc[]`: the on-screen description, with one `%d` for the step parameter.
-   - `build_steps()`: add the steps, inside `if (all || which == BENCH_<NAME>)`, or `if (which == BENCH_<NAME>)` to keep them out of All as Overload does. `MAX_STEPS` is 32 and All uses 26; `add_step()` drops extra steps silently.
+   - `build_steps()`: add the steps, inside `if (all || which == BENCH_<NAME>)`, or `if (which == BENCH_<NAME>)` to keep them out of All as Overload does. `MAX_STEPS` is 32 and All uses 28; `add_step()` drops extra steps silently.
 
      ```c
      if (all || which == BENCH_LIGHTS) {

@@ -136,7 +136,7 @@ Timings depend on code and data layout (D25, D26): compare runs of the same day 
 
 With the profiler on (the debug default), each step also prints a `BENCH_PROF` row: the moving-average µs of `update`, `draw`, `objects`, `mesh_cull`, `mesh_light`, `mesh_tris`, `audio`, `menu`, `hud`, `dialog`, `input`, `wait_input`, `particle_draw` and `rsp_wait`, to pin a CPU regression to a stage of `mesh_draw` (or to the mixer, or to waiting for the RSP). Once per run a `BENCH_LAYOUT` row logs the addresses of `bench_draw`'s stack frame and of the pillar mesh's vertex and index arrays, to relate timing changes to D-cache aliasing (D26). `bench_compare.py` ignores both row types.
 
-The tests run with fog and sky off (restored afterwards) on the benchmark scene's dark background; only Overload draws the floor. "All" runs every kind except Overload, 26 steps:
+The tests run with fog and sky off (restored afterwards) on the benchmark scene's dark background; only Overload draws the floor. "All" runs the empty scene and the objects, particles, lights, textures, shadows and fill-rate steps, 28 in total; the other kinds run on their own:
 
 | Bench | Steps | Load |
 |---|---|---|
@@ -149,8 +149,9 @@ The tests run with fog and sky off (restored afterwards) on the benchmark scene'
 | fillrate | 1, 2, 4, 8 | N full-screen blended rectangles (RDP read-modify-write) |
 | layout | 32, 64 × variants 0–5 | data-placement check (D26): the shared pillar (0), copies at D-cache colours 0/2/4/6 KB (1–4), a reversed-winding copy (5); param = variant × 1000 + pillars. Debug only, not in All |
 | overload | 0, 10, 14, 17, 20, 25 | floor + 16 pillars + N ms of CPU busy-wait per frame: deliberate overruns, for the D18 flicker (not in All) |
-| ui | 0, 10, 1, 11, 2, 12, 3, 13, 4, 14, 20, 30, 40, 41 | floor + 16 pillars with UI on top. 0–14: the Start menu (a copy), param = mode × 10 + input (mode 0 direct, 1 cached; input 0 none, 1 cursor every 8 frames, 2 value every 2, 3 tab every 30, 4 closed 30 of every 100 frames). 20 / 30: the cached menu in the Classic / Minimal style. 40 / 41: a demo-like HUD (title + six readouts changing every frame) drawn direct every frame / cached at ~6 Hz. Not in All ([UI.md](UI.md)) |
+| ui | 0, 10, 1, 11, 2, 12, 3, 13, 4, 14, 20, 30, 40, 41, 50, 51 | floor + 16 pillars with UI on top. 0–14: the Start menu (a copy), param = mode × 10 + input (mode 0 direct, 1 cached; input 0 none, 1 cursor every 8 frames, 2 value every 2, 3 tab every 30, 4 closed 30 of every 100 frames). 20 / 30: the cached menu in the Classic / Minimal style. 40 / 41: a demo-like HUD (title + six readouts changing every frame) drawn direct every frame / cached at ~6 Hz. 50 / 51: the demo conversation in the text box at reading pace / skipping. Not in All ([UI.md](UI.md)) |
 | audio | 8 steps (10 with `SND_OPUS=1`) | floor + 16 pillars with the music at full volume; param = codec × 100 + poll point × 10 + effects (codec 0 none, 1 raw, 2 VADPCM, 3 Opus; poll point 0 after present, 1 before `display_get`, 2 after; effects 1 = a new sound every 4 frames). Opus runs first, so VADPCM later reuses its channel (D31). Steps whose track is not in the ROM are skipped; not in All ([AUDIO.md](AUDIO.md)) |
+| latency | 0, 100, 200, 4, 104, 204, 8, 108, 208 | floor + 16 pillars + a CPU burn; param = latency setting × 100 + burn ms (0 Classic, 1 Low, 2 Lowest): input lag per setting at three loads. Not in All ([INPUT.md](INPUT.md)) |
 
 ### Baseline (2026-09-23, debug build, Analogue 3D, `docs/benchmarks/2026-09-23-baseline-debug-a3d.csv`)
 
@@ -844,3 +845,7 @@ Bench = All at the start of Phase 2 (`docs/benchmarks/2026-09-23-baseline-debug-
 | Physics | verified in ares only | A3D: at rest in 2.22–2.23 s at 60 and 30 FPS, as in the host simulation | S11 |
 
 Measured: the quiet view from the BOOT rows of two demo boots (seconds 10–19, after the A3D's slow start; frame minus the display wait, so the upper value includes the ~0.5 ms input wait); the menu from Bench = UI (0 regressions against S6.4); the soak from the Debug tab. Captures: `docs/benchmarks/2026-09-25-p2-s13-all-bootbench-debug-a3d.csv`, `...-s13-ui-debug-a3d.csv`, `...-s13-soak-debug-a3d.csv`, `...-s13-demo-boot-debug-a3d.csv`. The exit criteria and their results are in ROADMAP_v2 §6.3.
+
+## Phase 3 kickoff (2026-09-25)
+
+Phase 3 (ROADMAP_v2 §7) is measured against the Phase 2 exit: `docs/benchmarks/2026-09-25-p2-s13-all-bootbench-debug-a3d.csv` (Bench = All, 28 steps), `...-p2-s13-ui-debug-a3d.csv` (Bench = UI) and the quiet view of `...-p2-s13-demo-boot-debug-a3d.csv` (4.1–4.7 ms). Stages commit their CSVs as `docs/benchmarks/<date>-p3-s<N>-...-a3d.csv`; each becomes the next stage's comparison point, and the Phase 3 exit compares against the Phase 2 exit files.

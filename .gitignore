@@ -20,6 +20,9 @@ filesystem/dialog/
 # libdragon submodule working tree (the gitlink itself stays tracked)
 libdragon/
 
+# Blender save backups (sources live in assets/blender/, docs/BLENDER_MCP.md)
+*.blend1
+
 # Editor
 .vscode/c_cpp_properties.json
 *.code-workspace
