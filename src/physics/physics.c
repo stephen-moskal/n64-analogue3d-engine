@@ -149,25 +149,29 @@ static void physics_step(PhysicsWorld *world) {
                 if (b->position.y - b->radius < ground_y) {
                     b->position.y = ground_y + b->radius;
 
-                    // Bounce: decompose velocity into normal and tangent
+                    // Decompose velocity into normal and tangent
                     float vn = vec3_dot(&b->velocity, &result.normal);
                     if (vn < 0) {  // Moving into surface
                         vec3_t v_normal = vec3_scale(&result.normal, vn);
                         vec3_t v_tangent = vec3_sub(&b->velocity, &v_normal);
 
-                        // Reflect normal component with restitution
-                        v_normal = vec3_scale(&v_normal, -b->restitution);
                         // Damp tangent with friction
                         float fric = 1.0f - b->friction;
                         v_tangent = vec3_scale(&v_tangent, fric);
 
-                        b->velocity = vec3_add(&v_normal, &v_tangent);
-
-                        // Rest threshold — stop micro-bouncing
-                        if (fabsf(b->velocity.y) < 10.0f && vn > -20.0f) {
-                            b->velocity.y = 0.0f;
+                        // Resting contact: an impact no faster than two steps
+                        // of gravity is not a bounce, so the normal velocity
+                        // stops. A body at rest gains one step of gravity per
+                        // step; bouncing that back (0.7 x 16 units/s for the
+                        // ball) made grounded flip every step (S11)
+                        float rest_speed = 2.0f * fabsf(world->gravity * b->gravity_scale) * PHYSICS_DT;
+                        if (vn > -rest_speed) {
+                            b->velocity = v_tangent;
                             b->grounded = true;
                         } else {
+                            // Bounce: reflect the normal component with restitution
+                            v_normal = vec3_scale(&v_normal, -b->restitution);
+                            b->velocity = vec3_add(&v_normal, &v_tangent);
                             b->grounded = false;
                         }
                     }

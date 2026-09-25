@@ -18,8 +18,8 @@ physics_world_update(dt)
           ├── integrate position (position += velocity * dt)
           ├── ground raycast (downward from body center)
           ├── penetration resolution (push out of ground)
-          ├── bounce response (decompose, reflect, restitute)
-          └── rest detection (stop micro-bouncing)
+          └── contact: resting contact below two steps of gravity,
+              otherwise bounce (decompose, reflect, restitute)
 ```
 
 ### Semi-Fixed Timestep
@@ -38,6 +38,7 @@ The physics system uses a **semi-fixed timestep** while the rest of the engine u
 - At 60 FPS: 1 step per frame. At 30 FPS: 2 steps per frame
 - Below 15 FPS: capped at 4 steps (physics slows down gracefully)
 - Leftover accumulator time carries to the next frame, capped at one step so a stall does not replay as a burst of steps
+- The display's frame time is not exactly 1/60 s (NTSC: 1/59.826 s), so about every 6 s one frame runs an extra step: simulation time follows the display's time (host-tested, S11)
 
 ```c
 void physics_world_update(PhysicsWorld *world, float dt) {
@@ -174,17 +175,22 @@ velocity = v_normal + v_tangent                // Recombine
 
 This decomposition handles arbitrary surface normals — not just flat ground. A ball hitting a tilted surface will bounce off at the correct angle.
 
-### Rest Detection
+### Resting Contact
 
-To prevent infinite micro-bouncing, a rest threshold stops bodies with very small bounce velocity:
+An impact slower than two steps of gravity is a resting contact, not a bounce: the normal velocity stops and the body is grounded.
 
 ```
-if (|velocity.y| < 10.0 && |vn| < 20.0):
-    velocity.y = 0
+rest_speed = 2 * |gravity * gravity_scale| * PHYSICS_DT     // 32.7 units/s for the ball
+if (vn > -rest_speed):
+    velocity = v_tangent                // normal component removed, sliding damped by friction
     grounded = true
+else:
+    bounce (above), grounded = false
 ```
 
-Once grounded, the body stays on the surface. Gravity still applies each step but is immediately canceled by the ground contact. Applying an impulse re-launches the body.
+A body at rest gains one step of gravity per step (about 16 units/s at full gravity), sinks a fraction of a unit, is pushed back out and stops again, so `grounded` stays set on every step. Applying an impulse re-launches the body.
+
+Before S11 the rule was `|velocity.y| < 10 && |vn| < 20`, applied after the bounce: a resting body's 16 units/s came back as 0.7 × 16 = 11.2, above 10. `grounded` then flipped every step, false on every other frame at 60 FPS and on every frame the game saw at 30 FPS (two steps per frame). The ball looked the same, but the jump example below would have missed inputs (defect D39).
 
 ### Penetration Resolution
 
@@ -406,10 +412,13 @@ The demo scene (`src/scenes/demo_scene.c`) demonstrates the physics system with 
 - The platform's collider is its box, on `COLLISION_LAYER_ENV` for flat ground detection; it moves with the platform, so the ball lands on the platform wherever it is moved
 - If the ball rolls off the platform, it continues bouncing on the floor (ground AABB at Y=-100)
 - The ball casts a shadow and can be selected (Z, D-Left/Right): while it is transformed it is held in place (kinematic) and moves with the stick; it drops when the mode ends
+- Debug builds log `BALL,rest,fps=…,t=…,bounces=…,y=…` once per launch, when the ball has stayed grounded for 0.5 s: `t` is the time from the launch to its first grounded frame of that stretch, `bounces` the audible bounces (at least 60 units/s)
 
 ## Testing
 
-`tests/host/test_physics.c` checks free fall, bounce and rest detection, the max-steps clamp and kinematic bodies on the host; `tests/host/test_scene.c` checks a body moving its object and the object its collider. The ball demo has so far been verified in ares only; the hardware check is planned (ROADMAP_v2 D16).
+`tests/host/test_physics.c` checks free fall, bounce and rest, the max-steps clamp and kinematic bodies. Since S11 it also runs the demo's ball in the demo's layout (relaunched from the spawn point onto the 15-unit platform) at dt = 1/60 and 1/30 s and at the NTSC display's frame times (1/59.826 and 2/59.826 s). At every rate the ball comes to rest within 5 s (2.23 s; 2.24 s at the NTSC times), never goes below the platform's top, and keeps `grounded` set once at rest. A ball dropped from 3,000 units reaches its terminal speed (~820 units/s, ~14 units per step, less than its radius) and still lands on top of the platform, and the step count follows the display's time. `tests/host/test_scene.c` checks a body moving its object and the object its collider.
+
+**On the Analogue 3D (S11, 2026-09-25)**, five relaunches, from the `BALL` rows: at rest in 2.23 and 2.22 s at 60 FPS, and 2.23 s three times at 30 FPS. Each took 4 audible bounces and rested at y = −65.0, the platform's top plus the radius, as in the host simulation. The drop after the first B press was not logged: a second press within the ~1.6 s it takes restarts the timer.
 
 ## Future Extensions
 

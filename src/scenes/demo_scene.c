@@ -270,6 +270,11 @@ static const char *camera_mode_names[] = {"ORBITAL", "FIXED", "FOLLOW"};
 
 static float ball_prev_vy = 0.0f;   // bounce detection for the collision sound
 
+// Launch to rest, logged once per launch (debug builds, S11): "BALL" rows
+static uint32_t ball_launch_ticks, ball_rest_ticks;
+static int      ball_bounces;
+static bool     ball_resting, ball_rest_logged;
+
 // Sound tab → sound module volumes, when one of its options changed (after
 // demo_init every option counts as changed, so the tab applies before any
 // music starts). Master Off fades everything out, and silent music stops
@@ -435,6 +440,9 @@ static void apply_camera_mode(Scene *scene, CameraMode mode) {
 
 static void launch_ball(Scene *scene) {
     vec3_t spawn_pos = {BALL_SPAWN_X, BALL_SPAWN_Y, BALL_SPAWN_Z};
+    ball_launch_ticks = TICKS_READ();
+    ball_bounces = 0;
+    ball_resting = ball_rest_logged = false;
     SceneObject *ball = scene_get_object(scene, ball_object);
     if (!ball) {
         // First time: a unit sphere scaled to the body's radius, above the
@@ -1079,8 +1087,24 @@ static void demo_update(Scene *scene, float dt) {
             if (gain > 1.0f) gain = 1.0f;
             snd_play_at(SFX_COLLISION, ball_body->position, gain);
             input_rumble_player(ball_owner, 0.04f + 0.12f * gain);
+            ball_bounces++;
         }
         ball_prev_vy = vy;
+
+        // Logged once the ball has stayed grounded for half a second: the
+        // time from launch to its first grounded frame of that stretch
+        if (!ball_rest_logged) {
+            if (!ball_body->grounded) ball_resting = false;
+            else if (!ball_resting) { ball_resting = true; ball_rest_ticks = TICKS_READ(); }
+            if (ball_resting && TICKS_DISTANCE(ball_rest_ticks, TICKS_READ()) >= (int32_t)TICKS_FROM_MS(500)) {
+                ball_rest_logged = true;
+                int fps = settings_int(SETTING_FRAME_RATE);
+                (void)fps;   // debugf is compiled out in release
+                debugf("BALL,rest,fps=%d,t=%.2f,bounces=%d,y=%.1f\n", fps ? fps : 60,
+                       (float)TICKS_DISTANCE(ball_launch_ticks, ball_rest_ticks) / TICKS_PER_SECOND,
+                       ball_bounces, ball_body->position.y);
+            }
+        }
     }
 
     // The listener is the camera (positional sounds pan with its right vector)

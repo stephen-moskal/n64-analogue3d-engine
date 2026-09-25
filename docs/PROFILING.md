@@ -128,5 +128,6 @@ BENCH_PRESENT_HDR / BENCH_PRESENT,...    per-step presented frames: vblanks 1/2/
 BENCH_LAYOUT,...                         data addresses, once per run: render stack, pillar geometry and Mesh struct, plus one row per Layout copy (D26)
 BENCH,END / BENCH,ABORTED                end of a benchmark run
 SOAK,... / SWEEP,...                     Reset Soak and Menu Sweep (testbed.c, DEBUGGING.md)
+BALL,rest,fps=...,t=...,bounces=...      the demo's ball: launch to rest, once per launch (demo_scene.c, PHYSICS.md)
 RDPLOG_BEGIN ... RDPLOG_END              RDP command capture (rdp_debug.c, DEBUGGING.md)
 ```

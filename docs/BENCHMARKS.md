@@ -792,3 +792,14 @@ Boot-to-benchmark Bench = All, now 28 steps (Particles gained an all-alpha step,
 - **Demo:** the smoke looks right on the A3D, and the ball behaved the same at 60 and 30 FPS ("framerate fine").
 
 Capture: `docs/benchmarks/2026-09-25-p2-s10-all-bootbench-debug-a3d.csv` (the new Bench = All comparison point).
+
+## Phase 2 · S11 physics on hardware (2026-09-25, debug build, Analogue 3D)
+
+The demo's ball relaunched five times, twice at 60 FPS and three times at 30 FPS (Settings → Frame Rate). Debug builds log `BALL,rest` once the ball has stayed grounded for 0.5 s.
+
+| Frame rate | Launch to rest | Bounces (≥ 60 units/s) | At rest, y |
+|---|---|---|---|
+| 60 FPS | 2.23 s, 2.22 s | 4, 4 | −65.0 |
+| 30 FPS | 2.23 s, 2.23 s, 2.23 s | 4, 4, 4 | −65.0 |
+
+The host simulation of the same launch gives 2.23 s at dt = 1/60 and 1/30 s (2.24 s at the NTSC frame times). Physics steps at a fixed 1/60 s, so the frame rate only changes when the result is seen. Before the resting-contact fix (D39), `grounded` flipped every step at rest and was never set in a 30 FPS frame; the ball looked the same either way. No benchmark: S11 does not touch the render path. Capture: `docs/benchmarks/2026-09-25-p2-s11-ball-debug-a3d.csv`.
