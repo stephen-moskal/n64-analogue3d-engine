@@ -52,6 +52,7 @@ typedef enum {
     PROF_AUDIO,             //   snd_update()
     PROF_RSP_WAIT,          //   CPU spinning on the RSP: command-buffer switches, the audio
                             //   mix's sync (libdragon's time accounting; inside the slots above)
+    PROF_AUDIO_WAIT,        //     the part of rsp_wait inside snd_update() (D38)
     PROF_SLOT_COUNT
 } ProfSlot;
 
@@ -118,6 +119,25 @@ typedef struct {
 } RdpCounters;
 
 const RdpCounters *profiler_rdp_get(void);
+
+// libdragon's count of CPU ticks spent waiting on the RSP since boot
+// (ACCT_CAT_RSPQ): the difference across a call is that call's RSP wait
+uint64_t profiler_rspq_ticks(void);
+
+/*
+ * RSP probe (Phase 3 S2, D38; debug builds): the RSP and RDP state sampled
+ * when the audio mix starts. rsp_running = the RSP was executing (not halted);
+ * rdp_busy = the RDP pipeline was drawing; rdp_behind = the RDP had queued
+ * commands left (DP_CURRENT != DP_END). (SP_PC is not sampled: the A3D
+ * reported every sample in the first 256 bytes of IMEM, ares all over it.)
+ */
+typedef struct {
+    uint32_t samples, rsp_running, rdp_busy, rdp_behind;
+} RspProbe;
+
+void profiler_rsp_probe(void);
+void profiler_rsp_probe_reset(void);
+const RspProbe *profiler_rsp_probe_get(void);
 void  profiler_rsp_dump_csv(uint32_t frame_index); // RDP counter row + RSP row
 
 // Internal: current-frame accumulators used by the macros

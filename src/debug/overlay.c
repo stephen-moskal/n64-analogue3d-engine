@@ -189,8 +189,8 @@ static void page_stats(void) {
          (unsigned long)s->colliders, (unsigned long)s->collision_pairs, (unsigned long)s->raycasts);
     line(r++, COL_TEXT, "Phys %lu body %lu step",
          (unsigned long)s->physics_bodies, (unsigned long)s->physics_steps);
-    line(r++, COL_TEXT, "Snd %lu voices %lu buf",
-         (unsigned long)s->snd_voices, (unsigned long)s->snd_buffers);
+    line(r++, COL_TEXT, "Snd %lu voices %lu buf %lu dry",
+         (unsigned long)s->snd_voices, (unsigned long)s->snd_buffers, (unsigned long)s->snd_starved);
     line(r++, COL_TEXT, "UI %lu text %lu layers",
          (unsigned long)s->ui_renders, (unsigned long)s->ui_blits);
 }

@@ -30,7 +30,7 @@ Start → L/R to the **Debug** tab (the Start menu exists in the demo scene). Va
 | Dump CSV | --- / Dump! | writes STATS, PROF, RDP, RSP, FT, MEM rows to the log, 120 frames (~2 s) after the menu closes so the averages no longer include the menu |
 | Reset Peaks | --- / Reset! | clears profiler peaks, frame-time window, heap baseline |
 | Scene | Demo / Benchmark | switches scene with a fade |
-| Bench | All / Objects / Particles / Lights / Textures / Shadows / Fillrate / Overload / Layout / Audio / UI / Latency / Mesh | which benchmark the Benchmark scene runs (BENCHMARKS.md) |
+| Bench | All / Objects / Particles / Lights / Textures / Shadows / Fillrate / Overload / Layout / Audio / UI / Latency / Mesh / RSP | which benchmark the Benchmark scene runs (BENCHMARKS.md) |
 | RDP Log | --- / Capture! | logs two frames of RDP commands (debug) |
 | Crash Test | --- / Assert! | triggers `assertf()` (debug) |
 | Reset Soak | --- / Run! | one warm-up and 10 measured scene resets, logs the heap delta (see below) |

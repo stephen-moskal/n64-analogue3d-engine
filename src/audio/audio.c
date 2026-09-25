@@ -6,6 +6,11 @@
 #include <stdio.h>
 #include <string.h>
 
+// mixer_try_play() is still marked preview at libdragon 39d0d6096; with
+// LIBDRAGON_PREVIEW=1 its use warns (deprecated). Silenced for this file
+// alone, so a new preview use elsewhere still shows in the build output.
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+
 // --- Configuration ---
 
 #ifndef SND_ENABLE_OPUS
@@ -74,6 +79,8 @@ static VoiceInfo    voice_info[SND_VOICES];
 static uint32_t     voice_serial;
 static vec3_t       listener_pos, listener_right = {1.0f, 0.0f, 0.0f};
 static SndPollPoint poll_point = SND_POLL_AFTER_DISPLAY;
+static SndMixMode   mix_mode = SND_MIX_ASYNC;
+static bool         polled;       // the first poll finds the queue empty by design
 static SndStats     st;
 static float        ch_limit_hz[MIXER_CHANNELS];  // frequency limit set per channel (0 = libdragon default)
 
@@ -273,14 +280,28 @@ void snd_update(float dt) {
         if (vol_changed) apply_voice_volume(v);
     }
 
-    // Fill every free buffer: after a long frame several are free, and
-    // leaving them empty would be an audible gap
+    // Nothing queued means the AI has run out of samples: a gap
+    int queued = audio_get_queued_buffers();
+    if (polled && queued == 0) { st.starved++; STATS_INC(snd_starved); }
+    polled = true;
+
     int filled = 0;
-    while (audio_can_write()) {
-        short *buf = audio_write_begin();
-        mixer_poll(buf, audio_get_buffer_length());
-        audio_write_end();
-        filled++;
+    if (mix_mode == SND_MIX_ASYNC) {
+        // Queue the mix as high-priority RSP work and carry on: the RSP mixes
+        // when it next finishes a command, long before the AI reaches those
+        // buffers. Fills all free buffers but one (libdragon's pacing)
+        mixer_try_play();
+        filled = audio_get_queued_buffers() - queued;
+        if (filled < 0) filled = 0;   // the AI finished a buffer meanwhile
+    } else {
+        // Fill every free buffer: after a long frame several are free, and
+        // leaving them empty would be an audible gap
+        while (audio_can_write()) {
+            short *buf = audio_write_begin();
+            mixer_poll(buf, audio_get_buffer_length());
+            audio_write_end();
+            filled++;
+        }
     }
 
     st.voices_active = active;
@@ -295,6 +316,12 @@ void snd_set_poll_point(SndPollPoint point) {
 }
 
 SndPollPoint snd_get_poll_point(void) { return poll_point; }
+
+void snd_set_mix_mode(SndMixMode mode) {
+    if (mode >= 0 && mode < SND_MIX_COUNT) mix_mode = mode;
+}
+
+SndMixMode snd_get_mix_mode(void) { return mix_mode; }
 
 // --- Sound effects ---
 

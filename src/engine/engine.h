@@ -71,4 +71,21 @@ const surface_t *engine_framebuffer(void);
 // test; 0 normally)
 uint32_t engine_heap_pad(void);
 
+// Frame queue (Phase 3 S2, D38; on by default): each frame's drawing is
+// recorded into an rspq queue and handed to the RSP in one go at the end of
+// the frame, so the CPU builds frame N+1 while the RSP and RDP finish frame
+// N. Off, drawing goes straight into libdragon's 2 KB command ring, and the
+// CPU waits whenever the RSP is held up by the RDP: after every frame's
+// SYNC_FULL the RSP sends nothing until the RDP has finished that frame.
+// While the queue records, drawing code must not wait for the RSP
+// (rspq_wait, rdpq_call_deferred assert): use engine_call_after_rdp().
+void engine_set_frame_queue(bool on);
+bool engine_frame_queue(void);
+
+// Runs fn(arg) once the RSP and RDP have finished everything submitted so
+// far, without waiting (libdragon's rdpq_call_deferred, polled every frame).
+// Works while the frame queue records: such calls are handed over when the
+// frame is submitted. For freeing a surface the RDP may still use.
+void engine_call_after_rdp(void (*fn)(void *), void *arg);
+
 #endif

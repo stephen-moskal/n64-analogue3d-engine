@@ -45,6 +45,7 @@ frame                 loop top to loop top (wall time)
   overlay             debug overlay page
   audio               snd_update, at the sound poll point (default: right after display_get; AUDIO.md)
   rsp_wait            the CPU spinning on the RSP: full command buffers, the audio mix's sync (S10)
+    audio_wait        the part of rsp_wait inside snd_update() (Phase 3 S2)
 ```
 
 `rsp_wait` is not a scope: `profiler_frame_end()` reads libdragon's own time accounting (`acct_get_ticks(ACCT_CAT_RSPQ)`, every spin-wait in `rspq` and the mixer) once per frame. The time is already inside the slots where the waits happen (`audio` for the mix, `draw` for full command buffers), so it is a breakdown, not an addition. It is in the CSV rows and `BENCH_PROF` (`rsp_wait_us`), not on the overlay page. libdragon does not account interrupt time on hardware.
@@ -72,6 +73,7 @@ Per-frame counters written with `STATS_INC(field)`, `STATS_ADD(field, n)` and `S
 | `physics_bodies`, `physics_steps` | active bodies, fixed steps run this frame |
 | `ui_renders`, `ui_blits` | UI text slots rendered this frame (cached layers: only what changed) and cached layers drawn ([UI.md](UI.md)) |
 | `snd_voices`, `snd_buffers` | sound-effect voices playing; audio buffers mixed this frame (about 0.8 on average at 60 FPS; 2 after a long frame) |
+| `snd_starved` | polls that found the AI queue empty: an audible gap (AUDIO.md) |
 
 ## Memory (`memstats.c/h`)
 
@@ -127,6 +129,7 @@ BENCH_PROF_HDR / BENCH_PROF,...          per-step CPU breakdown (profiler on)
 BENCH_PRESENT_HDR / BENCH_PRESENT,...    per-step presented frames: vblanks 1/2/3/4+, late, average, torn, worst torn half-line
 BENCH_LAYOUT,...                         data addresses, once per run: render stack, pillar geometry and Mesh struct, plus one row per Layout copy (D26); RDRAM buffers: command queue, RDP buffers, Z-buffer, framebuffers (D37)
 BENCH_RDPLOG,<kind>,<index>,<param>      make BENCH_RDPLOG=1: a step's RDP capture follows (RDPLOG_BEGIN..END; DEBUGGING.md)
+BENCH_RSPSTATE,...                       per step: the RSP and RDP state as each audio mix started (running, RDP busy, RDP commands pending) and the step's audio gaps (Phase 3 S2)
 BENCH,END / BENCH,ABORTED                end of a benchmark run
 SOAK,... / SWEEP,...                     Reset Soak and Menu Sweep (testbed.c, DEBUGGING.md)
 BALL,rest,fps=...,t=...,bounces=...      the demo's ball: launch to rest, once per launch (demo_scene.c, PHYSICS.md)

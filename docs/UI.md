@@ -44,7 +44,7 @@ ui_layer_draw(&L, 30, 12, used_h);   // render dirty slots, then blit rows [0, u
   - The text keeps its exact position.
 - **Rendering** attaches the surface (a nested `rdpq_attach`), clears and draws each dirty slot under a scissor, then detaches. `rdpq_detach` restores the frame buffer but not the scissor, so the layer resets the scissor to the full display.
 - **Immediate mode** (`cached = false`) draws every slot straight to the screen every frame. It needs no surface memory; the UI benchmark uses it for the before/after comparison.
-- **Memory:** `w × h × 2` bytes, allocated on the first draw. The Start menu's layer is 264 × 186 px, about 98 KB. `ui_layer_free()` releases it after an `rspq_wait()`.
+- **Memory:** `w × h × 2` bytes, allocated on the first draw. The Start menu's layer is 264 × 186 px, about 98 KB. `ui_layer_free()` hands the buffer to `engine_call_after_rdp()`, which frees it once the RDP is done with it, without waiting (safe while the engine's frame queue records; [ENGINE.md](ENGINE.md)).
 - **`ui_layer_invalidate()`** re-renders everything on the next draw, for example after a style change.
 - **Drop shadow:** `ui_layer_set_shadow(L, color)` draws each slot's text again 1 px down and right in that colour, behind the text. It keeps plain-font text readable over the 3D scene (the plain fonts have no outline). It doubles the cost of a re-render, not of the per-frame blit.
 - **Render budget:** `ui_layer_set_budget(L, n)` re-renders at most `n` dirty slots per frame; the rest keep their old text until a later frame. HUDs (2) and the overlay (6) use it, so a refresh that changes many lines spreads over a few frames instead of landing in one. Menus render everything at once (0) so the screen never shows a half-updated panel.

@@ -47,7 +47,7 @@ typedef struct {
 
 static const char *kind_names[BENCH_KIND_COUNT] = {
     "all", "objects", "particles", "lights", "textures", "shadows", "fillrate", "overload", "layout", "audio", "ui",
-    "latency", "mesh",
+    "latency", "mesh", "rsp",
 };
 
 // One-line description shown under the status line (param is substituted)
@@ -65,6 +65,7 @@ static const char *kind_desc[BENCH_KIND_COUNT] = {
     "%d: menu 0x-1x, style 2x-3x, HUD 4x, dlg 5x",
     "%d: latency*100+burn ms (0 classic, 1 low, 2 lowest)",
     "%d: variant*1000+objects",      // the HUD shows mesh_desc instead
+    "%d: variant*1000+pillars",      // the HUD shows rsp_desc instead
 };
 
 // Bench = Mesh variants (param / 1000; ROADMAP_v2 Phase 3 S1)
@@ -80,6 +81,16 @@ enum {
 static const char *mesh_desc[MESHV_COUNT] = {
     "%d pillars", "%d pillars, not submitted", "%d spheres", "%d spheres, not submitted",
     "%d pillars, spheres, textured boxes", "%d pillars, spheres, boxes, fog",
+};
+
+// Bench = RSP variants (param / 1000; Phase 3 S2, D38), with the demo's
+// music playing: the pre-S2 frame (the CPU waits for each audio mix and
+// writes straight into libdragon's command ring), the mix not waited for,
+// and the frame queue with it (the S2 default)
+enum { RSPV_SYNC, RSPV_ASYNC_MIX, RSPV_QUEUE, RSPV_COUNT };
+static const char *rsp_desc[RSPV_COUNT] = {
+    "%d pillars, music: sync mix, no queue", "%d pillars, music: async mix, no queue",
+    "%d pillars, music: async mix, frame queue",
 };
 
 static BenchKind  configured_kind = BENCH_ALL;
@@ -109,6 +120,9 @@ static int        emitters[4] = {-1, -1, -1, -1};
 static int        fill_layers;
 static FogConfig  saved_fog;
 static bool       saved_sky;
+static SndMixMode saved_mix;         // the engine's mix mode and frame queue, restored on exit
+static bool       saved_queue;
+static int        starved_base;     // snd_stats()->starved when the step's measurement began
 static int        burn_ms;             // OVERLOAD: extra CPU time per frame
 static bool       draw_floor;
 static void      *draw_frame;          // stack frame of bench_draw (data-layout row, D26)
@@ -302,6 +316,13 @@ static void build_steps(BenchKind which) {
         static const int p[] = {0, 10, 1, 11, 2, 12, 3, 13, 4, 14, 20, 30, 40, 41, 50, 51};
         for (unsigned i = 0; i < sizeof(p) / sizeof(p[0]); i++) add_step(BENCH_UI, p[i]);
     }
+    if (which == BENCH_RSP) {
+        // param = variant*1000 + pillars, interleaved: 32 pillars sit at the
+        // 60 FPS edge, 48 and 64 are over it (where D38's wait appears)
+        static const int n[] = {32, 48, 64};
+        for (unsigned i = 0; i < sizeof(n) / sizeof(n[0]); i++)
+            for (int v = 0; v < RSPV_COUNT; v++) add_step(BENCH_RSP, v * 1000 + n[i]);
+    }
     if (which == BENCH_MESH) {
         // param = variant*1000 + objects, interleaved so drift hits every
         // variant alike. A variant minus its unsubmitted twin is the cost of
@@ -414,8 +435,10 @@ static void setup_step(Scene *scene) {
     L->shadow.mode = SHADOW_OFF;
     input_set_sync(INPUT_SYNC_AUTO);            // the defaults; LATENCY steps set their own
     engine_set_pacing(ENGINE_PACING_THROUGHPUT);
-    mesh_debug_set_skip_submit(false);          // MESH variant 1 turns it on
-    atmosphere_set_fog_enabled(false);          // MESH variant 2 turns it on
+    mesh_debug_set_skip_submit(false);          // MESH variants 1 and 3 turn it on
+    atmosphere_set_fog_enabled(false);          // MESH variant 5 turns it on
+    snd_set_mix_mode(saved_mix);                // the engine's settings; RSP steps set their own
+    engine_set_frame_queue(saved_queue);
 
     switch (st->kind) {
     case BENCH_OBJECTS:
@@ -470,6 +493,14 @@ static void setup_step(Scene *scene) {
             atmosphere_set_fog_far(2000.0f);
             atmosphere_set_fog_enabled(true);
         }
+        break;
+    }
+    case BENCH_RSP: {
+        int v = st->param / 1000;
+        layout_grid(st->param % 1000);
+        snd_set_mix_mode(v == RSPV_SYNC ? SND_MIX_SYNC : SND_MIX_ASYNC);
+        engine_set_frame_queue(v == RSPV_QUEUE);
+        snd_music_play(audio_track[2], 0.0f);   // VADPCM, the demo's codec
         break;
     }
     case BENCH_SHADOWS:
@@ -620,14 +651,23 @@ static void finish_step(void) {
     if (g_prof_on) {
         const ProfilerFrame *pf = profiler_get();
         (void)pf;
-        debugf("BENCH_PROF,%s,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f\n",
+        debugf("BENCH_PROF,%s,%d,%d,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f,%.0f\n",
                kind_names[st->kind], step_index, st->param,
                pf->avg_us[PROF_UPDATE], pf->avg_us[PROF_DRAW], pf->avg_us[PROF_OBJECTS],
                pf->avg_us[PROF_MESH_CULL], pf->avg_us[PROF_MESH_LIGHT], pf->avg_us[PROF_MESH_TRIS],
                pf->avg_us[PROF_AUDIO], pf->avg_us[PROF_MENU], pf->avg_us[PROF_HUD],
                pf->avg_us[PROF_DIALOG], pf->avg_us[PROF_INPUT], pf->avg_us[PROF_WAIT_INPUT],
-               pf->avg_us[PROF_PARTICLE_DRAW], pf->avg_us[PROF_RSP_WAIT]);
+               pf->avg_us[PROF_PARTICLE_DRAW], pf->avg_us[PROF_RSP_WAIT], pf->avg_us[PROF_AUDIO_WAIT]);
     }
+
+    // RSP and RDP state as the audio mix started, over the measured frames
+    // (profiler_rsp_probe; D38), with the step's audio gaps
+    const RspProbe *rp = profiler_rsp_probe_get();
+    debugf("BENCH_RSPSTATE,%s,%d,%d,%lu,%lu,%lu,%lu,%d\n", kind_names[st->kind], step_index,
+           st->param, (unsigned long)rp->samples, (unsigned long)rp->rsp_running,
+           (unsigned long)rp->rdp_busy, (unsigned long)rp->rdp_behind,
+           snd_stats()->starved - starved_base);
+    (void)rp;
 
     // The controller read over the measured frames (input.h): how many frames
     // got the latest vblank's read, when it came in after its vblank (-1: no
@@ -702,6 +742,8 @@ static void bench_init(Scene *scene) {
     // would drop heavy steps to 30 FPS); restored on exit
     saved_sync = input_sync();
     saved_pacing = engine_pacing();
+    saved_mix = snd_get_mix_mode();
+    saved_queue = engine_frame_queue();
     input_set_sync(INPUT_SYNC_AUTO);
     engine_set_pacing(ENGINE_PACING_THROUGHPUT);
 
@@ -730,7 +772,8 @@ static void bench_init(Scene *scene) {
            "lag_avg_vblanks,lag_min,lag_max\n");
     debugf("BENCH_PROF_HDR,kind,step,param,update_us,draw_us,objects_us,mesh_cull_us,"
            "mesh_light_us,mesh_tris_us,audio_us,menu_us,hud_us,dialog_us,input_us,wait_input_us,"
-           "particle_us,rsp_wait_us\n");
+           "particle_us,rsp_wait_us,audio_wait_us\n");
+    debugf("BENCH_RSPSTATE_HDR,kind,step,param,polls,rsp_running,rdp_busy,rdp_behind,starved\n");
     debugf("BENCH_INPUT_HDR,kind,step,param,sync,pacing,fresh_pct,read_us,wait_us,wait_max_us,timeouts,auto_skips\n");
     setup_step(scene);
 }
@@ -805,6 +848,8 @@ static void bench_update(Scene *scene, float dt) {
     if (step_frame == WARMUP_FRAMES) {
         frametime_reset();
         input_reset_timing();
+        profiler_rsp_probe_reset();
+        starved_base = snd_stats()->starved;
     }
 #if defined(ENGINE_BENCH_RDPLOG) && ENGINE_BENCH_RDPLOG
     // make BENCH_RDPLOG=1: one RDP capture per step at a fixed frame of the
@@ -985,6 +1030,8 @@ static void bench_post_draw(Scene *scene) {
         cfg.color = RGBA32(0xC0, 0xC0, 0xC0, 0xFF);
         if (st->kind == BENCH_MESH)
             text_draw_fmt(&cfg, mesh_desc[st->param / 1000], st->param % 1000);
+        else if (st->kind == BENCH_RSP)
+            text_draw_fmt(&cfg, rsp_desc[st->param / 1000], st->param % 1000);
         else
             text_draw_fmt(&cfg, kind_desc[st->kind], st->param);
     }
@@ -1021,6 +1068,8 @@ static void bench_cleanup(Scene *scene) {
     atmosphere_set_sky_enabled(saved_sky);
     input_set_sync(saved_sync);
     engine_set_pacing(saved_pacing);
+    snd_set_mix_mode(saved_mix);
+    engine_set_frame_queue(saved_queue);
     for (int p = 0; p < ACTION_PLAYERS; p++) action_pop_context(p, &bench_ctx);
     if (!aborted && !finished) debugf("BENCH,ABORTED,%d\n", step_index);
 }

@@ -16,7 +16,9 @@
 
 // libdragon display APIs still marked preview at 39d0d6096, used here only:
 // display_set_fps_limit, display_get_delta_time, display_get_zbuf,
-// vi_install_vblank_handler, vi_get_scanline and vi_read. With LIBDRAGON_PREVIEW=1 each use warns
+// vi_install_vblank_handler, vi_get_scanline and vi_read; rspq's queues
+// (rspq_queue_*, the frame queue) and rdpq_call_deferred. With
+// LIBDRAGON_PREVIEW=1 each use warns
 // (deprecated); the warnings are silenced for this file alone, so a new
 // preview use elsewhere still shows in the build output.
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
@@ -54,6 +56,73 @@ const surface_t *engine_framebuffer(void) { return frame_fb; }
 // only in N have the same code and layout
 static volatile uint32_t heap_pad_bytes __attribute__((section(".data"))) = ENGINE_HEAP_PAD;
 uint32_t engine_heap_pad(void) { return heap_pad_bytes; }
+
+// Frame queue: two rspq queues used in turn. A queue is rewritten only after
+// the RSP has run it (the syncpoint queued behind its run), which is normally
+// long past: waiting there means the RSP is a whole frame behind. A queue
+// grows to the largest frame recorded (~100 bytes per triangle) and keeps
+// that memory.
+#define FRAME_QUEUES  2
+#define PENDING_CALLS 32
+static bool             frame_queue_on = true;
+static bool             frame_recording;
+static rspq_queue_t    *frame_queue[FRAME_QUEUES];
+static rspq_syncpoint_t frame_queue_done[FRAME_QUEUES];
+static bool             frame_queue_ran[FRAME_QUEUES];
+static int              frame_queue_next;
+static struct { void (*fn)(void *); void *arg; } pending_call[PENDING_CALLS];
+static int              pending_calls;
+
+// libdragon internal (rspq_internal.h): runs the deferred calls whose
+// syncpoints have passed. libdragon polls only inside its own waits and
+// buffer switches, which the frame queue makes rare, so the engine polls
+// once per frame
+extern bool __rspq_deferred_poll(void);
+
+void engine_set_frame_queue(bool on) { frame_queue_on = on; }
+bool engine_frame_queue(void) { return frame_queue_on; }
+
+void engine_call_after_rdp(void (*fn)(void *), void *arg) {
+    if (!frame_recording) {
+        rdpq_call_deferred(fn, arg);
+        return;
+    }
+    assertf(pending_calls < PENDING_CALLS, "engine_call_after_rdp: more than %d calls in a frame",
+            PENDING_CALLS);
+    pending_call[pending_calls].fn = fn;
+    pending_call[pending_calls].arg = arg;
+    pending_calls++;
+}
+
+static rspq_queue_t *frame_record_begin(void) {
+    if (!frame_queue_on) return NULL;
+    int i = frame_queue_next;
+    if (!frame_queue[i]) {
+        frame_queue[i] = rspq_queue_create();
+    } else if (frame_queue_ran[i]) {
+        rspq_syncpoint_wait(frame_queue_done[i]);
+        rspq_queue_clear(frame_queue[i]);
+    }
+    rspq_queue_switch(frame_queue[i]);
+    frame_recording = true;
+    return frame_queue[i];
+}
+
+static void frame_record_end(rspq_queue_t *q) {
+    if (q) {
+        int i = frame_queue_next;
+        rspq_queue_switch(NULL);
+        frame_recording = false;
+        rspq_queue_run(q);
+        frame_queue_done[i] = rspq_syncpoint_new();
+        frame_queue_ran[i] = true;
+        frame_queue_next = (i + 1) % FRAME_QUEUES;
+        for (int c = 0; c < pending_calls; c++)
+            rdpq_call_deferred(pending_call[c].fn, pending_call[c].arg);
+        pending_calls = 0;
+    }
+    __rspq_deferred_poll();
+}
 
 // Presented frames: at every vblank, check whether the VI scans out another
 // framebuffer from now on; if so, the previous one was on screen for
@@ -190,7 +259,10 @@ static void boot_log(uint32_t now) {
 static inline void audio_poll(SndPollPoint point, float dt) {
     if (snd_get_poll_point() != point) return;
     PROF_BEGIN(PROF_AUDIO);
+    profiler_rsp_probe();                 // debug: what the RSP and RDP are doing as the mix starts
+    uint64_t wait0 = profiler_rspq_ticks();
     snd_update(dt);
+    if (g_prof_on) profiler_record(PROF_AUDIO_WAIT, (uint32_t)(profiler_rspq_ticks() - wait0));
     PROF_END(PROF_AUDIO);
 }
 
@@ -285,6 +357,7 @@ void engine_run(const EngineApp *app) {
         // Render
         rdp_debug_frame_begin();   // one-frame RDP capture, if requested
         rdpq_attach(fb, zbuf);
+        rspq_queue_t *fq = frame_record_begin();
         PROF_BEGIN(PROF_DRAW);
         scene_manager_draw(app->scenes);
         PROF_END(PROF_DRAW);
@@ -299,6 +372,7 @@ void engine_run(const EngineApp *app) {
                                   .color = RGBA32(0xFF, 0x80, 0x40, 0xFF) };
             text_draw(&tbc, tb);
         }
+        frame_record_end(fq);
         rdpq_detach_show();
         last_fb = PhysicalAddr(fb->buffer);
         rdp_debug_frame_end();

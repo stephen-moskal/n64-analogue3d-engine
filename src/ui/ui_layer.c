@@ -1,6 +1,7 @@
 #include "ui_layer.h"
 #include "text.h"
 #include "../debug/stats.h"
+#include "../engine/engine.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -13,10 +14,14 @@ void ui_layer_init(UiLayer *layer, int w, int h, bool cached) {
     layer->cached = cached;
 }
 
+static void free_surface_buffer(void *buffer) { free_uncached(buffer); }
+
 void ui_layer_free(UiLayer *layer) {
     if (layer->allocated) {
-        rspq_wait();                                // the RDP may still read or write it
-        surface_free(&layer->surf);
+        // The RDP may still read or write the surface: free its buffer (owned,
+        // from surface_alloc) once the RDP is past this point. No wait, and
+        // safe while the frame queue records
+        engine_call_after_rdp(free_surface_buffer, layer->surf.buffer);
         layer->allocated = false;
     }
     ui_layer_invalidate(layer);

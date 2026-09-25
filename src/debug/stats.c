@@ -27,10 +27,10 @@ void stats_dump_csv(uint32_t frame_index) {
                "rej_near,rej_guard,mesh_draws,mesh_culled,groups_drawn,groups_culled,"
                "mode_changes,tex_uploads,tex_bytes,fill_rects,particles_alive,particles_drawn,"
                "colliders,collision_pairs,raycasts,physics_bodies,physics_steps,tris_backface,"
-               "snd_voices,snd_buffers,ui_renders,ui_blits\n");
+               "snd_voices,snd_buffers,ui_renders,ui_blits,snd_starved\n");
         header_sent = true;
     }
-    debugf("STATS,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
+    debugf("STATS,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
            (unsigned long)frame_index, (unsigned long)stats_tris_total(s),
            (unsigned long)s->tris_mesh, (unsigned long)s->tris_floor, (unsigned long)s->tris_shadow,
            (unsigned long)s->tris_particle, (unsigned long)s->tris_ui,
@@ -44,5 +44,5 @@ void stats_dump_csv(uint32_t frame_index) {
            (unsigned long)s->raycasts, (unsigned long)s->physics_bodies,
            (unsigned long)s->physics_steps, (unsigned long)s->tris_culled_backface,
            (unsigned long)s->snd_voices, (unsigned long)s->snd_buffers,
-           (unsigned long)s->ui_renders, (unsigned long)s->ui_blits);
+           (unsigned long)s->ui_renders, (unsigned long)s->ui_blits, (unsigned long)s->snd_starved);
 }

@@ -101,9 +101,17 @@ A music file missing from the ROM asserts in debug builds and is ignored in rele
 - Sound effects keep their rings, so **all effects must share one encoding**. The Makefile converts the whole directory alike.
 - Bench = Audio plays Opus first and later VADPCM on the same channel, as a regression test.
 
+## Mix mode: waiting for the RSP or not (Phase 3 S2, D38)
+
+`snd_set_mix_mode()` chooses how `snd_update()` fills the audio buffers:
+- **`SND_MIX_ASYNC` (default since S2):** `mixer_try_play()` queues the mix as high-priority RSP work and returns. The RSP mixes when it next finishes a command; the queued buffers (~140 ms: all but one of libdragon's 8) cover the delay. `snd_stats()->starved` and the `snd_starved` stats counter count polls that found the AI queue empty, that is, audible gaps: 0 in every step of Bench = All, Audio, Latency, Overload, UI and RSP on the A3D.
+- **`SND_MIX_SYNC`:** `mixer_poll()` fills every free buffer and waits for the RSP to mix it (the behaviour until S2).
+
+The RSP takes a high-priority job only between two commands. Near the frame budget it was often stuck in a long wait on the RDP (the SYNC_FULL hold, [HARDWARE.md](HARDWARE.md)), so the synchronous mix waited 6–9.5 ms per frame at 48–64 pillars (D38). The asynchronous mix removes that wait from the audio slot (`audio` 6.2 → 0.5 ms with music at 48 pillars); the engine's frame queue removes the stall behind it ([ENGINE.md](ENGINE.md)). The profiler's `audio_wait` slot is the part of `rsp_wait` spent inside `snd_update()`.
+
 ## Poll point: where in the frame the mixer runs
 
-Each mixed buffer runs libdragon's mixer as a high-priority RSP job, and the CPU waits for it. That wait, not the decoding, is most of the audio cost, and it depends on what the RSP is doing at that moment. `main.c` offers three points and runs `snd_update` at the selected one, inside the `audio` profiler slot:
+Each mixed buffer runs libdragon's mixer as a high-priority RSP job; with `SND_MIX_SYNC` the CPU waits for it. The figures below were measured that way (S4b.2). That wait, not the decoding, is most of the audio cost, and it depends on what the RSP is doing at that moment. `main.c` offers three points and runs `snd_update` at the selected one, inside the `audio` profiler slot:
 
 ```c
 audio_poll(SND_POLL_BEFORE_DISPLAY, dt);   // after the scene update

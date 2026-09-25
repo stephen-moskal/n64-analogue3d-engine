@@ -9,6 +9,7 @@
 | `hot.h`, `hot_text.ld` | I-cache placement of the render hot path ([HARDWARE.md](HARDWARE.md)) |
 | `hot_data.ld` | D-cache placement of the render path's static data: fixed colours away from the stack (D34) |
 | `engine_ld.awk` | builds `build/<variant>/engine.ld` from libdragon's `n64.ld` with both fragments |
+| `engine.c` (frame queue) | `engine_set_frame_queue()`, `engine_call_after_rdp()`: the frame recorded into alternating rspq queues (below) |
 | `layout_pad.c` | `make LAYOUT_PAD=<bytes>`: unused code that shifts all data, for layout-stability tests. Its counterpart for the heap, `make HEAP_PAD=<bytes>`, is in `engine.c` ([HARDWARE.md](HARDWARE.md)) |
 
 ## Using it
@@ -63,10 +64,23 @@ engine_run():
   app->on_frame(dt)                         game logic (scene switches)
   reset peaks if requested
   input_end_frame(dt)                       rumble changes out to the pads
-  rdpq_attach(fb, zbuf); scene_manager_draw(); overlay; testbed status
+  rdpq_attach(fb, zbuf)
+  frame queue: start recording              (wait for this queue's last run; normally long done)
+  scene_manager_draw(); overlay; testbed status
+  frame queue: stop, run it, syncpoint      calls deferred with engine_call_after_rdp go out here
   rdpq_detach_show()
   audio (poll point: after present)
 ```
+
+## Frame queue (Phase 3 S2, D38)
+
+The frame's drawing is recorded into an rspq queue (libdragon's `rspq_queue_*`, preview API) and handed to the RSP in one command at the end of the frame. Two queues alternate, so the CPU records frame N+1 while the RSP and RDP finish frame N.
+
+- **Why:** after each frame's `SYNC_FULL` the RSP sends nothing to the RDP until the RDP has finished that frame (a libdragon workaround for an RDP hardware bug; [HARDWARE.md](HARDWARE.md)). Without the queue the CPU writes into libdragon's ring of two 2 KB buffers and stalls as soon as the ring is full, so at 48–64 pillars it waited 6–9.5 ms per frame for the previous frame's RDP work.
+- **Measured (A3D, Bench = All vs S1):** `rsp_wait` 0 in every step; objects 48 40.6 → 60 FPS (CPU 24.6 → 15.4 ms), objects 64 30.6 → 40 FPS, objects 32 CPU −15 %, every mesh and particle step −11 to −26 % (`mesh_tris` per triangle −18 %: no ring-buffer switches, which cleared 2 KB of uncached memory every 20–30 triangles).
+- **Cost:** each queue keeps the size of the largest frame it has recorded (about 100 bytes per triangle: ~128 KB each at 1,000 triangles). The RDP starts a frame only when the CPU has finished recording it, so where the RDP's work is a large share of the frame, a frame reaches the screen up to one vblank later (Bench = Latency: Low with an 8 ms burn 2.4 → 3.0 vblanks) while others gain (Bench = UI 2.8–2.9 → 2.0).
+- **Rules:** while the queue records (the whole scene draw and the overlay), drawing code must not wait for the RSP: `rspq_wait()` and libdragon's deferred calls assert inside a queue. To free a surface the RDP may still use, call `engine_call_after_rdp(fn, arg)`: it runs `fn` once the RDP is past that point, without waiting (`ui_layer_free()` does). Waits belong in the update (the validator toggle, scene switches) or at frame boundaries (the RDP capture).
+- `engine_set_frame_queue(false)` draws straight into the ring again (Bench = RSP compares both in one ROM). The engine polls libdragon's deferred calls once per frame, because with the queue its own polling points (ring-buffer switches) become rare.
 
 Until S9 the update ran before `display_get()`, so a frame acted on input read before a 10–15 ms wait for a framebuffer; now everything the frame shows reacts to input read after it (next section).
 

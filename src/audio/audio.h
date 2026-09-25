@@ -29,11 +29,23 @@ typedef enum {
     SND_POLL_COUNT
 } SndPollPoint;
 
+// How snd_update() has the mixer fill the audio buffers (Phase 3 S2, D38).
+// The mix is a high-priority RSP job; the RSP takes it only between
+// commands, so near the frame budget it can wait milliseconds behind an RSP
+// that is itself waiting for the RDP.
+typedef enum {
+    SND_MIX_SYNC,     // mixer_poll(): fill every free buffer and wait for the RSP to mix it
+    SND_MIX_ASYNC,    // mixer_try_play() (the default): queue the mix and carry on; the
+                      // queued buffers (~140 ms) cover the RSP's delay
+    SND_MIX_COUNT
+} SndMixMode;
+
 typedef struct {
     int  voices_active;        // SFX voices playing
     int  voices_max;
     int  played, stolen, dropped;   // SFX since init
     int  buffers_filled;       // audio buffers mixed in the last poll
+    int  starved;              // polls since init that found the AI queue empty (a gap)
     bool music_paused;         // music silent, its decoding stopped
 } SndStats;
 
@@ -45,6 +57,8 @@ void snd_cleanup(void);
 void snd_update(float dt);
 void snd_set_poll_point(SndPollPoint point);
 SndPollPoint snd_get_poll_point(void);
+void snd_set_mix_mode(SndMixMode mode);
+SndMixMode snd_get_mix_mode(void);
 
 // True if the sound's file is in this ROM (the benchmark-only tracks are
 // packed into debug ROMs only). Looks the file up: not for every frame.

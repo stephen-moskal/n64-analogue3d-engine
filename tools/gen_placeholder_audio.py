@@ -135,12 +135,10 @@ def generate_bgm_loop():
     if peak > 0:
         samples = [s / peak * 0.7 for s in samples]
 
-    # Crossfade last 200ms into first 200ms for seamless loop
-    crossfade = int(SAMPLE_RATE * 0.2)
-    for i in range(crossfade):
-        t = i / crossfade
-        samples[i] = samples[i] * t + samples[n - crossfade + i] * (1 - t)
-
+    # No crossfade: every chord's envelope starts and ends at zero, so the
+    # last sample leads straight into the first. (A crossfade of the tail into
+    # the head made the loop jump from ~0 to -17 % of full scale: a pop at
+    # every wrap, found on the A3D in Phase 3 S2.)
     return samples
 
 def main():

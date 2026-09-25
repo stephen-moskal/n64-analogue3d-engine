@@ -38,6 +38,7 @@ typedef struct {
     // Audio (set by snd_update)
     uint32_t snd_voices;             // sound-effect voices playing
     uint32_t snd_buffers;            // audio buffers mixed this frame
+    uint32_t snd_starved;            // polls that found the AI queue empty (a gap in the sound)
 
     // UI (ui_layer.c)
     uint32_t ui_renders;             // text slots rendered this frame (cached: only changes)

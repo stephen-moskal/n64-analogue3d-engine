@@ -47,7 +47,25 @@ static const struct { const char *name; int depth; } slot_info[PROF_SLOT_COUNT] 
     [PROF_OVERLAY]         = {"overlay",       1},
     [PROF_AUDIO]           = {"audio",         1},
     [PROF_RSP_WAIT]        = {"rsp_wait",      1},
+    [PROF_AUDIO_WAIT]      = {"audio_wait",    2},
 };
+
+uint64_t profiler_rspq_ticks(void) { return acct_get_ticks(ACCT_CAT_RSPQ); }
+
+static RspProbe probe;
+
+void profiler_rsp_probe(void) {
+#if ENGINE_PROFILE
+    uint32_t sp = *SP_STATUS, dp = *DP_STATUS, cur = *DP_CURRENT, end = *DP_END;
+    probe.samples++;
+    if (dp & DP_STATUS_PIPE_BUSY) probe.rdp_busy++;
+    if ((cur & 0xFFFFFF) != (end & 0xFFFFFF)) probe.rdp_behind++;
+    if (!(sp & SP_STATUS_HALTED)) probe.rsp_running++;
+#endif
+}
+
+void profiler_rsp_probe_reset(void) { memset(&probe, 0, sizeof(probe)); }
+const RspProbe *profiler_rsp_probe_get(void) { return &probe; }
 
 void profiler_init(void) {
     memset(&pf, 0, sizeof(pf));

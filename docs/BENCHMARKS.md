@@ -153,6 +153,7 @@ The tests run with fog and sky off (restored afterwards) on the benchmark scene'
 | ui | 0, 10, 1, 11, 2, 12, 3, 13, 4, 14, 20, 30, 40, 41, 50, 51 | floor + 16 pillars with UI on top. 0–14: the Start menu (a copy), param = mode × 10 + input (mode 0 direct, 1 cached; input 0 none, 1 cursor every 8 frames, 2 value every 2, 3 tab every 30, 4 closed 30 of every 100 frames). 20 / 30: the cached menu in the Classic / Minimal style. 40 / 41: a demo-like HUD (title + six readouts changing every frame) drawn direct every frame / cached at ~6 Hz. 50 / 51: the demo conversation in the text box at reading pace / skipping. Not in All ([UI.md](UI.md)) |
 | audio | 8 steps (10 with `SND_OPUS=1`) | floor + 16 pillars with the music at full volume; param = codec × 100 + poll point × 10 + effects (codec 0 none, 1 raw, 2 VADPCM, 3 Opus; poll point 0 after present, 1 before `display_get`, 2 after; effects 1 = a new sound every 4 frames). Opus runs first, so VADPCM later reuses its channel (D31). Steps whose track is not in the ROM are skipped; not in All ([AUDIO.md](AUDIO.md)) |
 | latency | 0, 100, 200, 4, 104, 204, 8, 108, 208 | floor + 16 pillars + a CPU burn; param = latency setting × 100 + burn ms (0 Classic, 1 Low, 2 Lowest): input lag per setting at three loads. Not in All ([INPUT.md](INPUT.md)) |
+| rsp | 32, 48, 64 × variants 0–2 | pillars with the demo's music; param = variant × 1000 + pillars: the audio mix waited for and no frame queue (0, the pre-S2 frame), the mix not waited for (1), and the frame queue with it (2, the S2 default). `BENCH_RSPSTATE` rows add the RSP and RDP state at each mix and the audio gaps. Not in All ([ENGINE.md](ENGINE.md), frame queue) |
 | mesh | 16, 32, 64 × variants 0–5 | `mesh_draw`'s costs (Phase 3 S1); param = variant × 1000 + objects: pillars (0), pillars not submitted (1), spheres (2), spheres not submitted (3), pillars, spheres and textured boxes in turn (4), the same with fog (5). A not-submitted variant transforms, culls and lights every triangle but skips `rdpq_triangle()` (`mesh_debug_set_skip_submit`, debug builds): the difference in `mesh_tris` is the cost of submitting. Variants 4 and 5 use all four triangle formats (golden RDP captures, [DEBUGGING.md](DEBUGGING.md)). Not in All |
 
 ### Baseline (2026-09-23, debug build, Analogue 3D, `docs/benchmarks/2026-09-23-baseline-debug-a3d.csv`)
@@ -888,3 +889,27 @@ Runs (`make BENCH=1`, boot to Bench = All, 15 s settle):
 - The mixed variants, 16–64 objects: 27.6–28.5 µs per drawn triangle, 32.6–33.7 with fog.
 
 **S3's target from this split.** The drawn triangles of a pillar use 25 unique vertices for 48 corners (−48 % transforms), a sphere's 72 for 180 (−60 %). At 1.6–2.1 µs per corner (transform, divide, clip tests and copies, estimated from the code) that is −13 to −21 % `mesh_tris` per drawn triangle on pillars and −16 to −22 % on spheres. S3's acceptance stays −12 % on pillars and becomes −15 % on spheres (was −25 %): a sphere's lighting stays per triangle until S5, and submission is a quarter of its cost. Build-to-build moves of this size (above) mean S3 is judged inside one ROM, with the current path still selectable.
+
+## Phase 3 · S2a the audio mix's RSP wait and the frame queue (D38) (2026-09-25, debug build, Analogue 3D)
+
+Bench = RSP (boot to benchmark, pillars with the demo's music), two rounds, then the S2a defaults through Bench = All, Audio, Latency, Overload, UI and a Reset Soak in one session. Files: `...-p3-s2-rsp-round1-bootbench-...`, `...-rsp-round2-bootbench-...`, `...-p3-s2-{all-bootbench,audio,latency,overload,ui,soak}-debug-a3d.csv`.
+
+**Round 1: the audio mix was the victim, not the cause.** Mixing without waiting (`mixer_try_play`) removed the audio slot's wait (48 pillars: `audio` 6.2 → 0.5 ms), but the wait moved into the triangle submission (`mesh_tris` +5.2 ms, `rsp_wait` unchanged at 6.5 ms): the RSP was a frame behind, and whichever call reached it first waited. Clearing the Z-buffer with an RDP fill instead of libdragon's fence and RSP DMA changed nothing at 48–64 pillars and cost 3 ms of audio wait at 32 (the RDP work it adds). Every mix-start sample at 48+ pillars found the RSP running and the RDP busy with commands pending. libdragon's source gave the cause: after each frame's `SYNC_FULL` the RSP sends nothing more until the RDP has finished that frame (HARDWARE.md), and the CPU can run only 2 KB ahead of it.
+
+**Round 2: the frame queue** (ENGINE.md) records each frame and submits it whole:
+
+| Pillars | sync mix (pre-S2) | async mix | frame queue + async mix |
+|---|---|---|---|
+| 32 | 60 FPS, CPU 12.26 ms, `rsp_wait` 0.19 | 12.16 ms | 60 FPS, **10.85 ms**, 0 |
+| 48 | 40.7 FPS, 24.54 ms, 6.93 | 41.5 FPS, 24.05 ms | **60.0 FPS**, 15.54 ms, 0 |
+| 64 | 30.6 FPS, 32.65 ms, 9.53 | 31.2 FPS, 32.00 ms | **40.0 FPS**, 20.61 ms, 0 |
+
+Adding the RDP Z clear to the queue changed nothing (±0.05 ms CPU, +0.5 ms RDP), so it was dropped. Input lag at these steps: 2.28 → 2.00, 2.58 → 2.27, 3.00 → 3.00 vblanks.
+
+**S2a defaults (frame queue, async mix) against S1, Bench = All: 0 regressions, every step faster or equal.** Objects 48 40.6 → 60.0 FPS (CPU 24.62 → 15.36 ms, −38 %), objects 64 30.6 → 40.0 FPS, objects 32 12.40 → 10.59 ms (6.1 ms spare at 60 FPS). Mesh, light, texture and shadow steps −11 to −14 %, particles −22 to −26 %, fill rate unchanged (RDP −0.24 ms). `rsp_wait` 0 in every step. `mesh_tris` per drawn triangle 17.25 → 14.12 µs at 16 pillars: without the ring buffer, libdragon no longer switches and clears a 2 KB uncached buffer every 20–30 triangles.
+
+- **Audio:** 0 starved polls in all 67 steps (All, Audio, Latency, Overload, UI). The music loop no longer pops (a generator bug: the placeholder tune's "seamless loop" crossfade made it jump from ~0 to −17 % of full scale at every wrap; `tools/gen_placeholder_audio.py`, `demo.wav` regenerated).
+- **Frames:** 0 torn frames anywhere. Late frames fell (objects 48 114 → 0, objects 64 229 → 120, Latency 8 ms steps 69 → 0).
+- **Input lag** (vblanks, BENCH_PRESENT): Bench = UI 2.8–2.9 → 2.0, objects 32 2.85 → 2.0, Latency Low+4 ms 2.16 → 2.0. **Longer where the RDP's share of the frame is large**, because the RDP now starts a frame only once the CPU has recorded all of it: Classic+4 ms 2.21 → 3.0, Classic+8 ms 2.38 → 2.97, Low+8 ms 2.39 → 2.97, objects 48 2.58 → 2.97 (at 60 instead of 41 FPS), objects 64 3.02 → 3.50. Lowest (low-latency pacing) is unchanged at 1.0 / 2.0 / 2.0. S2b submits the frame in segments to win this back.
+- **Memory:** Reset Soak ×10: 0 B. Each queue keeps its largest frame (~100 bytes per triangle): the demo's heap after the benchmarks was 1,172,112 B against 964,592 B at S13 (+207 KB). S2b releases queue memory on scene switches.
+- **Mix start (`BENCH_RSPSTATE`):** with the frame queue, the RDP is idle at almost every mix start (48 pillars: busy 6 of 239 samples, against 239 of 239 before). `SP_PC` sampling was dropped: the A3D reported every sample in the first 256 bytes of IMEM, ares anywhere.
