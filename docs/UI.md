@@ -10,7 +10,7 @@ The menu model and its API are in [MENU_SYSTEM.md](MENU_SYSTEM.md), the dialog f
 | Module | Role |
 |---|---|
 | `text.c/h` | Font registry, `text_draw()` / `text_draw_fmt()` (immediate text, one print per call) and `text_render_paragraph()` |
-| `ui_style.c/h` | `UiStyle`: fonts, colours, layout metrics and decorations. Built in: `ui_style_debug` |
+| `ui_style.c/h` | `UiStyle`: fonts, colours, layout metrics and decorations. Built in: `ui_style_debug`, `ui_style_classic`, `ui_style_minimal` |
 | `ui_draw.c/h` | Immediate primitives: `ui_rect()`, `ui_vgradient()`, `ui_frame()`, `ui_gauge()` |
 | `ui_layer.c/h` | `UiLayer`: retained text slots, cached in an offscreen surface |
 | `menu_view.c/h` | `MenuView`: draws a `Menu` in a style through a `UiLayer` |
@@ -109,7 +109,7 @@ Styles also carry the HUD colours (`hud_title`, `hud_text`, `hud_accent`, `hud_s
 
 `ui_styles[UI_STYLE_COUNT]` lists them for a picker. The demo's **Settings → UI Style** item switches the menu and the HUD live, even while the menu is open (`menu_view_set_style()` re-lays out and re-renders the menu).
 
-To add a style: copy one of the definitions in `ui_style.c` (`MENU_LAYOUT` holds the shared metrics), change what you need, add it to `ui_styles[]` and raise `UI_STYLE_COUNT`, and add its name to `ui_style_options[]` in `main.c`. Keep text slots apart when changing metrics: slot boxes must not overlap.
+To add a style: copy one of the definitions in `ui_style.c` (`MENU_LAYOUT` holds the shared metrics), change what you need, add it to `ui_styles[]` and raise `UI_STYLE_COUNT`, and add its name and value to `ui_style_names[]` / `ui_style_values[]` in `src/ui/settings.c` (a static assert checks them against `UI_STYLE_COUNT`). Keep text slots apart when changing metrics: slot boxes must not overlap.
 
 ## Primitives (`ui_draw.h`)
 
@@ -187,7 +187,7 @@ Steps 40/41 draw a demo-like HUD direct or cached; steps 50/51 play the demo con
 | File | Purpose |
 |---|---|
 | [src/ui/text.h](../src/ui/text.h), [src/ui/text.c](../src/ui/text.c) | fonts, `text_draw` |
-| [src/ui/ui_style.h](../src/ui/ui_style.h), [src/ui/ui_style.c](../src/ui/ui_style.c) | `UiStyle`, `ui_style_debug` |
+| [src/ui/ui_style.h](../src/ui/ui_style.h), [src/ui/ui_style.c](../src/ui/ui_style.c) | `UiStyle`, the three built-in styles |
 | [src/ui/ui_draw.h](../src/ui/ui_draw.h), [src/ui/ui_draw.c](../src/ui/ui_draw.c) | rectangles, frames, gauges |
 | [src/ui/ui_layer.h](../src/ui/ui_layer.h), [src/ui/ui_layer.c](../src/ui/ui_layer.c) | cached text slots |
 | [src/ui/menu_view.h](../src/ui/menu_view.h), [src/ui/menu_view.c](../src/ui/menu_view.c) | menu drawing |

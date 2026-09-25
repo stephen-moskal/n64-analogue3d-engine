@@ -211,7 +211,7 @@ Gotchas:
 
 - **`scene_cleanup()` frees only declared textures.** A hand-loaded slot that `on_cleanup` doesn't free leaks on every Reset Scene. That was D1: the demo re-loaded its cube faces by hand in `demo_init` and never freed them, 13.5 KB per reset (measured with Reset Soak), fixed in S1 by declaring them.
 - A wrong path stops the debug ROM with libdragon's file-not-found assertion when the slot loads.
-- Every PNG in `assets/` goes into the ROM whether it's used or not; `grass_tex.png` (128×128, unused, D22) would fail the TMEM assert.
+- Every PNG in `assets/` goes into the ROM whether it's used or not (the Makefile converts `assets/*.png`), so delete unused ones; an unused 128×128 `grass_tex.png` was removed in S12 (D22). A texture larger than TMEM fails the upload assert when it is used.
 - One format for all sprites (`MKSPRITE_FLAGS`); CI4 and TMEM residency are planned (P3.3). RGBA16 keeps one bit of alpha, which is all `Material.alpha_cutout` needs.
 - The engine's quads assume 32×32 textures (UVs 0–32 in `cube.c`, `BB_TEX_SIZE` in `billboard.c`).
 - Generated `.sprite` files are git-ignored and tied to the libdragon version: run `libdragon make clean` after a submodule change.
@@ -384,7 +384,7 @@ Gotchas:
 | `BENCH_PRESENT` | every step | presented frames: vblanks each was shown (1, 2, 3, 4+), late, torn; input lag in vblanks (avg, min, max) |
 | `BENCH_PROF` | every step, profiler on | average µs of `update`, `draw`, `objects`, `mesh_cull`, `mesh_light`, `mesh_tris`, `audio`, `menu`, `hud`, `dialog`, `input`, `wait_input`, `particle_draw` and `rsp_wait` (the CPU waiting for the RSP) |
 | `BENCH_INPUT` | every step | input sync and pacing; % of frames on the latest vblank's read, its mean arrival after the vblank, the mean and worst wait, timeouts, frames `INPUT_SYNC_AUTO` did not wait (`auto_skips`) |
-| `BENCH_LAYOUT` | once per run | addresses of `bench_draw()`'s stack frame and of the pillar's vertex and index data (D26) |
+| `BENCH_LAYOUT` | once per run | addresses of `bench_draw()`'s stack frame and of the pillar's vertex and index data (D26); a second row places the RDRAM buffers: libdragon's command-queue write pointer, the RDP's two command buffers, the Z-buffer and the three framebuffers (D37) |
 | `BENCH,END` / `BENCH,ABORTED` | at the end / on Start | step count and seconds / step index |
 
 Gotchas:

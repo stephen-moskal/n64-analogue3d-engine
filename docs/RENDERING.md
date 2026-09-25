@@ -116,7 +116,7 @@ The floor uses an additive Z-bias (`+0.005`) to push its depth slightly farther,
 
 ## RDP Render Modes
 
-The N64 RDP has several rendering modes. The engine uses two:
+The N64 RDP has several rendering modes. The engine's geometry uses the two below. Besides them, copy mode blits the cached UI text layers (`rdpq_tex_blit`, `ui_layer.c`), and translucent UI rectangles use standard mode with the blender (`ui_rect()`, see [Alpha Blending](#alpha-blending)):
 
 ### Standard Mode (1-Cycle) — for triangles
 
@@ -156,7 +156,7 @@ The engine uses:
 - `TRIFMT_ZBUF` for flat-colored Z-buffered geometry: flat mesh materials when fog is OFF, the floor, shadows and particles (no texture coords)
 - `TRIFMT_ZBUF_SHADE` for flat mesh materials with hardware fog (shade RGB = lit color, shade A = fog factor)
 - `TRIFMT_ZBUF_SHADE_TEX` for textured mesh materials with hardware fog
-- `TRIFMT_FILL` for 2D overlays (menu background, scene transition fade)
+- `TRIFMT_FILL` for the scene transition fade (2D triangles in standard mode with the blender); UI panels are rectangles (`ui_rect()`)
 
 A textured format with a flat combiner is an RDP error the validator reports (defect D2): `mesh_draw()` picks the format from the material type and the fog state.
 
@@ -225,17 +225,17 @@ Without fog the result is set as prim color, combined with the texture via `RDPQ
 
 ## Alpha Blending
 
-Used for the menu overlay background:
+`RDPQ_BLENDER_MULTIPLY` in standard mode, colour and alpha from the prim colour. Used by translucent UI rectangles (the menu panel, HUD backdrops), the debug overlay's panel, the scene transition fade, and alpha-blended particles (additive ones use `RDPQ_BLENDER_ADDITIVE`, [PARTICLES.md](PARTICLES.md)). From `ui_rect()` in `ui_draw.c`:
 
 ```c
 rdpq_set_mode_standard();
 rdpq_mode_combiner(RDPQ_COMBINER_FLAT);
 rdpq_mode_blender(RDPQ_BLENDER_MULTIPLY);        // src*alpha + dst*(1-alpha)
-rdpq_set_prim_color(RGBA32(0, 0, 0, 160));        // Semi-transparent black
-rdpq_triangle(&TRIFMT_FILL, v0, v1, v2);          // 2D triangle in standard mode
+rdpq_set_prim_color(color);                      // e.g. RGBA32(0, 0, 0, 160)
+rdpq_fill_rectangle(x0, y0, x1, y1);             // rectangles are safe in any mode
 ```
 
-This produces a semi-transparent overlay by blending with the existing framebuffer contents.
+This blends with the existing framebuffer contents. Opaque rectangles use fill mode instead (faster), and the fade draws two `TRIFMT_FILL` triangles in the blended mode (`scene.c`).
 
 ## Frame Structure
 
@@ -243,14 +243,13 @@ The loop in `engine_run()` (`src/engine/engine.c`, [ENGINE.md](ENGINE.md)), simp
 
 ```c
 while (1) {
-    // === UPDATE ===
     float dt = display_get_delta_time();   // time between presented frames, capped at 0.1 s
-    scene_manager_update(&mgr, dt);   // scene on_update (input, menu, logic), camera, collision
-
-    // === RENDER ===
     surface_t *fb = display_get();    // Wait for a free framebuffer (triple buffering)
     snd_update(dt);                   // Mix the audio (poll point: AUDIO.md)
-    rdpq_attach(fb, zbuf);            // Attach color + depth (zbuf = display_get_zbuf())
+    input_poll(...);                  // this vblank's controller read (INPUT.md)
+    scene_manager_update(&mgr, dt);   // scene on_update (menu, logic), physics, camera, collision
+
+    rdpq_attach(fb, zbuf);            // Attach color + depth (zbuf = engine_zbuf())
     scene_manager_draw(&mgr);         // scene_draw(), then the transition fade
     overlay_draw(budget_ms);          // Debug overlay page (not while the menu is open)
     rdpq_detach_show();               // Present frame

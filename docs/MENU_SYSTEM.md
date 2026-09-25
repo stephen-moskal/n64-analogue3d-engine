@@ -83,7 +83,7 @@ Applies one frame of UI input to the model; call once per frame while the menu i
 
 ### `menu_set_value(Menu *menu, int tab, int item, int value)`
 
-Sets an item's option index (out-of-range values are ignored). Use it instead of writing `items[i].selected` so a later change (S8) can hook it; the view notices direct writes too.
+Sets an item's option index (out-of-range values are ignored); it only checks the range and writes. The game's options go through the settings module instead (`settings_set_choice()`, [Settings](#settings)), which tracks changes. The view notices direct writes too.
 
 ### `menu_draw(const Menu *menu, MenuView *view)`
 
@@ -106,7 +106,7 @@ typedef struct {
     const char *options[MENU_MAX_OPTIONS];   // Cycle-able choices
     int option_count;
     int selected;                            // Current option index
-    bool disabled;                           // Greyed out, cursor skips over
+    bool disabled;                           // Greyed out: the cursor stops on it, the value can't change
 } MenuItem;
 
 typedef struct {
@@ -157,7 +157,7 @@ The stick counts as a direction past half deflection, one direction at a time (4
 └──────────────────────────────┘
 ```
 
-- Background: semi-transparent black (alpha-blended triangles), x 30–290 (260 px wide, centred on 320)
+- Background: semi-transparent black (translucent rectangles: standard mode with the blender, `ui_rect()`), x 30–290 (260 px wide, centred on 320)
 - Title at y 50, tab header at y 64, items from y 86
 - Row height: 18px, up to 7 rows visible
 - Left column (label): x=44
@@ -172,7 +172,7 @@ Every frame the view draws the panel as a translucent rectangle (standard mode, 
 
 ## Integration in This Engine
 
-The engine has one global menu, `Menu start_menu` in `src/main.c`, with six tabs. `settings_init()` adds the first five, the game's options (Settings, Sound, Lighting, Environ, Controls; `src/ui/settings.c`, see [Settings](#settings) below), and `debug_menu_init()` adds the Debug tab ([DEBUGGING.md](DEBUGGING.md)).
+The engine has one global menu, `Menu start_menu` in `src/main.c`, with six tabs. `settings_init()` adds the first five, the game's options (Settings, Sound, Lighting, Environ, Controls; `src/ui/settings.c`, see [Settings](#settings) below), and `main.c` adds the Debug tab, whose items `debug_menu_init()` fills ([DEBUGGING.md](DEBUGGING.md)).
 
 Driving it is the scene's job, and only the demo scene does it (`demo_scene.c`):
 

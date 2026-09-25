@@ -94,6 +94,13 @@ static bool       saved_fog, saved_sky;
 static int        burn_ms;             // OVERLOAD: extra CPU time per frame
 static bool       draw_floor;
 static void      *draw_frame;          // stack frame of bench_draw (data-layout row, D26)
+// RDRAM placement (D37): libdragon's command-buffer write pointer when the
+// first frame is drawn, and the framebuffers the benchmark drew into
+static const volatile void *draw_rspq;
+static const void *draw_fb[3];
+static int         draw_fb_count;
+// The RDP's two 64 KB command buffers (libdragon rspq.c; not in its headers)
+extern void *rspq_rdp_dynamic_buffers[2];
 static bool       layout_logged;
 
 // LAYOUT (D26): copies of the pillar whose geometry sits at chosen D-cache
@@ -494,6 +501,11 @@ static void log_layout(void) {
     debugf("BENCH_LAYOUT,draw_frame=%p,pillar_vtx=%p,pillar_vtx_bytes=%d,pillar_idx=%p,pillar_idx_bytes=%d,pillar_mesh=%p\n",
            draw_frame, (void *)pillar->vertices, (int)(pillar->vertex_count * sizeof(MeshVertex)),
            (void *)pillar->indices, (int)(pillar->index_count * sizeof(uint16_t)), (void *)pillar);
+    const surface_t *zb = engine_zbuf();
+    (void)zb;
+    debugf("BENCH_LAYOUT,rspq=%p,rdp_buf0=%p,rdp_buf1=%p,zbuf=%p,fb0=%p,fb1=%p,fb2=%p\n",
+           (const void *)draw_rspq, rspq_rdp_dynamic_buffers[0], rspq_rdp_dynamic_buffers[1],
+           zb ? zb->buffer : NULL, draw_fb[0], draw_fb[1], draw_fb[2]);
     if (layout_pool) {
         for (int c = 0; c < LAYOUT_COPIES; c++) {
             debugf("BENCH_LAYOUT,variant=%d,vtx=%p,idx=%p,mesh=%p,reversed=%d\n", c + 1,
@@ -605,6 +617,9 @@ static void bench_init(Scene *scene) {
     finished = false;
     aborted = false;
     draw_frame = NULL;
+    draw_rspq = NULL;
+    draw_fb_count = 0;
+    for (int i = 0; i < 3; i++) draw_fb[i] = NULL;
     layout_logged = false;
     build_steps(configured_kind);
     step_index = 0;
@@ -811,6 +826,13 @@ static ENGINE_HOT_LOOP void bench_draw_objects(const BenchStep *st, const Camera
 static void bench_draw(Scene *scene) {
     (void)scene;
     if (!draw_frame) draw_frame = __builtin_frame_address(0);
+    if (!draw_rspq) draw_rspq = rspq_cur_pointer;
+    const surface_t *fb = engine_framebuffer();
+    if (fb && draw_fb_count < 3) {
+        bool seen = false;
+        for (int i = 0; i < draw_fb_count; i++) seen |= draw_fb[i] == fb->buffer;
+        if (!seen) draw_fb[draw_fb_count++] = fb->buffer;
+    }
     const BenchStep *st = &steps[step_index < step_count ? step_index : step_count - 1];
     const Camera *cam = scene_view_camera();
     const LightConfig *L = scene_view_light();

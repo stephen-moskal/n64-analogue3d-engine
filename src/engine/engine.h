@@ -63,4 +63,8 @@ float engine_frame_budget_ms(void);
 // framebuffers
 surface_t *engine_zbuf(void);
 
+// The framebuffer the current frame draws into, from display_get() until the
+// next frame (diagnostics: the benchmark logs where the framebuffers are)
+const surface_t *engine_framebuffer(void);
+
 #endif

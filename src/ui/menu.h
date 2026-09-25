@@ -19,7 +19,7 @@ typedef struct {
     const char *options[MENU_MAX_OPTIONS];    // Right column choices
     int option_count;
     int selected;                            // Current option index
-    bool disabled;                           // Greyed out, cursor skips over
+    bool disabled;                           // Greyed out: the cursor stops on it, the value can't change
 } MenuItem;
 
 typedef struct {

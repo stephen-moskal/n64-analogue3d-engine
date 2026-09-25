@@ -44,6 +44,9 @@ EnginePacing engine_pacing(void) { return pacing; }
 
 surface_t *engine_zbuf(void) { return zbuf; }
 
+static const surface_t *frame_fb;
+const surface_t *engine_framebuffer(void) { return frame_fb; }
+
 // Presented frames: at every vblank, check whether the VI scans out another
 // framebuffer from now on; if so, the previous one was on screen for
 // vblanks_shown vblanks (frametime.h). Runs after the display module's own
@@ -234,6 +237,7 @@ void engine_run(const EngineApp *app) {
         uint32_t t_wait = TICKS_READ();
         surface_t *fb = display_get();
         profiler_record(PROF_WAIT_DISPLAY, TICKS_DISTANCE(t_wait, TICKS_READ()));
+        frame_fb = fb;
         audio_poll(SND_POLL_AFTER_DISPLAY, dt);
 
         // Input as of the vblank display_get() woke on (input.h), then the

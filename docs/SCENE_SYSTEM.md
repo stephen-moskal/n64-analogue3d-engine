@@ -23,8 +23,8 @@ SceneManager
 
 | Component | Owner | Lifetime |
 |-----------|-------|----------|
-| Display, Z-buffer | `main.c` | Application |
-| Input, fonts, audio | `main.c` (initialized once) | Application |
+| Display, Z-buffer | `engine_init()` (`src/engine/engine.c`) | Application |
+| Input, fonts, audio | `engine_init()` (initialized once) | Application |
 | Start menu (global) | built in `main.c`, driven by the demo scene | Application |
 | Camera, lighting, collision, physics | Scene | Scene load/unload |
 | Objects, textures | Scene | Scene load/unload |
@@ -265,16 +265,18 @@ scene_manager_switch(&scene_mgr, demo_scene_get(), TRANSITION_CUT, 0);
 
 ### Game Loop Integration
 
-`main.c` runs a variable-timestep loop: `dt` is the real time since the previous iteration, capped at 0.1 s.
+`engine_run()` (`src/engine/engine.c`, [ENGINE.md](ENGINE.md)) runs a variable-timestep loop: `dt` is the display's time between presented frames (`display_get_delta_time()`), capped at 0.1 s. Simplified:
 
 ```c
 while (1) {
-    float dt = /* seconds since the previous iteration, capped at 0.1 */;
-    scene_manager_update(&scene_mgr, dt);
+    float dt = display_get_delta_time();       // capped at ENGINE_MAX_DT (0.1 s)
+    surface_t *fb = display_get();             // a free framebuffer (triple buffering)
+    snd_update(dt);                            // the audio mix (poll point: AUDIO.md)
+    input_poll(...);                           // this vblank's controller read (INPUT.md)
+    scene_manager_update(&scene_mgr, dt);      // on_update, physics, colliders, camera
 
-    surface_t *fb = display_get();
-    rdpq_attach(fb, &zbuf);
-    scene_manager_draw(&scene_mgr);
+    rdpq_attach(fb, zbuf);                     // zbuf = engine_zbuf()
+    scene_manager_draw(&scene_mgr);            // scene_draw(), then the transition fade
     rdpq_detach_show();
 }
 ```
@@ -430,4 +432,4 @@ The benchmark scene (`src/scenes/benchmark_scene.c`) is a second, menu-less scen
 | [src/scene/scene_objects.c](../src/scene/scene_objects.c) | Objects, their colliders and bodies, flags, the per-frame sync (host-tested) |
 | [src/scenes/demo_scene.c](../src/scenes/demo_scene.c) | Demo scene implementation |
 | [src/scenes/benchmark_scene.c](../src/scenes/benchmark_scene.c) | Benchmark scene |
-| [src/main.c](../src/main.c) | Creates the scene manager, switches scenes, runs the frame loop |
+| [src/main.c](../src/main.c) | Creates the scene manager and the Start menu, switches scenes; `engine_run()` ([src/engine/engine.c](../src/engine/engine.c)) runs the frame loop |
