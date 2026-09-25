@@ -803,3 +803,44 @@ The demo's ball relaunched five times, twice at 60 FPS and three times at 30 FPS
 | 30 FPS | 2.23 s, 2.23 s, 2.23 s | 4, 4, 4 | −65.0 |
 
 The host simulation of the same launch gives 2.23 s at dt = 1/60 and 1/30 s (2.24 s at the NTSC frame times). Physics steps at a fixed 1/60 s, so the frame rate only changes when the result is seen. Before the resting-contact fix (D39), `grounded` flipped every step at rest and was never set in a 30 FPS frame; the ball looked the same either way. No benchmark: S11 does not touch the render path. Capture: `docs/benchmarks/2026-09-25-p2-s11-ball-debug-a3d.csv`.
+
+## Phase 2 exit (S13): start of Phase 2 → exit (2026-09-25, debug build, Analogue 3D)
+
+Bench = All at the start of Phase 2 (`docs/benchmarks/2026-09-23-baseline-debug-a3d.csv`) against the exit build (S12's code: a boot-to-benchmark run with the D32 settle and the profiler **on**, which costs ~0.1 ms the baseline did not pay). `bench_compare.py`: **all 26 steps faster, 0 regressions.** Every step that fits the budget presented all 239 measured frames on time, with 2 vblanks of input lag.
+
+| Step | FPS | CPU avg ms | CPU change | RDP busy ms | 1 % low FPS |
+|---|---|---|---|---|---|
+| empty scene | 60 → 60 | 1.20 → 0.92 | −23 % | 1.11 → 0.95 | 55.5 → 59.6 |
+| objects 8 | 60 → 60 | 4.53 → 4.03 | −11 % | 2.36 → 2.20 | 54.6 → 59.4 |
+| objects 16 | 60 → 60 | 7.88 → 6.85 | −13 % | 3.63 → 3.44 | 51.0 → 59.6 |
+| objects 24 | 59.9 → 60 | 11.35 → 9.64 | −15 % | 4.95 → 4.64 | 48.0 → 59.5 |
+| objects 32 | 54.6 → 58.6 | 18.09 → 16.15 | −11 % | 6.16 → 5.87 | 42.8 → 57.0 |
+| objects 48 | 36.7 → 39.4 | 27.27 → 25.39 | −7 % | 8.85 → 8.43 | 28.4 → 38.8 |
+| objects 64 | 27.6 → 29.7 | 36.21 → 33.67 | −7 % | 11.19 → 10.99 | 21.4 → 29.3 |
+| particles 32 / 64 / 96 / 128 | 60 → 60 | 2.59 / 4.07 / 5.60 / 7.21 → 2.24 / 2.99 / 3.76 / 4.55 | −14 / −27 / −33 / −37 % | 1.28–1.60 → 1.17–1.46 | 56.6–57.6 → 58.8–59.2 |
+| particles 128 alpha, 64 + 64 (new in S10) | 60 | 4.57, 4.58 | — | 1.47 | 59.4, 58.8 |
+| lights 0 / 1 / 2 / 4 | 60 → 60 | 7.91–8.37 → 6.85–7.36 | −12..−13 % | 3.64–3.72 → 3.45–3.46 | 51.0 → 59.5 |
+| textures 1 / 2 / 4 / 8 | 60 → 60 | 7.54–7.72 → 5.58–5.74 | −26 % | 2.45 → 1.93 | 54.5 → 59.3–59.5 |
+| shadows off | 60 → 60 | 8.06 → 6.89 | −15 % | 3.68 → 3.49 | 51.0 → 59.6 |
+| shadows blob | 60 → 60 | 8.99 → 7.50 | −17 % | 4.85 → 4.66 | 48.0 → 59.5 |
+| **shadows projected** | **40.5 → 60** | 24.70 → 11.18 | **−55 %** | 7.21 → 5.25 | 32.0 → 59.5 |
+| fill rate 1 / 2 / 4 / 8 layers | 60 → 60 | 1.14–1.15 → 0.95–0.96 | −17 % | 2.82–14.71 → 2.66–14.52 | 57.1 → 59.4–59.5 |
+
+**Headlines**
+- **Every step needs less CPU, 7 to 55 %,** and every step that fits the budget shows each frame for exactly one vblank (1 % lows 48–57.6 → 57.0–59.6 FPS).
+- **Projected shadows 40.5 → 60 FPS** for 16 casters (S3, S6.3). **Particles −14 to −37 %**, now also alpha-blended at the same cost (S3, S6.3, S10). **Textures −26 %** (S3).
+- **Objects:** 24 pillars hold 60 FPS with 7 ms to spare (9.6 ms). 32 pillars went 54.6 → 58.6 FPS (6 of 239 frames late): at that load the audio mix waits ~3 ms for the RSP (D38, 4.0 ms of RSP waits per frame), which held 32 at 60 FPS in some builds (S6.3, S7.1, S8) and not in others. 48 and 64 pillars +2 FPS.
+
+**Outside the benchmark:**
+
+| Measure | Phase 2 start | Exit | Stages |
+|---|---|---|---|
+| Demo quiet-view CPU | 8.0 ms (floor 2.8, objects 2.0, audio 1.3, HUD 1.1) | **4.1–4.7 ms** (draw 3.73, update 0.21, audio 0.08), with the S0 test sphere the start did not have | S3, S5.2, S6, S7.1 |
+| Reset Scene leak (Reset Soak ×10) | 13.5–20 KB per reset | **0 B** (964,592 → 964,592 B) | S1 |
+| Demo heap | 913,544 B after boot | ~866 KB after init; 964,592 B once the menu has been opened (its 98 KB text cache) | S4 (−101 KB of meshes), S5 (+98 KB cache), S9.1 (+~22 KB placement) |
+| Start menu (Bench = UI, validator off) | 4.07 ms per frame open | 0.33 ms idle; frames that re-render text (cursor move, value change, tab switch) peak at 16.3–17.5 ms in the benchmark's floor + 16 pillars scene (~9.8 ms), about 12 ms over the demo's view | S5 |
+| Input lag, light scene | 3 vblanks | 2 (default), 1 (Lowest) | S9, S9.1 |
+| Audio with music | 1.3 ms per frame | 0.08 ms in the quiet view | S4b.2 |
+| Physics | verified in ares only | A3D: at rest in 2.22–2.23 s at 60 and 30 FPS, as in the host simulation | S11 |
+
+Measured: the quiet view from the BOOT rows of two demo boots (seconds 10–19, after the A3D's slow start; frame minus the display wait, so the upper value includes the ~0.5 ms input wait); the menu from Bench = UI (0 regressions against S6.4); the soak from the Debug tab. Captures: `docs/benchmarks/2026-09-25-p2-s13-all-bootbench-debug-a3d.csv`, `...-s13-ui-debug-a3d.csv`, `...-s13-soak-debug-a3d.csv`, `...-s13-demo-boot-debug-a3d.csv`. The exit criteria and their results are in ROADMAP_v2 §6.3.

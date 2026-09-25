@@ -184,8 +184,8 @@ RDP: Triangle Rasterize → Texture Sample → Z-Buffer → Framebuffer
 - **Lighting**: CPU-side flat-shaded Blinn-Phong (per face group; per triangle on curved surfaces) with configurable sun, point lights, and shadow casting
 - **Atmosphere**: Hybrid fog (hardware RDP + CPU), sky gradients, 7 presets with linked lighting hints
 - **Input**: controllers read at every vblank; the frame acts on the read of the vblank it starts at, 2 vblanks from read to screen by default (1 with low-latency pacing), measured for every frame ([ENGINE.md](docs/ENGINE.md#input-and-latency-s9))
-- **Performance**: CPU-bound; 32 flat 32-triangle objects (~500 triangles) run at 60 FPS on the Analogue 3D with ~4.8 ms to spare ([BENCHMARKS.md](docs/BENCHMARKS.md))
-- **Footprint** (Phase 2 S9): ROM 688,128 bytes (debug) / 475,136 bytes (release); CI fails a release ROM over 4 MB or over 1 MB of static code and data (`tools/rom_budget.py`)
+- **Performance**: CPU-bound; 24 flat 32-triangle objects (~380 triangles drawn) run at 60 FPS on the Analogue 3D with 7 ms to spare, 32 (~500) at 58–60 FPS; the demo's default view needs ~4.5 ms of CPU per frame ([BENCHMARKS.md](docs/BENCHMARKS.md))
+- **Footprint** (end of Phase 2): ROM 688,128 bytes (debug) / 475,136 bytes (release); CI fails a release ROM over 4 MB or over 1 MB of static code and data (`tools/rom_budget.py`)
 
 ### Critical Hardware Rule
 
@@ -227,8 +227,8 @@ See [ROADMAP_v2.md](docs/ROADMAP_v2.md) for the full plan with per-feature test 
 |-------|------|
 | 0 — Environment & baseline | Windows 11 workflow reproducible, ROM verified on ares + Analogue 3D (done 2026-09-12) |
 | 1 — Tooling & benchmarking | Per-phase profiler, unified stats, memory/frame-time overlays, RDP validator + capture, benchmark scene + CSV, CI (done 2026-09-23) |
-| 2 — Engine hardening | Leaks, renderer correctness, hot paths, mesh memory, UI core and dialog, engine core and frame pacing, cache-pinned render path, scene-owned physics, settings table, input (stages S0–S9 done; S10–S13 next) |
-| 3 — Graphics features (CPU path) | Vertex cache, Gouraud lighting, sprite animation, CI4/TMEM residency, fonts, VI options, decals, skybox, sorted transparency |
+| 2 — Engine hardening | Leaks, renderer correctness, hot paths, mesh memory, UI core and dialog, engine core and frame pacing, cache-pinned render path, scene-owned physics, settings table, input, particle blending, physics on hardware (done 2026-09-25: every benchmark step 7–55 % less CPU, no leaks, input lag 3 → 2 vblanks) |
+| 3 — Graphics features (CPU path), next | Vertex cache, Gouraud lighting, sprite animation, CI4/TMEM residency, fonts, VI options, decals, skybox, sorted transparency |
 | 4 — Milestone 1: Tiny3D | libdragon upgrade, RSP rendering, Blender/Fast64 → GLTF → ROM pipeline, 64+ objects at 60 FPS |
 | 5 — Milestone 2: Animation | Skeletal animation, character controller, state machine, entity pattern, FFT grid track |
 | 6 — Milestone 3: Game framework | Souls-like arena, turn-based battle system, save/load, AI |

@@ -27,13 +27,13 @@ Long-term vision (unchanged from v1): an action-RPG engine supporting souls-like
 
 **Delivered (v1 Features 1–7, 9, 10):** mesh system + shape library, multi-object scenes with selection/manipulation, audio (music + SFX; rewritten in Phase 2 S4b.2), billboards, configurable sun + 4 point lights + blob/projected shadows, 128-particle system with direct RDP batching, fog/atmosphere with 7 presets and sky gradient, semi-fixed-timestep physics, remappable action mapping with a Controls tab, tabbed menu, text. Details in [ROADMAP.md](ROADMAP.md).
 
-**Delivered in v2:** Phase 0 (Windows 11 environment, 2026-09-12) and Phase 1 (developer tooling, 2026-09-23): debug/release builds, a Debug menu tab, unified stats, CPU profiler, memory stats, frame-time history, overlay pages, RDP hardware-counter load, benchmark scene with a committed A3D baseline, host unit tests, CI, crash test and RDP frame capture. See §5.14–§5.15 and [BENCHMARKS.md](BENCHMARKS.md).
+**Delivered in v2:** Phase 0 (Windows 11 environment, 2026-09-12), Phase 1 (developer tooling, 2026-09-23) and Phase 2 (engine hardening, 2026-09-25; §6). Phase 1 brought debug/release builds, a Debug menu tab, unified stats, CPU profiler, memory stats, frame-time history, overlay pages, RDP hardware-counter load, benchmark scene with a committed A3D baseline, host unit tests, CI, crash test and RDP frame capture. See §5.14–§5.15 and [BENCHMARKS.md](BENCHMARKS.md).
 
-**Size:** 34 `.c` modules, ~10,900 lines under `src/` (of which `src/debug/` ~1,740), plus ~840 lines of host tests in `tests/host/`.
+**Size:** 48 `.c` modules, ~13,100 lines under `src/` (of which `src/debug/` ~1,790), plus ~1,840 lines of host tests in `tests/host/` (2026-09-25).
 
 **Not started from v1:** Feature 8 (sprite animation), Milestone 1 (Tiny3D + GLTF), Milestones 2–3.
 
-**In progress:** Phase 2, engine hardening (§6): S0–S4b verified on the A3D 2026-09-23 (S4b: libdragon upgrade for the RSP race D28, sound module rework), S5.1 (UI core, cached menu) and S5.2 (HUD, overlay, UI styles) 2026-09-24; S5.3 (dialog system and text box) verified 2026-09-24; S6 (engine core, frame pacing, hot data pinned, D18 root-caused) verified 2026-09-24; S7 (the scene owns physics and colliders, D11 and D20), S7.1 (the per-object draw path pinned, D35) and S8 (settings module, D10 and D27) verified 2026-09-24; S9 (input unification, D12), S9.1 (mesh geometry by D-cache colour, D26; input sync AUTO), S10 (particle blend modes, D13; smoke), S11 (physics on hardware, D16; resting contact, D39) verified 2026-09-25, and S12 (hygiene and docs, D22) done; next S13. **Progress against the Phase 2 baseline: every Bench = All step 9–55 % less CPU, objects 32 and projected shadows reach 60 FPS (objects 32 at the edge: 59.7 FPS at S9.1, D38), all 60 FPS steps present every frame on time** ([BENCHMARKS.md](BENCHMARKS.md), "Phase 2 progress snapshot").
+**Phase 2, engine hardening (§6), complete 2026-09-25.** Against its start: every Bench = All step 7–55 % less CPU, the demo's quiet view 8.0 → 4.1–4.7 ms, 0 B leaked over 10 resets, input lag 3 → 2 vblanks (1 with low-latency pacing), physics verified on the A3D; the total heap is 47 KB lower rather than 90 (§6.3). **Next: Phase 3 (§7), starting with the vertex cache (P3.1).** Stage history: S0–S4b verified on the A3D 2026-09-23 (S4b: libdragon upgrade for the RSP race D28, sound module rework), S5.1 (UI core, cached menu) and S5.2 (HUD, overlay, UI styles) 2026-09-24; S5.3 (dialog system and text box) verified 2026-09-24; S6 (engine core, frame pacing, hot data pinned, D18 root-caused) verified 2026-09-24; S7 (the scene owns physics and colliders, D11 and D20), S7.1 (the per-object draw path pinned, D35) and S8 (settings module, D10 and D27) verified 2026-09-24; S9 (input unification, D12), S9.1 (mesh geometry by D-cache colour, D26; input sync AUTO), S10 (particle blend modes, D13; smoke), S11 (physics on hardware, D16; resting contact, D39) verified 2026-09-25, S12 (hygiene and docs, D22) done, and S13 (exit) verified 2026-09-25 ([BENCHMARKS.md](BENCHMARKS.md), "Phase 2 exit").
 
 **Phase 0 environment numbers** (performance numbers are in [BENCHMARKS.md](BENCHMARKS.md)):
 
@@ -97,8 +97,8 @@ Long-term vision (unchanged from v1): an action-RPG engine supporting souls-like
 |---|---|---|---|
 | 0 | Environment re-establishment & baseline (Windows 11) | ✔ **complete** 2026-09-12 (d0d5bc0) | ROM builds via Docker on Windows, boots in ares and on the Analogue 3D, `debugf` visible on both channels, baseline recorded, `docs/SETUP.md` reproducible from a clean machine |
 | 1 | Developer tooling & benchmarking foundation | ✔ **complete** 2026-09-23 (642135c..b6fba17); CI green on GitHub Actions from the first push | Overlay pages (stats, profiler, memory, frame time, RSP), benchmark scene + CSV + baseline table, debug/release variants, CI green, DEBUGGING / PROFILING / BENCHMARKS / HARDWARE docs |
-| 2 | Engine hardening | **in progress** — §6 (stages S0–S13 + S4b); S0–S4b verified 2026-09-23 | Defect register closed (except items explicitly deferred), 0 B heap growth over 10 resets, heap −90 KB, demo CPU −15 %, menu frames within budget, one input path, `demo_scene.c` no longer owns menu semantics, physics verified-hw (§6.3) |
-| 3 | Graphics features independent of Tiny3D | planned | Vertex cache, Gouraud, sprite animation, CI4/TMEM residency, fonts, VI options, decals, skybox, sorted transparency — each with a BENCHMARKS row |
+| 2 | Engine hardening | ✔ **complete** 2026-09-25 (4077c46..S13): every benchmark step 7–55 % less CPU, quiet view −41..−49 %, 0 B per reset, one input path, physics verified-hw; total heap −47 KB of the −90 KB target (UI text caches, §6.3) | Defect register closed (except items explicitly deferred), 0 B heap growth over 10 resets, heap −90 KB, demo CPU −15 %, menu frames within budget, one input path, `demo_scene.c` no longer owns menu semantics, physics verified-hw (§6.3) |
+| 3 | Graphics features independent of Tiny3D | **next** | Vertex cache, Gouraud, sprite animation, CI4/TMEM residency, fonts, VI options, decals, skybox, sorted transparency — each with a BENCHMARKS row |
 | 4 | Milestone 1: libdragon upgrade + Tiny3D + GLTF (F11–16) | planned | Blender → ROM pipeline; ≥ 64 pillars at 60 FPS on hardware; both render paths measured by the Phase 1 tools |
 | 5 | Milestone 2: animation & characters (F17–21) | planned | Stick-controlled animated character, entity pattern, FFT grid track |
 | 6 | Milestone 3: game framework | planned | Souls-like 1v1 arena, FFT battle loop, save/load, AI |
@@ -460,7 +460,7 @@ How Phase 1 actually ran, stage by stage. Each stage was built in both variants,
 
 ---
 
-## 6. Phase 2 — Engine hardening — status: in progress (S0–S12 done 2026-09-23/25; S13 next)
+## 6. Phase 2 — Engine hardening — status: ✔ complete 2026-09-25 (S0–S13)
 
 Close the defect register and remove the structural debt that would otherwise be copied into the Tiny3D path, measuring every change with the Phase 1 tools. Order: **measure → fix leaks and correctness → performance → engine core → structural refactors → completeness → hygiene → exit.** Each stage is one commit and must pass the stage gate in §6.4.
 
@@ -488,7 +488,7 @@ Scope decisions (2026-09-23): a text/menu performance stage is added (P2.12, the
 | S10 | P2.9 **Particle completeness** (D13) | ✔ verified-hw 2026-09-25. `blend_mode` honoured: `particle_batches()` (host-tested) groups the emitters' slices by mode once per frame, and `particle_draw()` draws the alpha batch, then the additive one, changing only the blender; fog thins alpha particles and darkens additive ones. The demo's smoke bursts with the fire and looks translucent on the A3D; RDP Check clean after its start-up frame. Bench = Particles: 128 alpha and 64 + 64 cost the same as 128 additive (4.69 / 4.70 / 4.68 ms), particle steps −1.7 to +2.7 % vs S9.1. `BENCH_PROF` gained `particle_us` and `rsp_wait_us` (libdragon's RSP-wait accounting). Mesh steps +3–5 % from layout (D37), not S10's code | Honour `blend_mode` (additive, or alpha via `RDPQ_BLENDER_MULTIPLY`), batched per mode; document that point spawn already works; add a smoke effect to the demo. | `particle.c/h`, `demo_scene.c` | Smoke renders translucent on the A3D; validator clean; PARTICLES bench unchanged |
 | S11 | P2.10 **Physics on hardware** (D16) | ✔ verified-hw 2026-09-25. The host tests run the demo's ball in the demo's layout at dt = 1/60, 1/30 and the NTSC frame times: at rest in 2.23 s at every rate, never below the platform's top, and a ball at terminal speed does not tunnel through the 15-unit platform. They found D39 (`grounded` flipped every step at rest), fixed with a resting-contact rule. The demo logs `BALL,rest` rows; on the A3D the ball rests in 2.22–2.23 s at 60 and at 30 FPS with 4 bounces each, as in the host simulation | Ball test at 60 and 30 FPS on the A3D with the new `dt`; host physics tests at dt = 1/30 as well as 1/60. | `tests/host/test_physics.c` | Ball comes to rest within 5 s, no tunnelling, same behaviour at both rates |
 | S12 | P2.11 **Hygiene + docs** (D22) | ✔ done 2026-09-25 (docs and CI; no hardware change). `grass_tex.png` removed (D22). `tests/host/build/` is covered by the `build/` ignore. AUDIO.md, PARTICLES.md and ENGINE.md were written in S4b, S3 and S6, and MENU_SYSTEM, INPUT and PHYSICS were updated in S5, S9 and S11. An audit of MENU_SYSTEM, SCENE_SYSTEM, RENDERING, UI and ARCHITECTURE against the code fixed the frame-loop order, init ownership, the UI render modes and blending, and style registration (Billboards was accurate); it found D40. `BENCH_LAYOUT` now also logs where the RDRAM buffers are (D37) | Drop or use `grass_tex.png`; ignore `tests/host/build/`; new AUDIO.md, PARTICLES.md, ENGINE.md; fix MENU_SYSTEM.md (16 options, `menu_item_set_disabled`, single-tab header, `menu_add_item` signature), SCENE_SYSTEM, INPUT, PHYSICS, RENDERING, ARCHITECTURE (Billboard section); CLAUDE/README. | docs, `.gitignore`, `assets/` | Link check clean; CI green |
-| S13 | **Phase 2 exit** | planned | Full benchmark (All) and demo-view dumps on the A3D compared with the start reference; BENCHMARKS "post-hardening" rows; canonical-view screenshots; statuses here and a Phase 2 stage log (same format as §5.15). | BENCHMARKS.md, ROADMAP_v2.md | §6.3 exit criteria |
+| S13 | **Phase 2 exit** | ✔ verified-hw 2026-09-25. Bench = All against the start reference: all 26 steps faster (−7 to −55 %), 0 regressions; Bench = UI 0 regressions vs S6.4; Reset Soak ×10 0 B; quiet view 4.1–4.7 ms from the BOOT rows. Exit criteria in §6.3 (all met except the total heap); stage log in §6.5. The README screenshots from S9's tour stay current | Full benchmark (All) and demo-view dumps on the A3D compared with the start reference; BENCHMARKS "post-hardening" rows; canonical-view screenshots; statuses here and a Phase 2 stage log (same format as §5.15). | BENCHMARKS.md, ROADMAP_v2.md | §6.3 exit criteria |
 
 ### 6.2 Why this order
 
@@ -501,6 +501,22 @@ S0 first so every later claim can be measured, and so D18 is reproduced without 
 - Demo quiet-view CPU ≥ 15 % lower than 8.0 ms; menu-open frames never exceed 16.7 ms with the validator off.
 - No benchmark step regresses by more than 5 %; SHADOWS projected ≥ 40 % faster; the OBJECTS ceiling is reported (the +25 % goal is aspirational here — the vertex cache in P3.1 is the big win).
 - `demo_scene.c` holds no menu tables; one input path; CI green; docs updated.
+
+**Results (S13, 2026-09-25; BENCHMARKS.md "Phase 2 exit"):**
+
+| Criterion | Result |
+|---|---|
+| Defect register: D1, D3, D5, D6, D8–D14, D16, D19–D23 fixed; D18 root-caused and fixed or mitigated | ✔ All fixed. D18 is root-caused: the validator tears the display (DEBUGGING.md, HARDWARE.md) |
+| Reset Soak ×10 heap delta 0 B | ✔ 0 B (964,592 → 964,592 B) |
+| Heap after demo init ≥ 90 KB lower than 913 KB | ✘ **Not met as written:** ~866 KB after init (−47 KB); 964,592 B once the menu has been opened. The mesh memory the target was set for fell 101 KB (S4, D8). S5 then spent 98 KB on the menu's text cache (menu 4.07 → 0.31 ms per frame), and S9.1 ~22 KB on colour placement. Phase 3: free or shrink the cache while the menu is closed, and pool the geometry blocks |
+| Demo quiet-view CPU ≥ 15 % lower than 8.0 ms | ✔ 4.1–4.7 ms (−41 to −49 %), with the test sphere the start did not have |
+| Menu-open frames ≤ 16.7 ms, validator off | ✔ In the demo, by composition (not measured there directly): the quiet view (~4.5 ms) plus the worst menu frame (a tab switch re-renders its text, ~7.7 ms) comes to ~12 ms. In Bench = UI's heavier scene (floor + 16 pillars, ~9.8 ms) those frames reach 16.3–17.5 ms, unchanged since S5.3 |
+| No benchmark step regresses > 5 % | ✔ All 26 steps faster (−7 to −55 %) |
+| Projected shadows ≥ 40 % faster | ✔ −55 % (40.5 → 60 FPS) |
+| Objects ceiling reported | ✔ 60 FPS through 24 pillars (9.6 ms, ~380 triangles drawn); 32 at 58.6 FPS (D38), 48 at 39.4, 64 at 29.7 |
+| No menu tables in `demo_scene.c`; one input path; CI green; docs updated | ✔ S8, S9; CI green; S12 audit |
+
+Carried into Phase 3: D26's remaining placement effect (`Mesh` structs, per-object data: the vertex cache P3.1 removes the triangle loop's mesh reads), D37 (per-primitive costs that move with the build; the `BENCH_LAYOUT` RDRAM row is there to compare builds), D38 (the audio mix waiting for the RSP near the budget), D40 (menu cursor with every item disabled), and the heap items above.
 
 ### 6.4 Hardening test plan
 
@@ -532,7 +548,31 @@ S0 first so every later claim can be measured, and so D18 is reproduced without 
 | S12 | link check; CI | — | — |
 | S13 | full CI | benchmark All + demo dumps | full demo walk-through |
 
-**Regression guard:** each stage commits its benchmark CSV under `docs/benchmarks/` (`<date>-p2-s<N>-debug-a3d.csv`), and that file becomes the comparison point for the next stage (a moving baseline). The 2026-09-23 baseline stays the reference for the S13 exit comparison.
+**Regression guard:** each stage commits its benchmark CSV under `docs/benchmarks/` (`<date>-p2-s<N>-debug-a3d.csv`), and that file becomes the comparison point for the next stage (a moving baseline). The 2026-09-23 baseline stays the reference for the S13 exit comparison. Phase 3 starts from `docs/benchmarks/2026-09-25-p2-s13-all-bootbench-debug-a3d.csv`.
+
+### 6.5 Phase 2 stage log
+
+How Phase 2 ran, stage by stage. Each stage was built in both variants and passed `tools/ci_build.sh`. It was checked in ares, uploaded to the SummerCart64, tested by the user on the Analogue 3D with boot-to-benchmark runs captured over USB, then committed. Timings moved with code and data layout more than with most changes (D25, D26, D33–D35, D37), so several stages are as much about measurement as about features.
+
+| Stage | Commit | What shipped | What the A3D test showed | Defects |
+|---|---|---|---|---|
+| S0 · Measurement prep | 21bb1ef | Reset Soak, Menu Sweep, Overload bench, test sphere | Reset Soak +13.5 KB per reset; late frames alone don't flicker | D1 reproduced |
+| S1 · Resource lifecycle | 492d034 | scene-declared textures; `texture_init()` keeps its slots | Reset Soak ×10: 0 B | D1, D21 fixed |
+| S2 · Renderer correctness | 44203e6, 95e2d40 | exact back-face cull, group normals, alpha compare per material; hot-text block and `hot_text.py`; a same-ROM Mesh A/B | sphere visible from every side; RDP capture 0 warnings; the first triangle loop shared all of `rdpq_triangle_rsp`'s I-cache lines (+38 %) | D3, D5, D24 fixed; D25 found and fixed |
+| S3 · CPU hot paths | 7bf62f3 | camera dirty flag, shadows transform each vertex once, particle emitter index, bounded collision loops, sky replaces the clear, settings applied on change | projected-shadow pass −69 %, particles −34 % at 128, textures −30 % | D6, D14, D23 fixed |
+| S4 · Mesh right-sizing | d223c06 | `mesh_finalize()`: exact-size geometry | demo heap −101 KB; Bench = Layout: data placement moves mesh timing 4–8.5 % | D8 fixed; D26 characterised |
+| S4b · libdragon upgrade, sound module | f8f98c8, 27adf26 | libdragon preview `39d0d6096`; `snd_*` module (crossfades, 8 voices, positional sound, volume ramps), mixing after `display_get()`, Bench = Audio | no RSP crash in ~40 min; music 2.07 → 0.48 ms per frame | D28, D29, D30 fixed; D31 worked around |
+| S5 · UI core, HUD, dialog | b1c757e, b72644e, 531072e | cached text layers, three UI styles, menu model and view, HUD panels, dialog runner and text box, Bench = UI | open menu 4.07 → 0.31 ms per frame; HUD ~0.6 ms; dialog 0.30 / 0.53 ms | D18's trigger removed |
+| S6 · Engine core, pacing, hot data, D18 | 675b0e1, c73c13c, de379d8, 3439b6f, 33e4230 | `engine.c`, `engine_config.h`; display FPS limit and dt; presented-frame tracking; the render path's data pinned (`hot_data.ld`, `hot_data.py`); torn-frame counter | every 60 FPS frame on time; the A3D runs slow for ~7.5 s after reset; the validator tears the display | D9, D19, D33, D34 fixed; D18 root-caused; D32 mitigated |
+| S7 · Scene owns physics | 87270f9 | `Scene.physics`, objects own colliders and bodies, object flags | the ball is shadowed and selectable; mesh steps +6–9 % from layout | D11, D20 fixed; D35 found |
+| S7.1 · Per-object draw path pinned | 0404bb7 | pinned camera and lighting copies, per-object loops and buffer switch; `LAYOUT_PAD` moves all unpinned code and data | 0 regressions vs S6.3 in both layouts | D35 fixed |
+| S8 · Settings module | cb13d28 | the game's options as one table, typed accessors, change tracking | walk-through, Cancel and Menu Sweep clean | D10, D27 fixed |
+| S9 · Input unification | a5ebd27 | input core, 4 players, action contexts, low-latency pacing, lag measurement; screenshot tour | lag 3 / 2 / 1 vblanks; a second controller; mesh steps +8–11 % from heap layout | D12, D36 fixed |
+| S9.1 · Geometry by colour | 67e880f | mesh geometry at fixed D-cache colours; `INPUT_SYNC_AUTO` | mesh steps −6 to −7 % vs S9; objects 32 56.1 → 59.7 FPS | D26 geometry fixed; D37, D38 found |
+| S10 · Particle blend modes | e5b07c9 | alpha and additive batches, demo smoke, `rsp_wait` slot | smoke translucent; alpha costs what additive costs | D13 fixed |
+| S11 · Physics on hardware | 3fc4f20 | frame-rate host tests, resting contact, `BALL` rows | the ball rests in 2.22–2.23 s at 60 and 30 FPS | D16 fixed; D39 found and fixed |
+| S12 · Hygiene and docs | 045e8f0 | unused texture removed, docs audited against the code, RDRAM placement row | — | D22 fixed; D40 found |
+| S13 · Exit | this commit | benchmark and demo measurements against the start reference | all 26 steps faster (−7 to −55 %), quiet view −41 to −49 %, 0 B over 10 resets | — |
 
 ---
 
